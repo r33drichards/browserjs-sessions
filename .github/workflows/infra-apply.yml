@@ -1,0 +1,174 @@
+name: infra apply
+
+# Applies infra/main to Google Cloud.
+#
+#   plan   runs at once and saves the plan; its text is in the job summary.
+#   apply  waits for approval of the "production" environment (its required
+#          reviewers are the human gate), then applies exactly that saved
+#          plan. If the state moved in between, apply refuses and the run
+#          must be started again.
+#
+# Authentication is keyless: GitHub's OIDC token is exchanged through Workload
+# Identity Federation for the tofu-apply service account (project Owner),
+# which Google only hands to workflows running on refs/heads/main of this
+# repository. No key or token is stored anywhere.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "infra/**"
+      - ".github/workflows/infra-apply.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+# One at a time, in order; a queued run is never cancelled half way.
+concurrency:
+  group: infra-apply
+  cancel-in-progress: false
+
+env:
+  TOFU_VERSION: "1.10.7"
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
+  TF_VAR_region: ${{ vars.GCP_REGION }}
+  TOFU_STATE_BUCKET: ${{ vars.TOFU_STATE_BUCKET }}
+
+jobs:
+  plan:
+    name: plan
+    # workflow_dispatch can be started from any branch; only main may apply
+    # (and Google would refuse the service account to any other ref).
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+        working-directory: infra/main
+    outputs:
+      has_changes: ${{ steps.plan.outputs.has_changes }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+          tofu_wrapper: false
+
+      - name: Format
+        run: tofu fmt -check -recursive -diff
+        working-directory: infra
+
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.TOFU_APPLY_SA }}
+
+      - name: Init
+        run: tofu init -backend-config="bucket=${TOFU_STATE_BUCKET}"
+
+      - name: Validate
+        run: tofu validate -no-color
+
+      - name: Plan
+        id: plan
+        run: |
+          set -o pipefail
+          status=0
+          tofu plan -lock-timeout=5m -no-color -detailed-exitcode -out=tfplan 2>&1 |
+            tee "${RUNNER_TEMP}/plan.txt" || status=$?
+          # 0: nothing to do. 2: there are changes. Anything else: failure.
+          case "$status" in
+            0) echo "has_changes=false" >> "$GITHUB_OUTPUT" ;;
+            2) echo "has_changes=true" >> "$GITHUB_OUTPUT" ;;
+            *) exit "$status" ;;
+          esac
+
+      - name: Plan to job summary
+        if: ${{ !cancelled() }}
+        run: |
+          plan="${RUNNER_TEMP}/plan.txt"
+          {
+            echo "## infra plan (to be applied after approval)"
+            echo
+            if [ -s "$plan" ]; then
+              echo '```'
+              # A job summary holds at most 1 MiB.
+              head -c 900000 "$plan"
+              echo
+              echo '```'
+              if [ "$(wc -c < "$plan")" -gt 900000 ]; then
+                echo "_Truncated; the full plan is in the job log._"
+              fi
+            else
+              echo "_No plan was produced; see the job log._"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The saved plan is what gets applied. This configuration takes no
+      # secret values, so the plan file holds none.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: steps.plan.outputs.has_changes == 'true'
+        with:
+          name: tfplan
+          path: infra/main/tfplan
+          if-no-files-found: error
+          retention-days: 5
+
+  apply:
+    name: apply
+    needs: plan
+    if: needs.plan.outputs.has_changes == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    # Required reviewers on this environment approve the plan above before
+    # anything changes.
+    environment: production
+    defaults:
+      run:
+        shell: bash
+        working-directory: infra/main
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+          tofu_wrapper: false
+
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.TOFU_APPLY_SA }}
+
+      - name: Init
+        run: tofu init -backend-config="bucket=${TOFU_STATE_BUCKET}"
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: tfplan
+          path: infra/main
+
+      - name: Apply
+        run: tofu apply -lock-timeout=5m -no-color tfplan
+
+      - name: Outputs to job summary
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo "## infra outputs"
+            echo
+            echo '```'
+            tofu output -no-color || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
