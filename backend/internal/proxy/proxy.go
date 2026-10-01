@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -84,6 +85,10 @@ func (p *Proxy) authorize(w http.ResponseWriter, r *http.Request, id string, per
 		http.Error(w, "sign in required", http.StatusUnauthorized)
 		return false
 	}
+	if !sessions.ValidID(id) {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return false
+	}
 	if p.SyncAdmin != nil {
 		if err := p.SyncAdmin(r, u); err != nil {
 			http.Error(w, "authorization unavailable", http.StatusServiceUnavailable)
@@ -92,6 +97,7 @@ func (p *Proxy) authorize(w http.ResponseWriter, r *http.Request, id string, per
 	}
 	allowed, err := p.Authz.Check(r.Context(), u.Subject, id, perm)
 	if err != nil {
+		slog.Error("authorization check failed", "session", id, "err", err)
 		http.Error(w, "authorization unavailable", http.StatusServiceUnavailable)
 		return false
 	}
@@ -162,6 +168,10 @@ func (p *Proxy) mcp(w http.ResponseWriter, r *http.Request) {
 // token in the path is the credential, and mcp-js checks it.
 func (p *Proxy) upload(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if !sessions.ValidID(id) {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
 	p.Idle.Touch(id)
 	p.forward(w, r, id, mcpPort, "/api/artifact-uploads/"+r.PathValue("token"))
 }

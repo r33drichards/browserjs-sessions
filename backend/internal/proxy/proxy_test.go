@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"k8s.io/client-go/dynamic"
+	dynfake "k8s.io/client-go/dynamic/fake"
 
 	"github.com/r33drichards/browserjs-sessions/backend/internal/auth"
 	"github.com/r33drichards/browserjs-sessions/backend/internal/authz"
@@ -357,5 +358,42 @@ func TestViewerCanWatchButNotDrive(t *testing.T) {
 		if c.path != "/websockify" {
 			t.Errorf("a viewer's request reached the pod: %+v", c)
 		}
+	}
+}
+
+// Something that is not a session ID never reaches the cluster, on the
+// routes with a login and the one without.
+func TestMalformedIDsAre404(t *testing.T) {
+	e := newEnv(t)
+	fake := e.client.(*dynfake.FakeDynamicClient)
+	fake.ClearActions()
+	for _, c := range []struct{ method, path, token string }{
+		{"POST", "/s/not-an-id/mcp", "alice"},
+		{"POST", "/s/s-ABCDEFGHIJ/mcp/sse", "alice"},
+		{"PUT", "/s/not-an-id/api/artifact-uploads/abc123", ""},
+		{"PUT", "/s/..%2Fpods/api/artifact-uploads/abc123", ""},
+		{"POST", "/api/sessions/not-an-id/vnc-ticket", "alice"},
+		{"GET", "/s/not-an-id/vnc?ticket=x", ""},
+	} {
+		rec := e.do(c.method, c.path, c.token, "")
+		if c.path == "/s/not-an-id/vnc?ticket=x" {
+			if rec.Code != http.StatusUnauthorized {
+				t.Errorf("%s %s: %d, want 401", c.method, c.path, rec.Code)
+			}
+			continue
+		}
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s %s: %d, want 404", c.method, c.path, rec.Code)
+		}
+	}
+	if n := len(fake.Actions()); n != 0 {
+		t.Errorf("malformed IDs caused %d cluster requests: %v", n, fake.Actions())
+	}
+	if len(*e.calls) != 0 {
+		t.Error("a request for a malformed ID reached a pod")
+	}
+	// Without a token the answer is still the sign-in challenge.
+	if rec := e.do("POST", "/s/not-an-id/mcp", "", ""); rec.Code != http.StatusUnauthorized {
+		t.Errorf("no token: %d, want 401", rec.Code)
 	}
 }
