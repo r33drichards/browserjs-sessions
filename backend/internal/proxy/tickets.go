@@ -9,6 +9,10 @@ import (
 
 const ticketTTL = 30 * time.Second
 
+// tickets holds the VNC tickets issued and not yet redeemed.
+//
+// They live in this process only: a ticket can be redeemed only by the
+// replica that issued it, so the backend must run as exactly one replica.
 type tickets struct {
 	now func() time.Time
 	mu  sync.Mutex
