@@ -57,3 +57,27 @@ func TestForget(t *testing.T) {
 		t.Errorf("forgotten session treated as known: %v", got)
 	}
 }
+
+func TestRetain(t *testing.T) {
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	tr := New(15*time.Minute, func() time.Time { return now })
+
+	tr.Touch("kept")
+	tr.Touch("gone")
+	done := tr.Open("gone-open") // a connection left over from a deleted session
+	tr.Retain([]string{"kept", "never-seen"})
+
+	if _, ok := tr.last["kept"]; !ok || len(tr.last) != 1 || len(tr.open) != 0 {
+		t.Errorf("after Retain: last = %v, open = %v; want only kept", tr.last, tr.open)
+	}
+	done() // closing a connection of a dropped session must not leave a count behind
+	if len(tr.open) != 0 {
+		t.Errorf("open = %v after closing a dropped session's connection", tr.open)
+	}
+	tr.Retain([]string{"kept"})
+	now = now.Add(16 * time.Minute)
+	// kept is still on its old clock; the dropped ones start over.
+	if got := tr.Idle([]string{"kept", "gone", "gone-open"}); !slices.Equal(got, []string{"kept"}) {
+		t.Errorf("Idle = %v, want [kept]", got)
+	}
+}

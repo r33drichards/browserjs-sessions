@@ -54,6 +54,27 @@ func (t *Tracker) Forget(id string) {
 	delete(t.open, id)
 }
 
+// Retain drops every tracked session that is not in ids, so sessions that
+// no longer exist do not accumulate.
+func (t *Tracker) Retain(ids []string) {
+	keep := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		keep[id] = struct{}{}
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for id := range t.last {
+		if _, ok := keep[id]; !ok {
+			delete(t.last, id)
+		}
+	}
+	for id := range t.open {
+		if _, ok := keep[id]; !ok {
+			delete(t.open, id)
+		}
+	}
+}
+
 // Idle returns which of the given running sessions should be put to sleep.
 // A session seen for the first time starts its idle period now.
 func (t *Tracker) Idle(running []string) []string {
