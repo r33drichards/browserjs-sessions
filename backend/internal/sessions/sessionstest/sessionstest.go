@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/dynamic"
 	dynfake "k8s.io/client-go/dynamic/fake"
@@ -50,17 +51,77 @@ volumeClaimTemplates:
 `
 
 // New returns a store on an empty fake cluster, plus the raw client so tests
-// can play the controller's part (set status).
+// can play the controller's part (set status) and inspect what was written.
 func New(t *testing.T) (*sessions.Store, dynamic.Interface) {
 	t.Helper()
 	client := dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
 		map[schema.GroupVersionResource]string{sessions.SandboxGVR: "SandboxList"})
 	emulateAPIServer(client)
-	store, err := sessions.NewStore(client, Namespace, Blueprint, "https://sessions.example.com")
+	store, err := sessions.NewStore(contextAware{client}, Namespace, Blueprint, "https://sessions.example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
 	return store, client
+}
+
+// contextAware makes the store's requests fail once their context is done,
+// as requests to a real API server do. (The stock fake ignores the context.)
+type contextAware struct{ dynamic.Interface }
+
+func (c contextAware) Resource(gvr schema.GroupVersionResource) dynamic.NamespaceableResourceInterface {
+	return contextAwareResource{c.Interface.Resource(gvr)}
+}
+
+type contextAwareResource struct {
+	dynamic.NamespaceableResourceInterface
+}
+
+func (r contextAwareResource) Namespace(ns string) dynamic.ResourceInterface {
+	return contextAwareNamespace{r.NamespaceableResourceInterface.Namespace(ns)}
+}
+
+type contextAwareNamespace struct{ dynamic.ResourceInterface }
+
+func (r contextAwareNamespace) Create(ctx context.Context, obj *unstructured.Unstructured, o metav1.CreateOptions, sub ...string) (*unstructured.Unstructured, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return r.ResourceInterface.Create(ctx, obj, o, sub...)
+}
+
+func (r contextAwareNamespace) Update(ctx context.Context, obj *unstructured.Unstructured, o metav1.UpdateOptions, sub ...string) (*unstructured.Unstructured, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return r.ResourceInterface.Update(ctx, obj, o, sub...)
+}
+
+func (r contextAwareNamespace) Delete(ctx context.Context, name string, o metav1.DeleteOptions, sub ...string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return r.ResourceInterface.Delete(ctx, name, o, sub...)
+}
+
+func (r contextAwareNamespace) Get(ctx context.Context, name string, o metav1.GetOptions, sub ...string) (*unstructured.Unstructured, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return r.ResourceInterface.Get(ctx, name, o, sub...)
+}
+
+func (r contextAwareNamespace) List(ctx context.Context, o metav1.ListOptions) (*unstructured.UnstructuredList, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return r.ResourceInterface.List(ctx, o)
+}
+
+func (r contextAwareNamespace) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, o metav1.PatchOptions, sub ...string) (*unstructured.Unstructured, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return r.ResourceInterface.Patch(ctx, name, pt, data, o, sub...)
 }
 
 // emulateAPIServer adds the two API server behaviours the stock fake leaves

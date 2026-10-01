@@ -2,27 +2,80 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/r33drichards/browserjs-sessions/backend/internal/auth"
 	"github.com/r33drichards/browserjs-sessions/backend/internal/authz"
 	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
 )
 
+// How long a pushed admin flag is trusted before it is pushed again.
+const adminSyncTTL = time.Minute
+
 type API struct {
 	store *sessions.Store
 	authz authz.Authorizer
 	cap   int
+	now   func() time.Time
+
+	// Both locks are per user. They are enough because there is one backend
+	// replica; more would need the cap enforced cluster-side.
+	creating keyedMutex // the cap is "list, then create"
+	syncing  keyedMutex // one admin-flag push at a time
 
 	mu        sync.Mutex
-	adminSeen map[string]bool // last admin flag pushed to the authorizer, per user
+	adminSeen map[string]adminFlag // last admin flag pushed to the authorizer, per user
+}
+
+type adminFlag struct {
+	admin   bool
+	expires time.Time
 }
 
 func New(store *sessions.Store, az authz.Authorizer, maxPerUser int) *API {
-	return &API{store: store, authz: az, cap: maxPerUser, adminSeen: map[string]bool{}}
+	return &API{store: store, authz: az, cap: maxPerUser, now: time.Now, adminSeen: map[string]adminFlag{}}
+}
+
+// keyedMutex is a mutex per key. A key takes up space only while it is held
+// or waited for.
+type keyedMutex struct {
+	mu      sync.Mutex
+	entries map[string]*keyedEntry
+}
+
+type keyedEntry struct {
+	mu   sync.Mutex
+	refs int
+}
+
+func (k *keyedMutex) lock(key string) (unlock func()) {
+	k.mu.Lock()
+	if k.entries == nil {
+		k.entries = map[string]*keyedEntry{}
+	}
+	e := k.entries[key]
+	if e == nil {
+		e = &keyedEntry{}
+		k.entries[key] = e
+	}
+	e.refs++
+	k.mu.Unlock()
+
+	e.mu.Lock()
+	return func() {
+		e.mu.Unlock()
+		k.mu.Lock()
+		if e.refs--; e.refs == 0 {
+			delete(k.entries, key)
+		}
+		k.mu.Unlock()
+	}
 }
 
 func (a *API) Register(mux *http.ServeMux) {
@@ -62,20 +115,37 @@ func (a *API) user(next userHandler) http.HandlerFunc {
 	}
 }
 
-// SyncAdmin pushes the user's admin flag to the authorizer when it changes.
+// SyncAdmin pushes the user's admin flag to the authorizer when it changes,
+// and again once what was pushed is older than adminSyncTTL. Pushes for one
+// user happen one at a time, so what is remembered here is what the
+// authorizer was last told.
 func (a *API) SyncAdmin(r *http.Request, u auth.User) error {
+	unlock := a.syncing.lock(u.Subject)
+	defer unlock()
+
+	now := a.now()
 	a.mu.Lock()
 	seen, known := a.adminSeen[u.Subject]
 	a.mu.Unlock()
-	if known && seen == u.Admin {
+	if known && seen.admin == u.Admin && now.Before(seen.expires) {
 		return nil
 	}
-	if err := a.authz.SetAdmin(r.Context(), u.Subject, u.Admin); err != nil {
+	err := a.authz.SetAdmin(r.Context(), u.Subject, u.Admin)
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for subject, flag := range a.adminSeen { // drop users who have not been back
+		if !now.Before(flag.expires) {
+			delete(a.adminSeen, subject)
+		}
+	}
+	if err != nil {
+		// What the authorizer holds is now unknown: push again next time.
+		delete(a.adminSeen, u.Subject)
+		slog.Error("admin sync failed", "user", u.Subject, "err", err)
 		return err
 	}
-	a.mu.Lock()
-	a.adminSeen[u.Subject] = u.Admin
-	a.mu.Unlock()
+	a.adminSeen[u.Subject] = adminFlag{admin: u.Admin, expires: now.Add(adminSyncTTL)}
 	return nil
 }
 
@@ -86,8 +156,13 @@ type sessionHandler func(w http.ResponseWriter, r *http.Request, id string)
 func (a *API) session(p authz.Permission, next sessionHandler) http.HandlerFunc {
 	return a.user(func(w http.ResponseWriter, r *http.Request, u auth.User) {
 		id := r.PathValue("id")
+		if !sessions.ValidID(id) {
+			writeError(w, http.StatusNotFound, "session not found")
+			return
+		}
 		allowed, err := a.authz.Check(r.Context(), u.Subject, id, p)
 		if err != nil {
+			slog.Error("authorization check failed", "session", id, "err", err)
 			writeError(w, http.StatusServiceUnavailable, "authorization unavailable")
 			return
 		}
@@ -103,9 +178,10 @@ func (a *API) storeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, sessions.ErrNotFound):
 		writeError(w, http.StatusNotFound, "session not found")
-	case errors.Is(err, sessions.ErrInvalidName):
+	case errors.Is(err, sessions.ErrInvalidName), errors.Is(err, sessions.ErrInvalidAction):
 		writeError(w, http.StatusBadRequest, err.Error())
 	default:
+		slog.Error("cluster request failed", "err", err)
 		writeError(w, http.StatusInternalServerError, "cluster request failed")
 	}
 }
@@ -133,6 +209,10 @@ func (a *API) create(w http.ResponseWriter, r *http.Request, u auth.User) {
 		writeError(w, http.StatusBadRequest, "body must be JSON with a name")
 		return
 	}
+	// Counting and creating must not interleave with the same user's other
+	// creates, or each of them sees room for one more.
+	unlock := a.creating.lock(u.Subject)
+	defer unlock()
 	mine, err := a.store.List(r.Context(), u.Subject)
 	if err != nil {
 		a.storeError(w, err)
@@ -148,8 +228,15 @@ func (a *API) create(w http.ResponseWriter, r *http.Request, u auth.User) {
 		return
 	}
 	if err := a.authz.AddSession(r.Context(), s.ID, u.Subject); err != nil {
-		// A session nobody is allowed to reach is worse than none.
-		_ = a.store.Delete(r.Context(), s.ID)
+		// A session nobody is allowed to reach is worse than none. The
+		// request may be why this failed (the caller hung up), so the
+		// rollback must not depend on it.
+		slog.Error("recording session owner failed; removing the session", "session", s.ID, "err", err)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Second)
+		defer cancel()
+		if err := a.store.Delete(ctx, s.ID); err != nil && !errors.Is(err, sessions.ErrNotFound) {
+			slog.Error("create rollback failed: session left with no owner relation", "session", s.ID, "owner", u.Subject, "err", err)
+		}
 		writeError(w, http.StatusServiceUnavailable, "authorization unavailable")
 		return
 	}
@@ -174,23 +261,9 @@ func (a *API) patch(w http.ResponseWriter, r *http.Request, id string) {
 		writeError(w, http.StatusBadRequest, "body must be JSON")
 		return
 	}
-	var err error
-	if body.Name != nil {
-		err = a.store.Rename(r.Context(), id, *body.Name)
-	}
-	if err == nil {
-		switch body.Action {
-		case "":
-		case "stop":
-			err = a.store.Suspend(r.Context(), id, sessions.StoppedByUser)
-		case "resume":
-			err = a.store.Resume(r.Context(), id)
-		default:
-			writeError(w, http.StatusBadRequest, `action must be "stop" or "resume"`)
-			return
-		}
-	}
-	if err != nil {
+	// One write, validated as a whole: a bad action must not leave a rename
+	// behind.
+	if err := a.store.Update(r.Context(), id, body.Name, body.Action); err != nil {
 		a.storeError(w, err)
 		return
 	}
@@ -204,6 +277,7 @@ func (a *API) delete(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	if err := a.authz.RemoveSession(r.Context(), id); err != nil {
 		// The session is gone; the reconcile loop (Task 12) clears the leftover.
+		slog.Warn("removing session from the authorizer failed; left for reconcile", "session", id, "err", err)
 		w.Header().Set("X-Authz-Cleanup", "deferred")
 	}
 	w.WriteHeader(http.StatusNoContent)
