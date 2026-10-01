@@ -39,6 +39,7 @@
               pkgs.caddy
               pkgs.chromium
               pkgs.coreutils
+              pkgs.gnused
               pkgs.openbox
               pkgs.procps
               pkgs.python3Packages.websockify

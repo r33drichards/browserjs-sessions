@@ -12,6 +12,7 @@
  * policy) is the public entry point.
  */
 
+import fs from 'node:fs';
 import http from 'node:http';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -127,19 +128,53 @@ async function runOperation(page, operation, images) {
 const tabs = new Map(); // name -> Page
 const tabQueues = new Map(); // name -> tail of that tab's pipeline queue
 
+// This process forgets `tabs` when it restarts, while Chromium restores its
+// pages (--restore-last-session). Remember name -> URL on disk so a name is
+// rebound to its restored page instead of opening a blank tab beside it.
+const TAB_STATE = process.env.TAB_STATE_FILE || '';
+let savedTabs = {};
+if (TAB_STATE) {
+  try {
+    savedTabs = JSON.parse(fs.readFileSync(TAB_STATE, 'utf8'));
+  } catch {}
+}
+
+function saveTabs() {
+  if (!TAB_STATE) return;
+  // Names not rebound yet since the restart keep their saved URL.
+  const state = { ...savedTabs };
+  for (const [name, page] of tabs) if (!page.isClosed()) state[name] = page.url();
+  savedTabs = state;
+  try {
+    fs.writeFileSync(TAB_STATE, JSON.stringify(state));
+  } catch {}
+}
+
 async function getTab(name) {
   const existing = tabs.get(name);
   // Closed over VNC, or Chromium restarted underneath us: start over.
   if (existing && !existing.isClosed() && existing.browser().connected) return existing;
 
   const browser = await getBrowser();
-  // Adopt a spare blank tab (Chromium's startup tab) before opening another.
+  // Prefer the restored page this name last had, then adopt a spare blank
+  // tab (Chromium's startup tab) before opening another.
   const owned = new Set(tabs.values());
-  const blank = (await browser.pages()).find((p) => !owned.has(p) && p.url() === 'about:blank');
-  const page = blank || (await browser.newPage());
+  const pages = await browser.pages();
+  const wanted = savedTabs[name];
+  const restored = wanted && pages.find((p) => !owned.has(p) && p.url() === wanted);
+  const blank = pages.find((p) => !owned.has(p) && p.url() === 'about:blank');
+  const page = restored || blank || (await browser.newPage());
   tabs.set(name, page);
   page.once('close', () => {
     if (tabs.get(name) === page) tabs.delete(name);
+    // A quitting Chromium closes every page just before it disconnects; that
+    // must not wipe the saved state, so only forget the tab if the browser is
+    // still there a moment later.
+    setTimeout(() => {
+      if (!browser.connected) return;
+      if (!tabs.has(name)) delete savedTabs[name];
+      saveTabs();
+    }, 1000);
   });
   return page;
 }
@@ -176,6 +211,7 @@ async function executePipeline(operations, tabName, close) {
       }
     } finally {
       if (close) await page.close().catch(() => {});
+      saveTabs();
     }
     return { results, images };
   });

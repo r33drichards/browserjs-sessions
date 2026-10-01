@@ -1,14 +1,28 @@
 #!/usr/bin/env bash
 # One headed Chromium on Xvfb, viewable over noVNC (behind Caddy basic auth on
 # $PORT) and drivable over CDP by the browser MCP server (private port 8081).
+#
+# SESSION_MODE=1 (a browserjs session pod): no Caddy and no VNC password, the
+# backend is the only way in; websockify listens on all interfaces and
+# Chromium restores its tabs across restarts.
 set -euo pipefail
 
-: "${VNC_PASSWORD:?set VNC_PASSWORD (basic-auth password for the /vnc viewer)}"
 VNC_USER="${VNC_USER:-admin}"
 PORT="${PORT:-8080}"
 DATA_DIR="${DATA_DIR:-/data}"
 PROFILE_DIR="$DATA_DIR/chrome"
 SCREEN="${SCREEN_GEOMETRY:-1280x800x24}"
+
+SESSION_MODE="${SESSION_MODE:-0}"
+if [ "$SESSION_MODE" != 1 ]; then
+  : "${VNC_PASSWORD:?set VNC_PASSWORD (basic-auth password for the /vnc viewer)}"
+fi
+WEBSOCKIFY_BIND=127.0.0.1
+RESTORE_FLAG=""
+if [ "$SESSION_MODE" = 1 ]; then
+  WEBSOCKIFY_BIND=0.0.0.0
+  RESTORE_FLAG="--restore-last-session"
+fi
 
 export DISPLAY=:99
 export HOME=/root
@@ -24,9 +38,40 @@ chmod 1777 /tmp /tmp/.X11-unix
 rm -f "$PROFILE_DIR"/Singleton{Lock,Socket,Cookie}
 rm -f /tmp/.X99-lock /tmp/.X11-unix/X99
 
+# The main Chromium process: launched with our profile and, unlike its
+# renderer/gpu/utility children, no --type= flag. Matching on the command line
+# works whatever the Nix wrapper names the binary (chromium, .chromium-wrapped).
+browser_pids() {
+  local pid cmd
+  for pid in $(pgrep -f -- "--user-data-dir=$PROFILE_DIR" || true); do
+    cmd="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)"
+    case "$cmd" in
+      *--type=*) ;;
+      *) echo "$pid" ;;
+    esac
+  done
+}
+
 pids=()
-cleanup() { kill "${pids[@]}" 2>/dev/null || true; }
-trap cleanup EXIT
+chromium_loop=""
+# Chromium only writes a complete session file on a clean exit, so on SIGTERM
+# (pod shutdown, suspend) ask it to quit and wait before killing the rest.
+cleanup() {
+  local bp
+  # Stop the restart loop first so it cannot bring Chromium back.
+  [ -z "$chromium_loop" ] || kill "$chromium_loop" 2>/dev/null || true
+  bp="$(browser_pids)"
+  if [ -n "$bp" ]; then
+    # shellcheck disable=SC2086
+    kill -TERM $bp 2>/dev/null || true
+    for _ in $(seq 1 50); do
+      [ -n "$(browser_pids)" ] || break
+      sleep 0.2
+    done
+  fi
+  kill "${pids[@]}" 2>/dev/null || true
+}
+trap cleanup EXIT TERM INT
 
 Xvfb :99 -screen 0 "$SCREEN" -nolisten tcp -ac &
 pids+=($!)
@@ -42,6 +87,19 @@ pids+=($!)
 # crashes, bring it back with the same profile.
 (
   while true; do
+    # After an unclean exit Chromium shows a "restore pages?" bubble instead
+    # of restoring; mark the previous exit as clean.
+    prefs="$PROFILE_DIR/Default/Preferences"
+    if [ -f "$prefs" ]; then
+      sed -i 's/"exit_type":"[A-Za-z]*"/"exit_type":"Normal"/; s/"exited_cleanly":false/"exited_cleanly":true/' "$prefs"
+    fi
+    # A start URL is opened next to the restored tabs, so with a session to
+    # restore pass none (or every restart would add one more blank tab).
+    start_url=about:blank
+    if [ -n "$RESTORE_FLAG" ] && [ -n "$(ls -A "$PROFILE_DIR/Default/Sessions" 2>/dev/null)" ]; then
+      start_url=""
+    fi
+    # shellcheck disable=SC2086
     chromium \
       --no-sandbox \
       --disable-gpu \
@@ -55,24 +113,28 @@ pids+=($!)
       --window-position=0,0 \
       --window-size="${SCREEN%x*}" \
       --start-maximized \
-      about:blank || true
+      $RESTORE_FLAG \
+      $start_url || true
     echo "chromium exited; restarting in 2s" >&2
     rm -f "$PROFILE_DIR"/Singleton{Lock,Socket,Cookie}
     sleep 2
   done
 ) &
+chromium_loop=$!
 pids+=($!)
 
 x11vnc -display :99 -localhost -rfbport 5900 -forever -shared -nopw -quiet -noxdamage &
 pids+=($!)
 
-websockify --web "$NOVNC_WEB" 127.0.0.1:6080 127.0.0.1:5900 &
+websockify --web "$NOVNC_WEB" "$WEBSOCKIFY_BIND:6080" 127.0.0.1:5900 &
 pids+=($!)
 
-VNC_HASH="$(caddy hash-password --plaintext "$VNC_PASSWORD")"
-export VNC_USER VNC_HASH PORT
-caddy run --adapter caddyfile --config "$CADDYFILE" &
-pids+=($!)
+if [ "$SESSION_MODE" != 1 ]; then
+  VNC_HASH="$(caddy hash-password --plaintext "$VNC_PASSWORD")"
+  export VNC_USER VNC_HASH PORT
+  caddy run --adapter caddyfile --config "$CADDYFILE" &
+  pids+=($!)
+fi
 
 browser-mcp &
 pids+=($!)
