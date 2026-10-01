@@ -256,6 +256,8 @@ func mcpPath(r *http.Request) (string, bool) {
 
 // mcp is the session's MCP endpoint. The route is Pomerium's: it runs the
 // MCP client's sign-in and says who the user is in its signed assertion.
+// A call (POST, DELETE) wakes a sleeping session and holds it awake until
+// the call is over; see mcpStream for GET.
 //
 // It never answers 401. That would be the cue for an MCP client to sign in,
 // which is Pomerium's to give; from here Pomerium would turn it into a 502.
@@ -275,11 +277,36 @@ func (p *Proxy) mcp(w http.ResponseWriter, r *http.Request) {
 	if !p.allowed(w, r, u, id) {
 		return
 	}
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		p.mcpStream(w, r, id, path)
+		return
+	}
 	// The call holds the session awake until it is over, however long the
 	// pod takes: a tool call may outlast the idle period.
 	done := p.Idle.Open(id)
 	defer done()
 	s, err := p.Waker.EnsureAwake(r.Context(), id)
+	if err != nil {
+		lookupFailed(w, r, id, err)
+		return
+	}
+	p.forward(w, r, s, mcpPort, path, p.patient)
+}
+
+// mcpStream answers a GET on the MCP endpoint: the stream on which the
+// server sends events to the client. Some clients keep one open for as long
+// as the server is configured, whether or not anything is using it, so it
+// is not taken for use of the session: it does not wake a session, is not
+// activity, and does not keep the pod. A session that is not running has no
+// stream to offer, which MCP lets a server say with 405; the client's next
+// call wakes it.
+func (p *Proxy) mcpStream(w http.ResponseWriter, r *http.Request, id, path string) {
+	s, err := p.Waker.Running(r.Context(), id)
+	if errors.Is(err, ErrNotRunning) {
+		w.Header().Set("Allow", "POST, DELETE")
+		http.Error(w, "session is not running; there is no event stream until a call wakes it", http.StatusMethodNotAllowed)
+		return
+	}
 	if err != nil {
 		lookupFailed(w, r, id, err)
 		return
