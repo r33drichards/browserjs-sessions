@@ -135,9 +135,11 @@ const TAB_STATE = process.env.TAB_STATE_FILE || '';
 let savedTabs = {};
 if (TAB_STATE) {
   try {
-    savedTabs = JSON.parse(fs.readFileSync(TAB_STATE, 'utf8'));
+    const parsed = JSON.parse(fs.readFileSync(TAB_STATE, 'utf8'));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) savedTabs = parsed;
   } catch {}
 }
+let writtenTabs = JSON.stringify(savedTabs);
 
 function saveTabs() {
   if (!TAB_STATE) return;
@@ -145,8 +147,13 @@ function saveTabs() {
   const state = { ...savedTabs };
   for (const [name, page] of tabs) if (!page.isClosed()) state[name] = page.url();
   savedTabs = state;
+  const json = JSON.stringify(state);
+  if (json === writtenTabs) return;
   try {
-    fs.writeFileSync(TAB_STATE, JSON.stringify(state));
+    // Rename over the old file so a crash mid-write cannot leave it truncated.
+    fs.writeFileSync(TAB_STATE + '.tmp', json);
+    fs.renameSync(TAB_STATE + '.tmp', TAB_STATE);
+    writtenTabs = json;
   } catch {}
 }
 
@@ -160,21 +167,19 @@ async function getTab(name) {
   // tab (Chromium's startup tab) before opening another.
   const owned = new Set(tabs.values());
   const pages = await browser.pages();
+  // Matched on the exact URL: a tab navigated after its last pipeline (by a
+  // human over VNC, or by the page itself), or redirected when restored, will
+  // not rebind and the name gets a fresh tab.
   const wanted = savedTabs[name];
   const restored = wanted && pages.find((p) => !owned.has(p) && p.url() === wanted);
   const blank = pages.find((p) => !owned.has(p) && p.url() === 'about:blank');
   const page = restored || blank || (await browser.newPage());
   tabs.set(name, page);
+  // A quitting Chromium closes every page just like a human closing a tab
+  // does, so this must leave the saved state alone: only an explicit
+  // `close: true` forgets a name (see executePipeline).
   page.once('close', () => {
     if (tabs.get(name) === page) tabs.delete(name);
-    // A quitting Chromium closes every page just before it disconnects; that
-    // must not wipe the saved state, so only forget the tab if the browser is
-    // still there a moment later.
-    setTimeout(() => {
-      if (!browser.connected) return;
-      if (!tabs.has(name)) delete savedTabs[name];
-      saveTabs();
-    }, 1000);
   });
   return page;
 }
@@ -210,7 +215,11 @@ async function executePipeline(operations, tabName, close) {
         }
       }
     } finally {
-      if (close) await page.close().catch(() => {});
+      if (close) {
+        await page.close().catch(() => {});
+        if (tabs.get(tabName) === page) tabs.delete(tabName);
+        delete savedTabs[tabName];
+      }
       saveTabs();
     }
     return { results, images };
