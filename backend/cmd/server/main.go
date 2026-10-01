@@ -62,7 +62,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	verifier, err := auth.NewJWKSVerifier(ctx, cfg.OIDCJWKSURL, cfg.OIDCIssuer, cfg.AdminRole)
+	verifier, err := auth.NewJWKSVerifier(ctx, cfg.OIDCJWKSURL, cfg.OIDCIssuer, cfg.AdminRole, cfg.AllowedClients)
 	if err != nil {
 		return err
 	}

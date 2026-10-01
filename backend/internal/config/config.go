@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +17,8 @@ type Config struct {
 	OIDCIssuer  string // expected `iss` claim
 	OIDCJWKSURL string // where to fetch signing keys (may differ from the issuer host in-cluster)
 	AdminRole   string // Keycloak realm role that makes a user an admin
+	// Clients (the token's `azp`) whose access tokens are accepted.
+	AllowedClients []string
 
 	TopazAddr     string // Topaz directory gRPC address
 	BlueprintPath string // session pod blueprint (YAML template)
@@ -50,22 +53,47 @@ func FromEnv(get func(string) string) (Config, error) {
 		KCRealm:       or("KC_REALM", "browserjs"),
 		KCClientID:    or("KC_CLIENT_ID", "browserjs-spa"),
 	}
-	for k, v := range map[string]string{
-		"PUBLIC_URL": c.PublicURL, "OIDC_ISSUER": c.OIDCIssuer, "OIDC_JWKS_URL": c.OIDCJWKSURL, "TOPAZ_ADDR": c.TopazAddr,
+	for _, req := range []struct{ name, value string }{
+		{"PUBLIC_URL", c.PublicURL}, {"OIDC_ISSUER", c.OIDCIssuer}, {"OIDC_JWKS_URL", c.OIDCJWKSURL}, {"TOPAZ_ADDR", c.TopazAddr},
 	} {
-		if v == "" {
-			return Config{}, fmt.Errorf("%s is required", k)
+		if req.value == "" {
+			return Config{}, fmt.Errorf("%s is required", req.name)
 		}
 	}
+	if u, err := url.Parse(c.PublicURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return Config{}, fmt.Errorf("PUBLIC_URL must be an absolute http(s) URL, got %q", c.PublicURL)
+	}
+	for _, client := range strings.Split(or("OIDC_ALLOWED_CLIENTS", "browserjs-spa,claude-connector"), ",") {
+		if client = strings.TrimSpace(client); client != "" {
+			c.AllowedClients = append(c.AllowedClients, client)
+		}
+	}
+	if len(c.AllowedClients) == 0 {
+		return Config{}, fmt.Errorf("OIDC_ALLOWED_CLIENTS must name at least one client")
+	}
 	var err error
-	if c.IdleAfter, err = time.ParseDuration(or("IDLE_AFTER", "15m")); err != nil {
+	if c.IdleAfter, err = positiveDuration(or("IDLE_AFTER", "15m")); err != nil {
 		return Config{}, fmt.Errorf("IDLE_AFTER: %w", err)
 	}
-	if c.ReadyTimeout, err = time.ParseDuration(or("READY_TIMEOUT", "3m")); err != nil {
+	if c.ReadyTimeout, err = positiveDuration(or("READY_TIMEOUT", "3m")); err != nil {
 		return Config{}, fmt.Errorf("READY_TIMEOUT: %w", err)
 	}
 	if c.MaxSessionsPerUser, err = strconv.Atoi(or("MAX_SESSIONS_PER_USER", "5")); err != nil {
 		return Config{}, fmt.Errorf("MAX_SESSIONS_PER_USER: %w", err)
 	}
+	if c.MaxSessionsPerUser < 1 {
+		return Config{}, fmt.Errorf("MAX_SESSIONS_PER_USER must be at least 1, got %d", c.MaxSessionsPerUser)
+	}
 	return c, nil
+}
+
+func positiveDuration(s string) (time.Duration, error) {
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, err
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("must be positive, got %s", s)
+	}
+	return d, nil
 }
