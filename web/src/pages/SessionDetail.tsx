@@ -5,12 +5,13 @@ import Container from "@cloudscape-design/components/container"
 import Header from "@cloudscape-design/components/header"
 import Input from "@cloudscape-design/components/input"
 import SpaceBetween from "@cloudscape-design/components/space-between"
-import { useCallback, useEffect, useState } from "react"
-import { useNavigate, useParams } from "react-router-dom"
+import { useCallback, useState } from "react"
+import { useNavigate } from "react-router-dom"
 import type { Session } from "../api"
-import { ApiError } from "../api"
+import { ApiError, isSessionId } from "../api"
 import { VncPane } from "../components/VncPane"
 import { Shell, StateTag, api } from "../shell"
+import { usePolling } from "../usePolling"
 
 const PLACEHOLDER: Record<string, string> = {
   starting: "Starting the browser…",
@@ -20,14 +21,17 @@ const PLACEHOLDER: Record<string, string> = {
   failed: "The session failed to start.",
 }
 
-export function SessionDetail() {
-  const { id = "" } = useParams()
+// Mounted with key={id}, so every piece of state below starts fresh per session.
+export function SessionDetail({ id }: { id: string }) {
   const navigate = useNavigate()
   const [session, setSession] = useState<Session | null>(null)
-  const [missing, setMissing] = useState(false)
-  const [error, setError] = useState("")
+  // An id the backend could never have issued is "missing" without asking it.
+  const [missing, setMissing] = useState(() => !isSessionId(id))
+  const [error, setError] = useState("") // last poll failure; cleared by the next good poll
+  const [actionError, setActionError] = useState("") // last failed action; polling leaves it alone
   const [name, setName] = useState<string | null>(null) // non-null while editing
-  const [copied, setCopied] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [copied, setCopied] = useState<"copied" | "failed" | null>(null)
 
   const load = useCallback(() => {
     api
@@ -39,11 +43,7 @@ export function SessionDetail() {
       .catch(e => (e instanceof ApiError && e.status === 404 ? setMissing(true) : setError(String(e.message))))
   }, [id])
 
-  useEffect(() => {
-    load()
-    const timer = setInterval(load, 3000)
-    return () => clearInterval(timer)
-  }, [load])
+  usePolling(load, !missing) // a 404 is final: stop asking
 
   if (missing) {
     return (
@@ -57,14 +57,46 @@ export function SessionDetail() {
   const mcpUrl = `${window.location.origin}/s/${session.id}/mcp`
   const awake = session.state === "running" || session.state === "starting"
 
-  async function act(fn: () => Promise<unknown>) {
+  // Runs an action and reports whether it succeeded; a failure stays on screen
+  // until the next action.
+  async function act(fn: () => Promise<unknown>): Promise<boolean> {
+    setActionError("")
     try {
       await fn()
-      setError("")
+      return true
     } catch (e) {
-      setError(String((e as Error).message))
+      setActionError(String(e instanceof Error ? e.message : e))
+      return false
     }
+  }
+
+  async function actAndReload(fn: () => Promise<unknown>) {
+    const ok = await act(fn)
     load()
+    return ok
+  }
+
+  async function remove(target: Session) {
+    if (!window.confirm(`Delete "${target.name}" and its disk? This cannot be undone.`)) return
+    setDeleting(true)
+    if (await act(() => api.deleteSession(target.id))) return navigate("/")
+    setDeleting(false)
+    load()
+  }
+
+  async function rename(target: Session, to: string) {
+    if (!to.trim()) return
+    if (await actAndReload(() => api.renameSession(target.id, to))) setName(null)
+  }
+
+  async function copyMcpUrl() {
+    try {
+      await navigator.clipboard.writeText(mcpUrl)
+      setCopied("copied")
+    } catch {
+      setCopied("failed")
+    }
+    setTimeout(() => setCopied(null), 1500)
   }
 
   return (
@@ -75,19 +107,13 @@ export function SessionDetail() {
           actions={
             <SpaceBetween direction="horizontal" size="xs">
               {awake ? (
-                <Button onClick={() => act(() => api.setRunning(session.id, false))}>Stop</Button>
+                <Button onClick={() => actAndReload(() => api.setRunning(session.id, false))}>Stop</Button>
               ) : (
-                <Button variant="primary" onClick={() => act(() => api.setRunning(session.id, true))}>
+                <Button variant="primary" onClick={() => actAndReload(() => api.setRunning(session.id, true))}>
                   {session.state === "asleep" ? "Wake" : "Resume"}
                 </Button>
               )}
-              <Button
-                onClick={async () => {
-                  if (!window.confirm(`Delete "${session.name}" and its disk? This cannot be undone.`)) return
-                  await api.deleteSession(session.id)
-                  navigate("/")
-                }}
-              >
+              <Button loading={deleting} onClick={() => remove(session)}>
                 Delete
               </Button>
             </SpaceBetween>
@@ -103,10 +129,7 @@ export function SessionDetail() {
           ) : (
             <SpaceBetween direction="horizontal" size="xs">
               <Input value={name} onChange={e => setName(e.detail.value)} autoFocus />
-              <Button
-                disabled={!name.trim()}
-                onClick={() => act(() => api.renameSession(session.id, name)).then(() => setName(null))}
-              >
+              <Button disabled={!name.trim()} onClick={() => rename(session, name)}>
                 Save
               </Button>
               <Button variant="link" onClick={() => setName(null)}>
@@ -116,6 +139,7 @@ export function SessionDetail() {
           )}
         </Header>
 
+        {actionError && <Box>⚠ {actionError}</Box>}
         {error && <Box>⚠ {error}</Box>}
 
         {session.state === "running" ? (
@@ -148,14 +172,8 @@ export function SessionDetail() {
             <Box variant="awsui-key-label">MCP URL — add this to Claude as a connector</Box>
             <SpaceBetween direction="horizontal" size="xs" alignItems="center">
               <span className="wf-mono">{mcpUrl}</span>
-              <Button
-                onClick={() => {
-                  void navigator.clipboard.writeText(mcpUrl)
-                  setCopied(true)
-                  setTimeout(() => setCopied(false), 1500)
-                }}
-              >
-                {copied ? "Copied" : "Copy"}
+              <Button onClick={copyMcpUrl}>
+                {copied === "copied" ? "Copied" : copied === "failed" ? "Couldn't copy" : "Copy"}
               </Button>
             </SpaceBetween>
           </Box>

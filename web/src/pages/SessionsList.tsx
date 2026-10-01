@@ -7,16 +7,18 @@ import Modal from "@cloudscape-design/components/modal"
 import SpaceBetween from "@cloudscape-design/components/space-between"
 import Table from "@cloudscape-design/components/table"
 import Toggle from "@cloudscape-design/components/toggle"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import type { Session } from "../api"
 import { isAdmin } from "../auth/keycloak"
 import { Shell, StateTag, api } from "../shell"
+import { usePolling } from "../usePolling"
 
 export function SessionsList() {
   const navigate = useNavigate()
   const [sessions, setSessions] = useState<Session[] | null>(null)
-  const [error, setError] = useState("")
+  const [error, setError] = useState("") // last poll failure; cleared by the next good poll
+  const [actionError, setActionError] = useState("") // last failed action; polling leaves it alone
   const [showAll, setShowAll] = useState(false)
   const [creating, setCreating] = useState(false)
   const [name, setName] = useState("")
@@ -27,19 +29,22 @@ export function SessionsList() {
     api
       .listSessions(showAll)
       .then(list => {
-        setSessions(list.sort((a, b) => b.created.localeCompare(a.created)))
+        setSessions([...list].sort((a, b) => b.created.localeCompare(a.created)))
         setError("")
       })
       .catch(e => setError(String(e.message ?? e)))
   }, [showAll])
 
-  useEffect(() => {
-    load()
-    const timer = setInterval(load, 3000)
-    return () => clearInterval(timer)
-  }, [load])
+  usePolling(load)
+
+  function openCreate() {
+    setName("")
+    setCreateError("")
+    setCreating(true)
+  }
 
   async function create() {
+    if (busy || !name.trim()) return
     setBusy(true)
     setCreateError("")
     try {
@@ -53,10 +58,11 @@ export function SessionsList() {
   }
 
   async function act(fn: () => Promise<unknown>) {
+    setActionError("")
     try {
       await fn()
     } catch (e) {
-      setError(String((e as Error).message))
+      setActionError(String(e instanceof Error ? e.message : e))
     }
     load()
   }
@@ -78,7 +84,7 @@ export function SessionsList() {
                     everyone&apos;s
                   </Toggle>
                 )}
-                <Button variant="primary" onClick={() => setCreating(true)}>
+                <Button variant="primary" onClick={openCreate}>
                   New session
                 </Button>
               </SpaceBetween>
@@ -120,6 +126,7 @@ export function SessionsList() {
           </Box>
         }
       />
+      {actionError && <Box padding={{ top: "s" }}>⚠ {actionError}</Box>}
       {error && sessions && sessions.length > 0 && <Box padding={{ top: "s" }}>⚠ {error}</Box>}
 
       <Modal
@@ -138,7 +145,14 @@ export function SessionsList() {
         }
       >
         <FormField label="Name" errorText={createError}>
-          <Input value={name} onChange={e => setName(e.detail.value)} autoFocus />
+          <Input
+            value={name}
+            onChange={e => setName(e.detail.value)}
+            onKeyDown={e => {
+              if (e.detail.key === "Enter") void create()
+            }}
+            autoFocus
+          />
         </FormField>
       </Modal>
     </Shell>
