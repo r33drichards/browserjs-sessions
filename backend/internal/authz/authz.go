@@ -11,7 +11,8 @@ const (
 )
 
 // Authorizer is implemented by Topaz in production and by Memory in tests.
-// A Check on a session the Authorizer does not know is false for everyone.
+// A Check on a session the Authorizer does not know is false for everyone,
+// as is a Check for an empty user or a permission other than View or Manage.
 type Authorizer interface {
 	Check(ctx context.Context, userID, sessionID string, p Permission) (bool, error)
 	// AddSession records sessionID as owned by ownerID.

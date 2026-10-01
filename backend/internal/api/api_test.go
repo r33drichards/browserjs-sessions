@@ -155,3 +155,28 @@ func TestAdminMembershipIsSynced(t *testing.T) {
 		t.Errorf("admin delete: %d", rec.Code)
 	}
 }
+
+// A viewer can look at a session but not change it. This is what catches a
+// route gated on the wrong permission.
+func TestViewerCanSeeButNotChange(t *testing.T) {
+	f := newFixture(t)
+	id := decode[sessions.Session](t, f.do(alice, "POST", "/api/sessions", `{"name":"mine"}`)).ID
+	path := "/api/sessions/" + id
+	if err := f.authz.AddViewer(t.Context(), id, "bob"); err != nil {
+		t.Fatal(err)
+	}
+
+	if rec := f.do(bob, "GET", path, ""); rec.Code != http.StatusOK {
+		t.Errorf("viewer GET: %d, want 200", rec.Code)
+	}
+	for _, c := range []struct{ method, body string }{
+		{"PATCH", `{"name":"x"}`}, {"PATCH", `{"action":"stop"}`}, {"DELETE", ""},
+	} {
+		if rec := f.do(bob, c.method, path, c.body); rec.Code != http.StatusNotFound {
+			t.Errorf("viewer %s %s: %d, want 404", c.method, c.body, rec.Code)
+		}
+	}
+	if s, err := f.store.Get(t.Context(), id); err != nil || s.Name != "mine" || s.State == sessions.Stopping {
+		t.Errorf("viewer changed the session: %+v, %v", s, err)
+	}
+}

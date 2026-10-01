@@ -44,6 +44,7 @@ type env struct {
 	upstream *httptest.Server
 	client   dynamic.Interface
 	skew     *atomic.Int64 // nanoseconds the tracker's clock runs ahead
+	authz    *authz.Memory
 }
 
 func newEnv(t *testing.T) *env {
@@ -88,7 +89,7 @@ func newEnv(t *testing.T) *env {
 	}
 	mux := http.NewServeMux()
 	p.Register(mux)
-	return &env{mux: mux, id: s.ID, calls: &calls, store: store, tracker: tracker, upstream: upstream, client: client, skew: skew}
+	return &env{mux: mux, id: s.ID, calls: &calls, store: store, tracker: tracker, upstream: upstream, client: client, skew: skew, authz: az}
 }
 
 func (e *env) do(method, path, token, body string) *httptest.ResponseRecorder {
@@ -326,5 +327,35 @@ func TestVNCWebsocketKeepsSessionAwake(t *testing.T) {
 	// (read after the connection is fully torn down, so the handler is done)
 	if c := (*e.calls)[0]; c.path != "/websockify" || c.host != "localhost:6080" || c.authorization != "" {
 		t.Errorf("upstream saw %+v", c)
+	}
+}
+
+// A viewer may watch the session's screen but not drive it: the VNC ticket
+// asks for View, the MCP endpoint for Manage.
+func TestViewerCanWatchButNotDrive(t *testing.T) {
+	e := newEnv(t)
+	if err := e.authz.AddViewer(t.Context(), e.id, "vera"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := e.do("POST", "/api/sessions/"+e.id+"/vnc-ticket", "vera", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("viewer ticket: %d, want 200", rec.Code)
+	}
+	var body struct{ Ticket string }
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if rec := e.do("GET", "/s/"+e.id+"/vnc?ticket="+body.Ticket, "", ""); rec.Code != http.StatusOK {
+		t.Errorf("viewer vnc: %d", rec.Code)
+	}
+
+	for _, path := range []string{"/s/" + e.id + "/mcp", "/s/" + e.id + "/mcp/sse"} {
+		if rec := e.do("POST", path, "vera", `{"jsonrpc":"2.0"}`); rec.Code != http.StatusNotFound {
+			t.Errorf("viewer %s: %d, want 404", path, rec.Code)
+		}
+	}
+	for _, c := range *e.calls {
+		if c.path != "/websockify" {
+			t.Errorf("a viewer's request reached the pod: %+v", c)
+		}
 	}
 }
