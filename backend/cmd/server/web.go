@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -26,12 +27,24 @@ func webHandler(cfg config.Config) http.Handler {
 		_, _ = w.Write(append([]byte("window.__BROWSERJS_CFG__ = "), append(body, ';')...))
 	})
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		path := filepath.Join(root, filepath.Clean("/"+r.URL.Path))
-		if info, err := os.Stat(path); err != nil || info.IsDir() || !strings.HasPrefix(path, root) {
-			http.ServeFile(w, r, filepath.Join(root, "index.html"))
+		// Clean("/"+path) cannot climb out, so this stays inside root.
+		file := filepath.Join(root, filepath.Clean("/"+r.URL.Path))
+		if info, err := os.Stat(file); err == nil && !info.IsDir() {
+			if strings.HasPrefix(r.URL.Path, "/assets/") { // named after their content hash
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			}
+			files.ServeHTTP(w, r)
 			return
 		}
-		files.ServeHTTP(w, r)
+		// A client-side route gets the app shell. A path that names a file
+		// (it has an extension) which is not there is simply missing.
+		if path.Ext(r.URL.Path) != "" {
+			http.NotFound(w, r)
+			return
+		}
+		// The shell names the current build's assets: always revalidate it.
+		w.Header().Set("Cache-Control", "no-cache")
+		http.ServeFile(w, r, filepath.Join(root, "index.html"))
 	})
 	return mux
 }

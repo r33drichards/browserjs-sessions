@@ -78,7 +78,7 @@ func TestNewMux(t *testing.T) {
 		ReadyTimeout: time.Second, MaxSessionsPerUser: 5,
 	}
 	store, _ := sessionstest.New(t)
-	mux := newMux(cfg, noVerifier{}, store, authz.NewMemory(), idle.New(15*time.Minute, time.Now))
+	mux, _ := newMux(cfg, noVerifier{}, store, authz.NewMemory(), idle.New(15*time.Minute, time.Now))
 
 	do := func(method, path string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
@@ -109,5 +109,76 @@ func TestNewMux(t *testing.T) {
 	}
 	if rec := do("GET", "/sessions/s-abcdefghij"); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "app") {
 		t.Errorf("SPA route: %d %q", rec.Code, rec.Body)
+	}
+	// Nor is anything under the proxy's or the metadata's prefixes: an MCP
+	// client probing for OAuth metadata must get a 404, not a page.
+	for _, path := range []string{
+		"/s/s-abcdefghij/api/artifacts",
+		"/s/s-abcdefghij",
+		"/s/",
+		"/.well-known/oauth-authorization-server",
+		"/.well-known/oauth-protected-resource",
+		"/.well-known/openid-configuration/s/s-abcdefghij/mcp",
+		"/assets/missing.js",
+	} {
+		rec := do("GET", path)
+		if rec.Code != http.StatusNotFound || strings.Contains(rec.Body.String(), "<html>") {
+			t.Errorf("GET %s: %d %q, want 404 and not the app shell", path, rec.Code, rec.Body)
+		}
+	}
+	if rec := do("POST", "/s/s-abcdefghij/vnc"); rec.Code != http.StatusNotFound {
+		t.Errorf("POST to the VNC route: %d, want 404", rec.Code)
+	}
+}
+
+// The app shell is looked for again on every visit (it names the hashed
+// assets of the current build); a path that names a file which is not there
+// is a 404, not the shell.
+func TestWebHandlerShellAndMissingFiles(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html>app</html>"), 0o644)
+	_ = os.MkdirAll(filepath.Join(dir, "assets"), 0o755)
+	_ = os.WriteFile(filepath.Join(dir, "assets", "app-abc123.js"), []byte("console.log(1)"), 0o644)
+	h := webHandler(config.Config{WebDir: dir})
+	get := func(path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		return rec
+	}
+
+	for _, path := range []string{"/", "/sessions/s-abc"} {
+		rec := get(path)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "app") {
+			t.Errorf("GET %s: %d %q, want the app shell", path, rec.Code, rec.Body)
+		}
+		if got := rec.Header().Get("Cache-Control"); got != "no-cache" {
+			t.Errorf("GET %s: Cache-Control = %q, want no-cache", path, got)
+		}
+	}
+	if got := get("/config.js").Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("config.js: Cache-Control = %q, want no-store", got)
+	}
+	if rec := get("/assets/app-abc123.js"); rec.Body.String() != "console.log(1)" || !strings.Contains(rec.Header().Get("Cache-Control"), "immutable") {
+		t.Errorf("asset: %q, Cache-Control %q", rec.Body, rec.Header().Get("Cache-Control"))
+	}
+	for _, path := range []string{"/assets/missing.js", "/favicon.ico", "/sessions/app.css.map"} {
+		if rec := get(path); rec.Code != http.StatusNotFound || strings.Contains(rec.Body.String(), "<html>") {
+			t.Errorf("GET %s: %d %q, want 404", path, rec.Code, rec.Body)
+		}
+	}
+}
+
+// WEB_DIR=. (run from the build's directory) serves the files there.
+func TestWebHandlerCurrentDir(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html>app</html>"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "app.js"), []byte("console.log(1)"), 0o644)
+	t.Chdir(dir)
+
+	h := webHandler(config.Config{WebDir: "."})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/app.js", nil))
+	if rec.Body.String() != "console.log(1)" {
+		t.Errorf("asset: %q", rec.Body)
 	}
 }
