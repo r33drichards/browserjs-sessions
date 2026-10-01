@@ -4,3 +4,4 @@ backend/bin/
 .direnv/
 result
 *.log
+.worktrees/
