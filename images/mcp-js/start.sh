@@ -4,6 +4,9 @@
 # browser MCP to accept connections, then hand over to mcp-v8.
 set -euo pipefail
 
+# As PID 1 bash ignores TERM unless it is trapped; without this a pod
+# shutdown during the wait hangs until the kill timeout.
+trap 'exit 143' TERM INT
 addr="${BROWSER_MCP_ADDR:-127.0.0.1:8081}"
 for _ in $(seq 1 "${BROWSER_MCP_WAIT_SECONDS:-120}"); do
   if (exec 3<>"/dev/tcp/${addr%:*}/${addr##*:}") 2>/dev/null; then

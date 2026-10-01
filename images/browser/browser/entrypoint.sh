@@ -44,7 +44,9 @@ rm -f /tmp/.X99-lock /tmp/.X11-unix/X99
 browser_pids() {
   local pid cmd
   for pid in $(pgrep -f -- "--user-data-dir=$PROFILE_DIR" || true); do
-    cmd="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)"
+    # The pid can be gone by now: no cmdline to read, or an empty one.
+    cmd="$({ tr '\0' ' ' <"/proc/$pid/cmdline"; } 2>/dev/null || true)"
+    [ -n "$cmd" ] || continue
     case "$cmd" in
       *--type=*) ;;
       *) echo "$pid" ;;
@@ -54,10 +56,14 @@ browser_pids() {
 
 pids=()
 chromium_loop=""
+cleaned=""
 # Chromium only writes a complete session file on a clean exit, so on SIGTERM
 # (pod shutdown, suspend) ask it to quit and wait before killing the rest.
 cleanup() {
   local bp
+  # Runs again from the EXIT trap after a signal.
+  [ -z "$cleaned" ] || return 0
+  cleaned=1
   # Stop the restart loop first so it cannot bring Chromium back.
   [ -z "$chromium_loop" ] || kill "$chromium_loop" 2>/dev/null || true
   bp="$(browser_pids)"
@@ -71,7 +77,10 @@ cleanup() {
   fi
   kill "${pids[@]}" 2>/dev/null || true
 }
-trap cleanup EXIT TERM INT
+trap cleanup EXIT
+# Exit after cleaning up, or a signal during startup would let the script
+# carry on starting processes.
+trap 'cleanup; exit 143' TERM INT
 
 Xvfb :99 -screen 0 "$SCREEN" -nolisten tcp -ac &
 pids+=($!)
@@ -88,10 +97,12 @@ pids+=($!)
 (
   while true; do
     # After an unclean exit Chromium shows a "restore pages?" bubble instead
-    # of restoring; mark the previous exit as clean.
+    # of restoring; mark the previous exit as clean. Best effort: a failure
+    # here (disk full, permissions) must not end this loop.
     prefs="$PROFILE_DIR/Default/Preferences"
-    if [ -f "$prefs" ]; then
-      sed -i 's/"exit_type":"[A-Za-z]*"/"exit_type":"Normal"/; s/"exited_cleanly":false/"exited_cleanly":true/' "$prefs"
+    if [ -n "$RESTORE_FLAG" ] && [ -f "$prefs" ]; then
+      sed -i 's/"exit_type":"[A-Za-z]*"/"exit_type":"Normal"/; s/"exited_cleanly":false/"exited_cleanly":true/' "$prefs" ||
+        echo "warning: could not mark $prefs as cleanly exited; Chromium may ask before restoring tabs" >&2
     fi
     # A start URL is opened next to the restored tabs, so with a session to
     # restore pass none (or every restart would add one more blank tab).
