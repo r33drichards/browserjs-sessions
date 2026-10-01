@@ -36,10 +36,16 @@ type Store struct {
 	client    dynamic.ResourceInterface
 	blueprint *template.Template
 	publicURL string
+	urls      *URLTemplate
 }
 
 // NewStore parses blueprint (see deploy/base/blueprint.yaml for the format).
-func NewStore(client dynamic.Interface, namespace, blueprint, publicURL string) (*Store, error) {
+// The blueprint is a template over .ID (the session's ID), .SessionURL (the
+// session's own base URL, from urls) and .PublicURL (the app's base URL).
+func NewStore(client dynamic.Interface, namespace, blueprint, publicURL string, urls *URLTemplate) (*Store, error) {
+	if urls == nil {
+		return nil, errors.New("sessions: a session URL template is required")
+	}
 	tmpl, err := template.New("blueprint").Option("missingkey=error").Parse(blueprint)
 	if err != nil {
 		return nil, fmt.Errorf("blueprint: %w", err)
@@ -48,6 +54,7 @@ func NewStore(client dynamic.Interface, namespace, blueprint, publicURL string) 
 		client:    client.Resource(SandboxGVR).Namespace(namespace),
 		blueprint: tmpl,
 		publicURL: publicURL,
+		urls:      urls,
 	}, nil
 }
 
@@ -78,7 +85,9 @@ func (s *Store) Create(ctx context.Context, name, owner string) (Session, error)
 	id := newID()
 
 	var rendered bytes.Buffer
-	if err := s.blueprint.Execute(&rendered, map[string]string{"ID": id, "PublicURL": s.publicURL}); err != nil {
+	if err := s.blueprint.Execute(&rendered, map[string]string{
+		"ID": id, "SessionURL": s.urls.Base(id), "PublicURL": s.publicURL,
+	}); err != nil {
 		return Session{}, fmt.Errorf("render blueprint: %w", err)
 	}
 	spec := map[string]any{}

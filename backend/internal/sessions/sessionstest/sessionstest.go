@@ -26,6 +26,22 @@ import (
 
 const Namespace = "browserjs-sessions"
 
+// Where the fake deployment lives: the app on one host, each session on its
+// own.
+const (
+	PublicURL   = "https://app.example.com"
+	URLTemplate = "https://{id}.sessions.example.com"
+)
+
+// URLs is URLTemplate, parsed.
+func URLs() *sessions.URLTemplate {
+	urls, err := sessions.ParseURLTemplate(URLTemplate)
+	if err != nil {
+		panic(err)
+	}
+	return urls
+}
+
 const Blueprint = `
 podTemplate:
   metadata:
@@ -39,7 +55,7 @@ podTemplate:
         image: mcp-js:test
         env:
           - name: MCP_V8_PUBLIC_URL
-            value: "{{ .PublicURL }}/s/{{ .ID }}"
+            value: "{{ .SessionURL }}"
 volumeClaimTemplates:
   - metadata:
       name: data
@@ -57,7 +73,7 @@ func New(t *testing.T) (*sessions.Store, dynamic.Interface) {
 	client := dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
 		map[schema.GroupVersionResource]string{sessions.SandboxGVR: "SandboxList"})
 	emulateAPIServer(client)
-	store, err := sessions.NewStore(contextAware{client}, Namespace, Blueprint, "https://sessions.example.com")
+	store, err := sessions.NewStore(contextAware{client}, Namespace, Blueprint, PublicURL, URLs())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -13,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/r33drichards/browserjs-sessions/backend/internal/auth"
@@ -41,22 +41,22 @@ const (
 )
 
 type Proxy struct {
-	Verifier  auth.Verifier
-	Authz     authz.Authorizer
-	Waker     *Waker
-	Idle      *idle.Tracker
-	PublicURL string
-	Issuer    string
+	// Verifier and Authz establish who is calling a session's MCP endpoint
+	// and whether they may.
+	Verifier auth.Verifier
+	Authz    authz.Checker
+	Waker    *Waker
+	Idle     *idle.Tracker
+	// URLs tells a session's host from the app's, and names the session.
+	URLs *sessions.URLTemplate
 	// Target returns host:port for a port of a session's pod. Defaults to
 	// the pod IP; tests override it.
 	Target func(s sessions.Session, port int) string
-	// SyncAdmin, when set, keeps the authorizer's admins group in step with
-	// the caller's token before a check (see api.API.SyncAdmin).
-	SyncAdmin func(r *http.Request, u auth.User) error
 	// MaxUploadBytes caps the body of the upload route, which has no login.
 	// DefaultMaxUploadBytes if unset.
 	MaxUploadBytes int64
 
+	setup   sync.Once
 	tickets *tickets
 	viewers viewers
 	// Pod traffic has its own transports: no environment proxy, a bounded
@@ -74,75 +74,74 @@ func podTransport(responseHeaderTimeout time.Duration) *http.Transport {
 	}
 }
 
-func (p *Proxy) Register(mux *http.ServeMux) {
-	if p.Target == nil {
-		p.Target = func(s sessions.Session, port int) string { return net.JoinHostPort(s.PodIP, strconv.Itoa(port)) }
-	}
-	if p.MaxUploadBytes <= 0 {
-		p.MaxUploadBytes = DefaultMaxUploadBytes
-	}
-	p.tickets = newTickets(time.Now)
-	p.quick = podTransport(uploadResponseTimeout)
-	p.patient = podTransport(mcpResponseTimeout)
-
-	mux.HandleFunc("GET /.well-known/oauth-protected-resource/s/{id}/mcp", p.metadata)
-	mux.HandleFunc("/s/{id}/mcp", p.mcp)
-	mux.HandleFunc("/s/{id}/mcp/{rest...}", p.mcp)
-	mux.HandleFunc("PUT /s/{id}/api/artifact-uploads/{token}", p.upload)
-	mux.HandleFunc("POST /api/sessions/{id}/vnc-ticket", p.vncTicket)
-	mux.HandleFunc("GET /s/{id}/vnc", p.vnc)
-	// Nothing else under /s/ exists: the rest of a pod's API is not exposed,
-	// and no other handler (the UI's fallback) may answer for it.
-	mux.Handle("/s/", http.NotFoundHandler())
-}
-
-func (p *Proxy) metadataURL(id string) string {
-	return p.PublicURL + "/.well-known/oauth-protected-resource/s/" + id + "/mcp"
-}
-
-// metadata is the OAuth protected-resource document (RFC 9728) that tells an
-// MCP client which authorization server to use for this session's endpoint.
-func (p *Proxy) metadata(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"resource":                 p.PublicURL + "/s/" + r.PathValue("id") + "/mcp",
-		"authorization_servers":    []string{p.Issuer},
-		"scopes_supported":         []string{"openid", "profile", "email", "offline_access"},
-		"bearer_methods_supported": []string{"header"},
+func (p *Proxy) init() {
+	p.setup.Do(func() {
+		if p.Target == nil {
+			p.Target = func(s sessions.Session, port int) string { return net.JoinHostPort(s.PodIP, strconv.Itoa(port)) }
+		}
+		if p.MaxUploadBytes <= 0 {
+			p.MaxUploadBytes = DefaultMaxUploadBytes
+		}
+		p.tickets = newTickets(time.Now)
+		p.quick = podTransport(uploadResponseTimeout)
+		p.patient = podTransport(mcpResponseTimeout)
 	})
 }
 
-// authorize verifies the bearer token and the caller's permission on the
-// session. It writes the response itself when it returns false.
-//
-// It is the only place the proxy establishes who is calling.
-func (p *Proxy) authorize(w http.ResponseWriter, r *http.Request, id string, perm authz.Permission) bool {
-	raw := auth.BearerToken(r)
-	var u auth.User
-	var err error
-	if raw != "" {
-		u, err = p.Verifier.Verify(r.Context(), raw)
-	}
-	if raw == "" || err != nil {
-		w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer resource_metadata=%q`, p.metadataURL(id)))
-		http.Error(w, "sign in required", http.StatusUnauthorized)
-		return false
-	}
-	if !sessions.ValidID(id) {
-		http.Error(w, "session not found", http.StatusNotFound)
-		return false
-	}
-	if p.SyncAdmin != nil {
-		if err := p.SyncAdmin(r, u); err != nil {
-			http.Error(w, "authorization unavailable", http.StatusServiceUnavailable)
-			return false
+// RegisterApp adds the proxy's one route on the app's host: the UI asks it
+// for a ticket to open a session's screen with. It goes on the API's mux,
+// behind auth.Middleware.
+func (p *Proxy) RegisterApp(mux *http.ServeMux) {
+	p.init()
+	mux.HandleFunc("POST /api/sessions/{id}/vnc-ticket", p.vncTicket)
+}
+
+type sessionKey struct{}
+
+// sessionID is the session the request's host names.
+func sessionID(r *http.Request) string {
+	id, _ := r.Context().Value(sessionKey{}).(string)
+	return id
+}
+
+// Handler is the server's whole handler. Every session has a host of its
+// own: a request to one gets the session's routes, and nothing else exists
+// there. Requests to any other host are the app's.
+func (p *Proxy) Handler(app http.Handler) http.Handler {
+	p.init()
+	session := http.NewServeMux()
+	session.HandleFunc("/mcp", p.mcp)
+	session.HandleFunc("/mcp/{rest...}", p.mcp)
+	session.HandleFunc("PUT /api/artifact-uploads/{token}", p.upload)
+	session.HandleFunc("GET /vnc", p.vnc)
+	// The rest of a pod's API is not exposed, and the app is not served here.
+	session.Handle("/", http.NotFoundHandler())
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, isSession := p.URLs.Match(r.Host)
+		switch {
+		case !isSession:
+			app.ServeHTTP(w, r)
+		case id == "":
+			// Under the session domain, but no session's host: answered
+			// without a cluster lookup.
+			http.Error(w, "session not found", http.StatusNotFound)
+		default:
+			session.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), sessionKey{}, id)))
 		}
-	}
-	allowed, err := p.Authz.Check(r.Context(), u.Subject, id, perm)
+	})
+}
+
+// allowed reports whether u may use the session. It writes the response
+// itself when it returns false: a session that is not the caller's is
+// answered like one that does not exist.
+func (p *Proxy) allowed(w http.ResponseWriter, r *http.Request, u auth.User, id string) bool {
+	allowed, err := p.Authz.Allowed(r.Context(), u, id)
 	if err != nil {
-		slog.Error("authorization check failed", "session", id, "err", err)
-		http.Error(w, "authorization unavailable", http.StatusServiceUnavailable)
+		if r.Context().Err() == nil { // not just the caller hanging up
+			slog.Error("authorization check failed", "session", id, "err", err)
+			http.Error(w, "authorization unavailable", http.StatusServiceUnavailable)
+		}
 		return false
 	}
 	if !allowed {
@@ -176,7 +175,7 @@ func lookupFailed(w http.ResponseWriter, r *http.Request, id string, err error) 
 }
 
 // A pod runs whatever its user's agent runs, so what it answers is untrusted
-// content. It is handed on, but stripped of the means to act on this origin:
+// content. It is handed on, but stripped of the means to act on its origin:
 // it cannot set cookies or other origin-wide state, and a browser that is
 // made to navigate to it will not run it or let it load anything.
 func neuter(resp *http.Response) {
@@ -200,8 +199,15 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, s sessions.Sessi
 			// spelling (RawPath, query) survives.
 			pr.Out.URL = &url.URL{Scheme: "http", Host: target, Path: path}
 			pr.Out.Host = "localhost:" + strconv.Itoa(port)
+			// The pod is not shown who is calling, or anything it could
+			// present as them.
 			pr.Out.Header.Del("Authorization")
 			pr.Out.Header.Del("Cookie")
+			for name := range pr.Out.Header {
+				if strings.HasPrefix(name, "X-Pomerium-") {
+					pr.Out.Header.Del(name)
+				}
+			}
 		},
 		Transport:     transport,
 		FlushInterval: -1,
@@ -248,14 +254,25 @@ func mcpPath(r *http.Request) (string, bool) {
 	return "/mcp/" + rest, true
 }
 
+// mcp is the session's MCP endpoint. The route is Pomerium's: it runs the
+// MCP client's sign-in and says who the user is in its signed assertion.
+//
+// It never answers 401. That would be the cue for an MCP client to sign in,
+// which is Pomerium's to give; from here Pomerium would turn it into a 502.
 func (p *Proxy) mcp(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	id := sessionID(r)
 	path, ok := mcpPath(r)
 	if !ok {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	if !p.authorize(w, r, id, authz.Manage) {
+	u, err := auth.Authenticate(p.Verifier, r)
+	if err != nil {
+		slog.Debug("assertion rejected", "session", id, "err", err)
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if !p.allowed(w, r, u, id) {
 		return
 	}
 	// The call holds the session awake until it is over, however long the
@@ -281,8 +298,8 @@ var uploadTokenPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 // session), reads a bounded body, and counts as activity only if the pod
 // took the upload.
 func (p *Proxy) upload(w http.ResponseWriter, r *http.Request) {
-	id, token := r.PathValue("id"), r.PathValue("token")
-	if !sessions.ValidID(id) || !uploadTokenPattern.MatchString(token) {
+	id, token := sessionID(r), r.PathValue("token")
+	if !uploadTokenPattern.MatchString(token) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
@@ -301,14 +318,27 @@ func (p *Proxy) upload(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// vncTicket issues a one-time ticket for a session's screen, with the URL
+// to open. The screen is on the session's own host, where the browser's
+// sign-in with the app does not reach a websocket; the ticket stands in.
 func (p *Proxy) vncTicket(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if !p.authorize(w, r, id, authz.View) {
+	u, ok := auth.UserFrom(r.Context())
+	if !ok {
+		http.Error(w, "not signed in", http.StatusUnauthorized)
 		return
 	}
+	id := r.PathValue("id")
+	if !sessions.ValidID(id) {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	if !p.allowed(w, r, u, id) {
+		return
+	}
+	ticket := p.tickets.Issue(id)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	_ = json.NewEncoder(w).Encode(map[string]string{"ticket": p.tickets.Issue(id)})
+	_ = json.NewEncoder(w).Encode(map[string]string{"ticket": ticket, "url": p.URLs.VNC(id, ticket)})
 }
 
 func isWebsocketUpgrade(r *http.Request) bool {
@@ -325,8 +355,10 @@ func isWebsocketUpgrade(r *http.Request) bool {
 	return false
 }
 
+// vnc is the session's screen. There is no login: the ticket, issued to a
+// user who may see the session, is the credential.
 func (p *Proxy) vnc(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	id := sessionID(r)
 	// Only a websocket. A browser navigating here (someone was sent the
 	// link) must never be shown what the pod answers, and such a request
 	// does not use up the ticket.

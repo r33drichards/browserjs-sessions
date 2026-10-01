@@ -1,118 +1,125 @@
-// Package auth verifies Keycloak access tokens and carries the caller's
-// identity on the request context.
+// Package auth establishes who is calling. Every request reaches the backend
+// through Pomerium, which signs in the user and states who they are in a
+// signed header; this package verifies that statement and carries the
+// caller's identity on the request context.
 package auth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/MicahParks/keyfunc/v3"
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/r33drichards/browserjs-sessions/backend/internal/hosts"
 )
 
+// AssertionHeader carries Pomerium's signed statement of who the user is: a
+// JWT minted for each request, valid for a few minutes, whose audience is
+// the host the request was made to.
+const AssertionHeader = "X-Pomerium-Jwt-Assertion"
+
+// How far the backend's clock and Pomerium's may disagree.
+const clockSkew = 30 * time.Second
+
 type User struct {
-	Subject  string // Keycloak `sub`; the stable user ID everywhere else
-	Username string
-	Admin    bool
+	// Subject is the user's email address, in lower case. It is the user ID
+	// everywhere else: sessions are owned by it, admins are listed by it.
+	Subject string
+	Name    string
+	Admin   bool
 }
 
 type Verifier interface {
-	Verify(ctx context.Context, rawToken string) (User, error)
+	// Verify checks an assertion that arrived on a request to host (the
+	// request's Host header).
+	Verify(ctx context.Context, assertion, host string) (User, error)
 }
 
-type JWTVerifier struct {
-	keyfunc   jwt.Keyfunc
-	issuer    string
-	adminRole string
-	clients   map[string]bool
+type AssertionVerifier struct {
+	keyfunc jwt.Keyfunc
+	admins  map[string]bool
 }
 
-// settings checks what every verifier needs. Each of these, left empty,
-// would quietly switch a check off rather than fail.
-func settings(issuer, adminRole string, allowedClients []string) (map[string]bool, error) {
-	if issuer == "" {
-		return nil, errors.New("auth: issuer is required")
+func normalEmail(email string) string { return strings.ToLower(strings.TrimSpace(email)) }
+
+// NewAssertionVerifier accepts assertions signed by a key kf returns. The
+// users in adminEmails (compared without regard to case) are admins.
+func NewAssertionVerifier(kf jwt.Keyfunc, adminEmails []string) (*AssertionVerifier, error) {
+	if kf == nil {
+		return nil, errors.New("auth: a key function is required")
 	}
-	if adminRole == "" {
-		return nil, errors.New("auth: admin role is required")
-	}
-	clients := map[string]bool{}
-	for _, c := range allowedClients {
-		if c == "" {
-			return nil, errors.New("auth: allowed client names must not be empty")
+	admins := map[string]bool{}
+	for _, email := range adminEmails {
+		if email = normalEmail(email); email != "" {
+			admins[email] = true
 		}
-		clients[c] = true
 	}
-	if len(clients) == 0 {
-		return nil, errors.New("auth: at least one allowed client is required")
-	}
-	return clients, nil
+	return &AssertionVerifier{keyfunc: kf, admins: admins}, nil
 }
 
-// NewJWTVerifier accepts access tokens from issuer that were issued to one
-// of allowedClients (the token's `azp`).
-func NewJWTVerifier(kf jwt.Keyfunc, issuer, adminRole string, allowedClients []string) (*JWTVerifier, error) {
-	clients, err := settings(issuer, adminRole, allowedClients)
-	if err != nil {
-		return nil, err
-	}
-	return &JWTVerifier{keyfunc: kf, issuer: issuer, adminRole: adminRole, clients: clients}, nil
-}
-
-// NewJWKSVerifier fetches (and keeps refreshing) signing keys from jwksURL.
-func NewJWKSVerifier(ctx context.Context, jwksURL, issuer, adminRole string, allowedClients []string) (*JWTVerifier, error) {
-	if _, err := settings(issuer, adminRole, allowedClients); err != nil {
-		return nil, err
+// NewJWKSVerifier fetches (and keeps refreshing) Pomerium's signing keys
+// from jwksURL.
+func NewJWKSVerifier(ctx context.Context, jwksURL string, adminEmails []string) (*AssertionVerifier, error) {
+	if jwksURL == "" {
+		return nil, errors.New("auth: a JWKS URL is required")
 	}
 	k, err := keyfunc.NewDefaultCtx(ctx, []string{jwksURL})
 	if err != nil {
 		return nil, err
 	}
-	return NewJWTVerifier(k.Keyfunc, issuer, adminRole, allowedClients)
+	return NewAssertionVerifier(k.Keyfunc, adminEmails)
 }
 
 type claims struct {
 	jwt.RegisteredClaims
-	Username        string `json:"preferred_username"`
-	AuthorizedParty string `json:"azp"` // the client the token was issued to
-	Type            string `json:"typ"` // Keycloak: Bearer, ID, Refresh, ...
-	RealmAccess     struct {
-		Roles []string `json:"roles"`
-	} `json:"realm_access"`
+	Email string `json:"email"`
+	Name  string `json:"name"`
 }
 
-func (v *JWTVerifier) Verify(_ context.Context, raw string) (User, error) {
+// forHost reports whether audience names the host a request was made to.
+// Pomerium writes the request's host name there; an audience and a Host that
+// both carry a port must agree on it too.
+func forHost(audience jwt.ClaimStrings, host string) bool {
+	name, port := hosts.Split(host)
+	for _, aud := range audience {
+		audName, audPort := hosts.Split(aud)
+		if audName == name && (audPort == port || audPort == "" || port == "") {
+			return true
+		}
+	}
+	return false
+}
+
+func (v *AssertionVerifier) Verify(_ context.Context, raw, host string) (User, error) {
+	if name, _ := hosts.Split(host); name == "" {
+		return User{}, errors.New("request has no host")
+	}
 	var c claims
 	_, err := jwt.ParseWithClaims(raw, &c, v.keyfunc,
-		jwt.WithIssuer(v.issuer),
 		jwt.WithExpirationRequired(),
-		jwt.WithValidMethods([]string{"RS256", "ES256"}),
+		jwt.WithLeeway(clockSkew),
+		jwt.WithValidMethods([]string{"ES256", "RS256"}),
 	)
 	if err != nil {
 		return User{}, err
 	}
-	if c.Subject == "" {
-		return User{}, errors.New("token has no subject")
+	// The same key signs the assertions for every host behind Pomerium, so
+	// one made for another host (another session's, say) must not pass here.
+	if !forHost(c.Audience, host) {
+		return User{}, fmt.Errorf("assertion is for %q, not for %q", []string(c.Audience), host)
 	}
-	// Any client in the realm can obtain a validly signed token for a user;
-	// only tokens issued to our own clients may act on their sessions.
-	if !v.clients[c.AuthorizedParty] {
-		return User{}, fmt.Errorf("token was issued to client %q, which is not allowed", c.AuthorizedParty)
+	email := normalEmail(c.Email)
+	if email == "" {
+		return User{}, errors.New("assertion has no email")
 	}
-	if c.Type != "" && c.Type != "Bearer" {
-		return User{}, fmt.Errorf("token type %q is not an access token", c.Type)
-	}
-	u := User{Subject: c.Subject, Username: c.Username}
-	for _, r := range c.RealmAccess.Roles {
-		if r == v.adminRole {
-			u.Admin = true
-		}
-	}
-	return u, nil
+	return User{Subject: email, Name: c.Name, Admin: v.admins[email]}, nil
 }
 
 type ctxKey struct{}
@@ -126,32 +133,31 @@ func UserFrom(ctx context.Context) (User, bool) {
 	return u, ok
 }
 
-// BearerToken extracts the token from an Authorization header.
-func BearerToken(r *http.Request) string {
-	h := r.Header.Get("Authorization")
-	if len(h) > 7 && strings.EqualFold(h[:7], "Bearer ") {
-		return strings.TrimSpace(h[7:])
+// ErrNoAssertion is Authenticate's answer for a request that carries no
+// assertion: it did not come through Pomerium, or came by a public route.
+var ErrNoAssertion = errors.New("request carries no " + AssertionHeader)
+
+// Authenticate establishes who made a request.
+func Authenticate(v Verifier, r *http.Request) (User, error) {
+	raw := r.Header.Get(AssertionHeader)
+	if raw == "" {
+		return User{}, ErrNoAssertion
 	}
-	return ""
+	return v.Verify(r.Context(), raw, r.Host)
 }
 
-// Middleware rejects requests without a valid bearer token.
+// Middleware rejects requests that do not carry a valid assertion.
 func Middleware(v Verifier) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			raw := BearerToken(r)
-			if raw == "" {
-				w.Header().Set("WWW-Authenticate", "Bearer")
-				http.Error(w, "missing bearer token", http.StatusUnauthorized)
-				return
-			}
-			u, err := v.Verify(r.Context(), raw)
+			u, err := Authenticate(v, r)
 			if err != nil {
-				// The caller only learns "invalid"; the reason (expired, wrong
-				// client, keys unavailable) is for whoever runs the server.
-				slog.Debug("token rejected", "err", err)
-				w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
-				http.Error(w, "invalid token", http.StatusUnauthorized)
+				// The caller only learns "not signed in"; the reason (expired,
+				// another host's, keys unavailable) is for whoever runs the server.
+				slog.Debug("assertion rejected", "err", err)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": "not signed in"})
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(WithUser(r.Context(), u)))

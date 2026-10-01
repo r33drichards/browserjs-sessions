@@ -8,6 +8,8 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	dynfake "k8s.io/client-go/dynamic/fake"
 
@@ -39,7 +41,7 @@ func TestCreateRendersBlueprint(t *testing.T) {
 	}
 	containers, _, _ := unstructured.NestedSlice(obj.Object, "spec", "podTemplate", "spec", "containers")
 	env := containers[1].(map[string]any)["env"].([]any)[0].(map[string]any)
-	if want := "https://sessions.example.com/s/" + s.ID; env["value"] != want {
+	if want := "https://" + s.ID + ".sessions.example.com"; env["value"] != want {
 		t.Errorf("public URL env = %v, want %s", env["value"], want)
 	}
 	// The owner label is also on the pod, for NetworkPolicy and debugging.
@@ -52,6 +54,54 @@ func TestCreateRendersBlueprint(t *testing.T) {
 	}
 	if vcts, _, _ := unstructured.NestedSlice(obj.Object, "spec", "volumeClaimTemplates"); len(vcts) != 1 {
 		t.Errorf("volumeClaimTemplates = %v", vcts)
+	}
+}
+
+// A blueprint may use the session's ID, its own URL and the app's URL, and
+// nothing else.
+func TestBlueprintVariables(t *testing.T) {
+	client := dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
+		map[schema.GroupVersionResource]string{sessions.SandboxGVR: "SandboxList"})
+	create := func(blueprint string) (map[string]string, error) {
+		store, err := sessions.NewStore(client, sessionstest.Namespace, blueprint, sessionstest.PublicURL, sessionstest.URLs())
+		if err != nil {
+			return nil, err
+		}
+		s, err := store.Create(t.Context(), "a", "alice@example.com")
+		if err != nil {
+			return nil, err
+		}
+		obj, err := client.Resource(sessions.SandboxGVR).Namespace(sessionstest.Namespace).Get(t.Context(), s.ID, metav1.GetOptions{})
+		if err != nil {
+			return nil, err
+		}
+		ann, _, _ := unstructured.NestedStringMap(obj.Object, "spec", "podTemplate", "metadata", "annotations")
+		ann["id"] = s.ID
+		return ann, nil
+	}
+
+	got, err := create(`
+podTemplate:
+  metadata:
+    annotations:
+      id: "{{ .ID }}"
+      session: "{{ .SessionURL }}"
+      mcp: "{{ .SessionURL }}/mcp"
+      app: "{{ .PublicURL }}"
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := "https://" + got["id"] + ".sessions.example.com"
+	if got["session"] != base || got["mcp"] != base+"/mcp" || got["app"] != "https://app.example.com" {
+		t.Errorf("rendered = %v", got)
+	}
+
+	if _, err := create(`podTemplate: {metadata: {annotations: {x: "{{ .Issuer }}"}}}`); err == nil {
+		t.Error("a blueprint using an unknown variable was rendered")
+	}
+	if _, err := sessions.NewStore(client, sessionstest.Namespace, "podTemplate: {}", sessionstest.PublicURL, nil); err == nil {
+		t.Error("a store with no session URL template was built")
 	}
 }
 
@@ -83,7 +133,7 @@ func TestOwnersThatAreNotLabelValues(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, subject := range []string{"auth0|abc:def@example.com", strings.Repeat("x", 100), "f:6b1c:robert wendt", "-leading.dash-"} {
+	for _, subject := range []string{"alice+work@example.com", "auth0|abc:def@example.com", strings.Repeat("x", 100), "f:6b1c:robert wendt", "-leading.dash-"} {
 		s, err := store.Create(ctx, "mine", subject)
 		if err != nil {
 			t.Fatalf("Create as %q: %v", subject, err)

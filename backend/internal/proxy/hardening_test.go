@@ -11,19 +11,14 @@ import (
 	"testing"
 	"time"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/runtime"
-	dynfake "k8s.io/client-go/dynamic/fake"
-	k8stesting "k8s.io/client-go/testing"
-
 	"github.com/r33drichards/browserjs-sessions/backend/internal/idle"
 	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
 	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions/sessionstest"
 )
 
 // What a pod answers is content chosen by whoever drives the session. It is
-// handed on, but it must not act as a page of the app's origin.
-func TestPodResponsesCannotActOnTheAppOrigin(t *testing.T) {
+// handed on, but it must not act as a page of the origin it is served from.
+func TestPodResponsesCannotActAsAPage(t *testing.T) {
 	e := newEnv(t)
 	e.respondWith(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
@@ -53,12 +48,12 @@ func TestPodResponsesCannotActOnTheAppOrigin(t *testing.T) {
 		}
 	}
 
-	rec := e.do("POST", "/s/"+e.id+"/mcp", "alice", "{}")
+	rec := e.do("POST", "/mcp", alice, "{}")
 	check("mcp", rec.Code, rec.Header())
-	rec = e.do("PUT", "/s/"+e.id+"/api/artifact-uploads/"+uploadToken, "", "bytes")
+	rec = e.do("PUT", "/api/artifact-uploads/"+uploadToken, "", "bytes")
 	check("upload", rec.Code, rec.Header())
 	// A pod that answers the websocket handshake with a page instead.
-	resp, _, _ := e.websocket(t, "/s/"+e.id+"/vnc?ticket="+e.ticket(t, "alice"))
+	resp, _, _ := e.websocket(t, "/vnc?ticket="+e.ticket(t, alice))
 	check("vnc handshake", resp.StatusCode, resp.Header)
 }
 
@@ -66,7 +61,7 @@ func TestPodResponsesCannotActOnTheAppOrigin(t *testing.T) {
 // the pod's request path, where it could name another of the pod's routes.
 func TestEncodedPathSegmentsAreRefused(t *testing.T) {
 	e := newEnv(t)
-	base := "/s/" + e.id
+	const base = ""
 	for _, c := range []struct{ method, path, token string }{
 		{"PUT", base + "/api/artifact-uploads/..%2F..%2Fmcp", ""},
 		{"PUT", base + "/api/artifact-uploads/..%2Fartifacts", ""},
@@ -75,22 +70,22 @@ func TestEncodedPathSegmentsAreRefused(t *testing.T) {
 		{"PUT", base + "/api/artifact-uploads/" + strings.ToUpper(uploadToken), ""},
 		{"PUT", base + "/api/artifact-uploads/" + uploadToken + "0", ""},
 		{"PUT", base + "/api/artifact-uploads/" + uploadToken + "%2F..", ""},
-		{"POST", base + "/mcp/..%2Fapi%2Fexec", "alice"},
-		{"POST", base + "/mcp/%2e%2e", "alice"},
-		{"POST", base + "/mcp/%2e", "alice"},
-		{"POST", base + "/mcp/sse/%2e%2e/x", "alice"},
-		{"POST", base + "/mcp/a%2F%2Fb", "alice"},
-		{"POST", base + "/mcp/a%2Fb", "alice"},
-		{"POST", base + "/mcp/a%5Cb", "alice"},
-		{"POST", base + "/mcp/a%5C..%5Cb", "alice"},
+		{"POST", base + "/mcp/..%2Fapi%2Fexec", alice},
+		{"POST", base + "/mcp/%2e%2e", alice},
+		{"POST", base + "/mcp/%2e", alice},
+		{"POST", base + "/mcp/sse/%2e%2e/x", alice},
+		{"POST", base + "/mcp/a%2F%2Fb", alice},
+		{"POST", base + "/mcp/a%2Fb", alice},
+		{"POST", base + "/mcp/a%5Cb", alice},
+		{"POST", base + "/mcp/a%5C..%5Cb", alice},
 	} {
 		if rec := e.do(c.method, c.path, c.token, ""); rec.Code != http.StatusNotFound {
 			t.Errorf("%s %s: %d, want 404", c.method, c.path, rec.Code)
 		}
 	}
 	// Literal double slashes and dot segments never match a route as they are.
-	for _, path := range []string{base + "/mcp//sse", base + "/mcp/../api/exec", base + "//mcp"} {
-		if rec := e.do("POST", path, "alice", ""); rec.Code/100 == 2 {
+	for _, path := range []string{"/mcp//sse", "/mcp/../api/exec", "//mcp"} {
+		if rec := e.do("POST", path, alice, ""); rec.Code/100 == 2 {
 			t.Errorf("POST %s: %d", path, rec.Code)
 		}
 	}
@@ -101,10 +96,10 @@ func TestEncodedPathSegmentsAreRefused(t *testing.T) {
 	// What is forwarded is escaped again, so it stays one path.
 	for _, c := range []struct{ method, path, token, want string }{
 		{"PUT", base + "/api/artifact-uploads/" + uploadToken, "", "/api/artifact-uploads/" + uploadToken},
-		{"POST", base + "/mcp", "alice", "/mcp"},
-		{"POST", base + "/mcp/sse", "alice", "/mcp/sse"},
-		{"POST", base + "/mcp/a%20b%3Fc%23d/e", "alice", "/mcp/a%20b%3Fc%23d/e"},
-		{"POST", base + "/mcp/sse?x=1", "alice", "/mcp/sse"},
+		{"POST", base + "/mcp", alice, "/mcp"},
+		{"POST", base + "/mcp/sse", alice, "/mcp/sse"},
+		{"POST", base + "/mcp/a%20b%3Fc%23d/e", alice, "/mcp/a%20b%3Fc%23d/e"},
+		{"POST", base + "/mcp/sse?x=1", alice, "/mcp/sse"},
 	} {
 		if rec := e.do(c.method, c.path, c.token, ""); rec.Code != http.StatusOK {
 			t.Errorf("%s %s: %d, want 200", c.method, c.path, rec.Code)
@@ -131,7 +126,7 @@ func TestUploadDoesNotWakeASleepingSession(t *testing.T) {
 	}
 	sessionstest.SetStatus(t, e.client, e.id, sessionstest.Suspended())
 
-	rec := e.do("PUT", "/s/"+e.id+"/api/artifact-uploads/"+uploadToken, "", "file-bytes")
+	rec := e.do("PUT", "/api/artifact-uploads/"+uploadToken, "", "file-bytes")
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "MCP call") {
 		t.Errorf("upload to a sleeping session: %d %q, want 409 saying how to wake it", rec.Code, rec.Body)
 	}
@@ -150,7 +145,7 @@ func TestUploadDoesNotWakeASleepingSession(t *testing.T) {
 func TestUploadToAnUnknownSessionIsNotTracked(t *testing.T) {
 	e := newEnv(t)
 	const unknown = "s-aaaaaaaaaa"
-	if rec := e.do("PUT", "/s/"+unknown+"/api/artifact-uploads/"+uploadToken, "", "x"); rec.Code != http.StatusNotFound {
+	if rec := e.doAt(unknown, "PUT", "/api/artifact-uploads/"+uploadToken, "", "x"); rec.Code != http.StatusNotFound {
 		t.Errorf("upload to an unknown session: %d, want 404", rec.Code)
 	}
 	e.skew.Add(int64(16 * time.Minute))
@@ -163,7 +158,7 @@ func TestUploadToAnUnknownSessionIsNotTracked(t *testing.T) {
 // token must not keep a session awake.
 func TestUploadCountsAsActivityOnlyWhenThePodAcceptsIt(t *testing.T) {
 	e := newEnv(t)
-	path := "/s/" + e.id + "/api/artifact-uploads/" + uploadToken
+	path := "/api/artifact-uploads/" + uploadToken
 	e.tracker.Idle([]string{e.id}) // the sweeper has seen it: its period runs
 	e.skew.Add(int64(16 * time.Minute))
 
@@ -195,7 +190,7 @@ func TestInFlightMCPCallHoldsTheSessionAwake(t *testing.T) {
 		_, _ = io.WriteString(w, "done")
 	})
 	code := make(chan int, 1)
-	go func() { code <- e.do("POST", "/s/"+e.id+"/mcp", "alice", "{}").Code }()
+	go func() { code <- e.do("POST", "/mcp", alice, "{}").Code }()
 	select {
 	case <-started:
 	case <-time.After(5 * time.Second):
@@ -227,15 +222,16 @@ func TestInFlightMCPCallHoldsTheSessionAwake(t *testing.T) {
 // A cluster that cannot be asked is not a session that is waking up.
 func TestStoreFailureIsNotATimeout(t *testing.T) {
 	e := newEnv(t)
-	e.client.(*dynfake.FakeDynamicClient).PrependReactor("get", sessions.SandboxGVR.Resource,
-		func(k8stesting.Action) (bool, runtime.Object, error) {
-			return true, nil, apierrors.NewInternalError(errors.New("etcd is down"))
-		})
-	for _, c := range []struct{ method, path, token string }{
-		{"POST", "/s/" + e.id + "/mcp", "alice"},
-		{"PUT", "/s/" + e.id + "/api/artifact-uploads/" + uploadToken, ""},
+	// (the owner is known from here on; what fails below is finding the pod)
+	if rec := e.do("POST", "/mcp", alice, "{}"); rec.Code != http.StatusOK {
+		t.Fatalf("mcp: %d", rec.Code)
+	}
+	e.clusterDown()
+	for _, c := range []struct{ method, path, user string }{
+		{"POST", "/mcp", alice},
+		{"PUT", "/api/artifact-uploads/" + uploadToken, ""},
 	} {
-		rec := e.do(c.method, c.path, c.token, "")
+		rec := e.do(c.method, c.path, c.user, "")
 		if rec.Code != http.StatusBadGateway || rec.Header().Get("Retry-After") != "" {
 			t.Errorf("%s %s: %d (Retry-After %q), want 502", c.method, c.path, rec.Code, rec.Header().Get("Retry-After"))
 		}
@@ -245,10 +241,31 @@ func TestStoreFailureIsNotATimeout(t *testing.T) {
 	}
 }
 
+// Who owns a session is read from the cluster. If it cannot be read, nobody
+// is let in: not the owner, not an admin, and not as a sign-in challenge.
+func TestAuthorizationFailureFailsClosed(t *testing.T) {
+	e := newEnv(t)
+	e.clusterDown()
+	for _, user := range []string{alice, bob, root} {
+		for name, rec := range map[string]*httptest.ResponseRecorder{
+			"mcp":        e.do("POST", "/mcp", user, "{}"),
+			"vnc-ticket": e.app("POST", "/api/sessions/"+e.id+"/vnc-ticket", user, ""),
+		} {
+			if rec.Code != http.StatusServiceUnavailable || strings.Contains(rec.Body.String(), "ticket") ||
+				strings.Contains(rec.Body.String(), "etcd") {
+				t.Errorf("%s as %s with the cluster down: %d %q, want 503", name, user, rec.Code, rec.Body)
+			}
+		}
+	}
+	if n := len(e.seen()); n != 0 {
+		t.Errorf("%d requests reached the pod", n)
+	}
+}
+
 // The ticket is a credential: nothing may store the response that carries it.
 func TestVNCTicketIsNotCacheable(t *testing.T) {
 	e := newEnv(t)
-	rec := e.do("POST", "/api/sessions/"+e.id+"/vnc-ticket", "alice", "")
+	rec := e.app("POST", "/api/sessions/"+e.id+"/vnc-ticket", alice, "")
 	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control = %q, want no-store", got)
 	}
@@ -270,7 +287,7 @@ func (b *endless) Read(p []byte) (int, error) {
 func TestOversizedUploadIsRefused(t *testing.T) {
 	e := newEnv(t)
 	e.proxy.MaxUploadBytes = 1024
-	path := "/s/" + e.id + "/api/artifact-uploads/" + uploadToken
+	path := "/api/artifact-uploads/" + uploadToken
 
 	// A declared length over the limit is refused without bothering the pod.
 	if rec := e.do("PUT", path, "", strings.Repeat("x", 1025)); rec.Code != http.StatusRequestEntityTooLarge {
@@ -282,13 +299,14 @@ func TestOversizedUploadIsRefused(t *testing.T) {
 
 	// An undeclared (chunked) one is cut off at the limit: were it read to
 	// the end, this request would never be answered.
-	front := httptest.NewServer(e.mux)
+	front := httptest.NewServer(e.handler)
 	defer front.Close()
 	body := &endless{}
 	req, err := http.NewRequestWithContext(t.Context(), "PUT", front.URL+path, io.NopCloser(body))
 	if err != nil {
 		t.Fatal(err)
 	}
+	req.Host = e.host
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -314,7 +332,7 @@ func TestOversizedUploadIsRefused(t *testing.T) {
 // for a hijacked connection, so nothing else would.
 func TestShutdownClosesViewerConnections(t *testing.T) {
 	e := newEnv(t)
-	resp, conn, br := e.websocket(t, "/s/"+e.id+"/vnc?ticket="+e.ticket(t, "alice"))
+	resp, conn, br := e.websocket(t, "/vnc?ticket="+e.ticket(t, alice))
 	if resp.StatusCode != http.StatusSwitchingProtocols {
 		t.Fatalf("upgrade: %d", resp.StatusCode)
 	}
@@ -352,26 +370,28 @@ func TestRunningSessionIsNotLookedUpPerRequest(t *testing.T) {
 	e := newEnv(t)
 	e.proxy.Waker.RunningTTL = time.Minute
 	gets := countGets(e.client)
-	mcp, upload := "/s/"+e.id+"/mcp", "/s/"+e.id+"/api/artifact-uploads/"+uploadToken
+	mcp, upload := "/mcp", "/api/artifact-uploads/"+uploadToken
+	// One read to learn who owns the session, one to find its pod.
+	const reads = 2
 
 	for range 10 {
-		if rec := e.do("POST", mcp, "alice", "{}"); rec.Code != http.StatusOK {
+		if rec := e.do("POST", mcp, alice, "{}"); rec.Code != http.StatusOK {
 			t.Fatalf("mcp: %d", rec.Code)
 		}
 		if rec := e.do("PUT", upload, "", "x"); rec.Code != http.StatusOK {
 			t.Fatalf("upload: %d", rec.Code)
 		}
 	}
-	if n := gets.Load(); n != 1 {
-		t.Errorf("20 requests to a running session read it %d times, want 1", n)
+	if n := gets.Load(); n != reads {
+		t.Errorf("20 requests to a running session read it %d times, want %d", n, reads)
 	}
 
 	e.upstream.Close() // the pod is gone
-	if rec := e.do("POST", mcp, "alice", "{}"); rec.Code != http.StatusBadGateway {
+	if rec := e.do("POST", mcp, alice, "{}"); rec.Code != http.StatusBadGateway {
 		t.Fatalf("pod gone: %d, want 502", rec.Code)
 	}
 	before := gets.Load()
-	_ = e.do("POST", mcp, "alice", "{}")
+	_ = e.do("POST", mcp, alice, "{}")
 	if n := gets.Load() - before; n != 1 {
 		t.Errorf("request after a failed one read the session %d times, want 1 (the remembered pod must be dropped)", n)
 	}

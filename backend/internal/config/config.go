@@ -7,25 +7,26 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
 )
 
 type Config struct {
 	Addr      string // listen address
 	Namespace string // namespace holding session Sandboxes
-	PublicURL string // externally reachable base URL, no trailing slash
+	PublicURL string // the app's (UI and API) base URL, no trailing slash
 
-	OIDCIssuer  string // expected `iss` claim
-	OIDCJWKSURL string // where to fetch signing keys (may differ from the issuer host in-cluster)
-	AdminRole   string // Keycloak realm role that makes a user an admin
-	// Clients (the token's `azp`) whose access tokens are accepted.
-	AllowedClients []string
+	// SessionURLs is where sessions are reached: one host per session.
+	SessionURLs *sessions.URLTemplate
 
-	TopazAddr     string // Topaz directory gRPC address
+	PomeriumJWKSURL string   // where to fetch the keys Pomerium signs identities with
+	AdminEmails     []string // users who may see and manage every session
+
 	BlueprintPath string // session pod blueprint (YAML template)
 	WebDir        string // built UI to serve
 
 	// Passed through to the UI in /config.js.
-	KCURL, KCRealm, KCClientID string
+	SignOutURL string
 
 	IdleAfter          time.Duration // idle time before a session is put to sleep
 	ReadyTimeout       time.Duration // how long a request waits for a waking session
@@ -40,38 +41,39 @@ func FromEnv(get func(string) string) (Config, error) {
 		return def
 	}
 	c := Config{
-		Addr:          or("ADDR", ":8080"),
-		Namespace:     or("NAMESPACE", "browserjs-sessions"),
-		PublicURL:     strings.TrimRight(get("PUBLIC_URL"), "/"),
-		OIDCIssuer:    get("OIDC_ISSUER"),
-		OIDCJWKSURL:   get("OIDC_JWKS_URL"),
-		AdminRole:     or("ADMIN_ROLE", "admin"),
-		TopazAddr:     get("TOPAZ_ADDR"),
-		BlueprintPath: or("BLUEPRINT_PATH", "/etc/browserjs/blueprint.yaml"),
-		WebDir:        or("WEB_DIR", "/srv/web"),
-		KCURL:         get("KC_URL"),
-		KCRealm:       or("KC_REALM", "browserjs"),
-		KCClientID:    or("KC_CLIENT_ID", "browserjs-spa"),
+		Addr:            or("ADDR", ":8080"),
+		Namespace:       or("NAMESPACE", "browserjs-sessions"),
+		PublicURL:       strings.TrimRight(get("PUBLIC_URL"), "/"),
+		PomeriumJWKSURL: get("POMERIUM_JWKS_URL"),
+		BlueprintPath:   or("BLUEPRINT_PATH", "/etc/browserjs/blueprint.yaml"),
+		WebDir:          or("WEB_DIR", "/srv/web"),
+		SignOutURL:      or("SIGN_OUT_URL", "/.pomerium/sign_out"),
 	}
+	template := get("SESSION_URL_TEMPLATE")
 	for _, req := range []struct{ name, value string }{
-		{"PUBLIC_URL", c.PublicURL}, {"OIDC_ISSUER", c.OIDCIssuer}, {"OIDC_JWKS_URL", c.OIDCJWKSURL}, {"TOPAZ_ADDR", c.TopazAddr},
+		{"PUBLIC_URL", c.PublicURL}, {"SESSION_URL_TEMPLATE", template}, {"POMERIUM_JWKS_URL", c.PomeriumJWKSURL},
 	} {
 		if req.value == "" {
 			return Config{}, fmt.Errorf("%s is required", req.name)
 		}
 	}
-	if u, err := url.Parse(c.PublicURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+	public, err := url.Parse(c.PublicURL)
+	if err != nil || (public.Scheme != "http" && public.Scheme != "https") || public.Host == "" {
 		return Config{}, fmt.Errorf("PUBLIC_URL must be an absolute http(s) URL, got %q", c.PublicURL)
 	}
-	for _, client := range strings.Split(or("OIDC_ALLOWED_CLIENTS", "browserjs-spa,claude-connector"), ",") {
-		if client = strings.TrimSpace(client); client != "" {
-			c.AllowedClients = append(c.AllowedClients, client)
+	if c.SessionURLs, err = sessions.ParseURLTemplate(template); err != nil {
+		return Config{}, fmt.Errorf("SESSION_URL_TEMPLATE: %w", err)
+	}
+	// Requests are told apart by their host: the app must not live where the
+	// sessions do.
+	if _, session := c.SessionURLs.Match(public.Host); session {
+		return Config{}, fmt.Errorf("PUBLIC_URL %q is under the session domain of SESSION_URL_TEMPLATE %q", c.PublicURL, template)
+	}
+	for _, email := range strings.Split(get("ADMIN_EMAILS"), ",") {
+		if email = strings.ToLower(strings.TrimSpace(email)); email != "" {
+			c.AdminEmails = append(c.AdminEmails, email)
 		}
 	}
-	if len(c.AllowedClients) == 0 {
-		return Config{}, fmt.Errorf("OIDC_ALLOWED_CLIENTS must name at least one client")
-	}
-	var err error
 	if c.IdleAfter, err = positiveDuration(or("IDLE_AFTER", "15m")); err != nil {
 		return Config{}, fmt.Errorf("IDLE_AFTER: %w", err)
 	}

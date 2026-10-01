@@ -14,52 +14,58 @@ func TestFromEnvDefaultsAndRequired(t *testing.T) {
 		t.Fatal("expected error when required vars are missing")
 	}
 	c, err := FromEnv(env(map[string]string{
-		"PUBLIC_URL":    "https://sessions.example.com/",
-		"OIDC_ISSUER":   "https://kc.example.com/realms/browserjs",
-		"OIDC_JWKS_URL": "http://keycloak:8080/realms/browserjs/protocol/openid-connect/certs",
-		"TOPAZ_ADDR":    "topaz:9292",
+		"PUBLIC_URL":           "https://app.example.com/",
+		"SESSION_URL_TEMPLATE": "https://{id}.sessions.example.com",
+		"POMERIUM_JWKS_URL":    "http://pomerium-proxy.pomerium.svc/.well-known/pomerium/jwks.json",
 	}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.PublicURL != "https://sessions.example.com" {
+	if c.PublicURL != "https://app.example.com" {
 		t.Errorf("PublicURL trailing slash not trimmed: %q", c.PublicURL)
 	}
-	if c.Addr != ":8080" || c.Namespace != "browserjs-sessions" || c.AdminRole != "admin" {
+	if c.Addr != ":8080" || c.Namespace != "browserjs-sessions" || c.SignOutURL != "/.pomerium/sign_out" {
 		t.Errorf("unexpected defaults: %+v", c)
 	}
 	if c.IdleAfter != 15*time.Minute || c.MaxSessionsPerUser != 5 || c.ReadyTimeout != 3*time.Minute {
 		t.Errorf("unexpected defaults: %+v", c)
 	}
-	if !slices.Equal(c.AllowedClients, []string{"browserjs-spa", "claude-connector"}) {
-		t.Errorf("AllowedClients default = %q", c.AllowedClients)
+	if len(c.AdminEmails) != 0 {
+		t.Errorf("AdminEmails default = %q, want none", c.AdminEmails)
+	}
+	if got := c.SessionURLs.MCP("s-abcdefg234"); got != "https://s-abcdefg234.sessions.example.com/mcp" {
+		t.Errorf("session MCP URL = %q", got)
+	}
+	if c.PomeriumJWKSURL != "http://pomerium-proxy.pomerium.svc/.well-known/pomerium/jwks.json" {
+		t.Errorf("PomeriumJWKSURL = %q", c.PomeriumJWKSURL)
 	}
 }
 
 func valid() map[string]string {
 	return map[string]string{
-		"PUBLIC_URL": "http://localhost:8080", "OIDC_ISSUER": "i", "OIDC_JWKS_URL": "j", "TOPAZ_ADDR": "t",
+		"PUBLIC_URL": "http://app.localtest.me:8080", "SESSION_URL_TEMPLATE": "http://{id}.sessions.localtest.me:8080",
+		"POMERIUM_JWKS_URL": "j",
 	}
 }
 
-func TestFromEnvAllowedClients(t *testing.T) {
+func TestFromEnvAdminEmails(t *testing.T) {
 	m := valid()
-	m["OIDC_ALLOWED_CLIENTS"] = " my-spa , ,other "
+	m["ADMIN_EMAILS"] = " Root@Example.com , ,ops@example.com,"
 	c, err := FromEnv(env(m))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(c.AllowedClients, []string{"my-spa", "other"}) {
-		t.Errorf("AllowedClients = %q", c.AllowedClients)
+	if !slices.Equal(c.AdminEmails, []string{"root@example.com", "ops@example.com"}) {
+		t.Errorf("AdminEmails = %q", c.AdminEmails)
 	}
-	m["OIDC_ALLOWED_CLIENTS"] = " , "
-	if _, err := FromEnv(env(m)); err == nil {
-		t.Error("expected an error for a client list with no clients in it")
+	m["ADMIN_EMAILS"] = " , "
+	if c, err := FromEnv(env(m)); err != nil || len(c.AdminEmails) != 0 {
+		t.Errorf("a list with no emails in it: %q, %v; want no admins", c.AdminEmails, err)
 	}
 }
 
 func TestFromEnvReportsEachMissingVariable(t *testing.T) {
-	for _, k := range []string{"PUBLIC_URL", "OIDC_ISSUER", "OIDC_JWKS_URL", "TOPAZ_ADDR"} {
+	for _, k := range []string{"PUBLIC_URL", "SESSION_URL_TEMPLATE", "POMERIUM_JWKS_URL"} {
 		m := valid()
 		delete(m, k)
 		if _, err := FromEnv(env(m)); err == nil || !strings.Contains(err.Error(), k) {
@@ -75,13 +81,20 @@ func TestFromEnvReportsEachMissingVariable(t *testing.T) {
 }
 
 func TestFromEnvRejectsNonsenseValues(t *testing.T) {
-	for k, v := range map[string]string{
-		"MAX_SESSIONS_PER_USER": "0", "IDLE_AFTER": "0s", "READY_TIMEOUT": "-1m", "PUBLIC_URL": "sessions.example.com",
+	for _, c := range []struct{ k, v string }{
+		{"MAX_SESSIONS_PER_USER", "0"}, {"IDLE_AFTER", "0s"}, {"READY_TIMEOUT", "-1m"},
+		{"PUBLIC_URL", "app.example.com"},
+		{"SESSION_URL_TEMPLATE", "http://sessions.localtest.me:8080"},
+		{"SESSION_URL_TEMPLATE", "http://sessions.localtest.me:8080/s/{id}"},
+		{"SESSION_URL_TEMPLATE", "http://s-{id}.sessions.localtest.me:8080"},
+		// The app's own host must not read as a session's.
+		{"PUBLIC_URL", "http://app.sessions.localtest.me:8080"},
+		{"PUBLIC_URL", "http://s-abcdefg234.sessions.localtest.me"},
 	} {
 		m := valid()
-		m[k] = v
-		if _, err := FromEnv(env(m)); err == nil || !strings.Contains(err.Error(), k) {
-			t.Errorf("%s=%s: err = %v", k, v, err)
+		m[c.k] = c.v
+		if _, err := FromEnv(env(m)); err == nil || !strings.Contains(err.Error(), c.k) {
+			t.Errorf("%s=%s: err = %v", c.k, c.v, err)
 		}
 	}
 	for _, k := range []string{"MAX_SESSIONS_PER_USER", "READY_TIMEOUT"} {
@@ -94,19 +107,21 @@ func TestFromEnvRejectsNonsenseValues(t *testing.T) {
 }
 
 func TestFromEnvOverrides(t *testing.T) {
-	c, err := FromEnv(env(map[string]string{
-		"PUBLIC_URL": "http://localhost:8080", "OIDC_ISSUER": "i", "OIDC_JWKS_URL": "j", "TOPAZ_ADDR": "t",
-		"IDLE_AFTER": "5m", "MAX_SESSIONS_PER_USER": "2", "ADDR": ":9000",
-	}))
+	m := valid()
+	for k, v := range map[string]string{
+		"IDLE_AFTER": "5m", "MAX_SESSIONS_PER_USER": "2", "ADDR": ":9000", "SIGN_OUT_URL": "https://app.example.com/bye",
+	} {
+		m[k] = v
+	}
+	c, err := FromEnv(env(m))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.IdleAfter != 5*time.Minute || c.MaxSessionsPerUser != 2 || c.Addr != ":9000" {
+	if c.IdleAfter != 5*time.Minute || c.MaxSessionsPerUser != 2 || c.Addr != ":9000" || c.SignOutURL != "https://app.example.com/bye" {
 		t.Errorf("overrides not applied: %+v", c)
 	}
-	if _, err := FromEnv(env(map[string]string{
-		"PUBLIC_URL": "http://x", "OIDC_ISSUER": "i", "OIDC_JWKS_URL": "j", "TOPAZ_ADDR": "t", "IDLE_AFTER": "soon",
-	})); err == nil {
+	m["IDLE_AFTER"] = "soon"
+	if _, err := FromEnv(env(m)); err == nil {
 		t.Fatal("expected error for a bad duration")
 	}
 }

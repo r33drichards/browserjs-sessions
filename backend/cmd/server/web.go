@@ -19,9 +19,7 @@ func webHandler(cfg config.Config) http.Handler {
 	files := http.FileServer(http.Dir(root))
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /config.js", func(w http.ResponseWriter, _ *http.Request) {
-		body, _ := json.Marshal(map[string]string{
-			"kcUrl": cfg.KCURL, "kcRealm": cfg.KCRealm, "kcClientId": cfg.KCClientID,
-		})
+		body, _ := json.Marshal(map[string]string{"signOutUrl": cfg.SignOutURL})
 		w.Header().Set("Content-Type", "application/javascript")
 		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write(append([]byte("window.__BROWSERJS_CFG__ = "), append(body, ';')...))

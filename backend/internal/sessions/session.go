@@ -14,8 +14,8 @@ import (
 var SandboxGVR = schema.GroupVersionResource{Group: "agents.x-k8s.io", Version: "v1beta1", Resource: "sandboxes"}
 
 const (
-	LabelOwner   = "browserjs.dev/owner"    // OwnerLabel(subject), for selecting
-	AnnOwner     = "browserjs.dev/owner-id" // the owner's subject, as issued
+	LabelOwner   = "browserjs.dev/owner"    // OwnerLabel(owner), for selecting
+	AnnOwner     = "browserjs.dev/owner-id" // the owner: the user's email address
 	AnnName      = "browserjs.dev/name"
 	AnnStoppedBy = "browserjs.dev/stopped-by"
 
@@ -23,18 +23,18 @@ const (
 	StoppedByIdle = "idle" // wakes on the next request
 )
 
-// OwnerLabel is the value of LabelOwner for a subject. A subject is whatever
-// the identity provider issues (it may be long, or contain "|", ":", "@" or
-// ","), so it cannot be a label value or go into a selector itself.
-func OwnerLabel(subject string) string {
-	sum := sha256.Sum256([]byte(subject))
+// OwnerLabel is the value of LabelOwner for an owner. An owner is an email
+// address (it has an "@", and may be long or contain "+"), so it cannot be a
+// label value or go into a selector itself.
+func OwnerLabel(owner string) string {
+	sum := sha256.Sum256([]byte(owner))
 	return hex.EncodeToString(sum[:])[:32]
 }
 
 var idPattern = regexp.MustCompile(`^s-[a-z2-7]{10}$`)
 
 // ValidID reports whether id has the form of a session ID. Anything else
-// cannot name a session and need not be sent to the cluster or authorizer.
+// cannot name a session and need not be sent to the cluster.
 func ValidID(id string) bool { return idPattern.MatchString(id) }
 
 type State string

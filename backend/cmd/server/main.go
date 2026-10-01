@@ -30,6 +30,10 @@ import (
 	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
 )
 
+// How long a session's owner, once read, is taken to still be its owner
+// (it never changes) rather than read again for the next request.
+const ownerTTL = 2 * time.Second
+
 // Limits on this process's requests to the API server.
 const (
 	kubeQPS   = 50
@@ -74,25 +78,23 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	store, err := sessions.NewStore(dyn, cfg.Namespace, string(blueprint), cfg.PublicURL)
+	store, err := sessions.NewStore(dyn, cfg.Namespace, string(blueprint), cfg.PublicURL, cfg.SessionURLs)
 	if err != nil {
 		return err
 	}
-	verifier, err := auth.NewJWKSVerifier(ctx, cfg.OIDCJWKSURL, cfg.OIDCIssuer, cfg.AdminRole, cfg.AllowedClients)
+	verifier, err := auth.NewJWKSVerifier(ctx, cfg.PomeriumJWKSURL, cfg.AdminEmails)
 	if err != nil {
 		return err
 	}
-	var az authz.Authorizer = authz.NewMemory() // replaced by Topaz in Task 12
-	slog.Warn("session ownership is kept in memory: sessions that exist already have no owner after a restart")
 	slog.Warn("VNC tickets and idle tracking are per-process: run exactly one replica of this backend")
 
 	tracker := idle.New(cfg.IdleAfter, time.Now)
 	go idle.Run(ctx, store, tracker, time.Minute)
 
-	mux, px := newMux(cfg, verifier, store, az, tracker)
+	handler, px := newHandler(cfg, verifier, store, tracker)
 
 	srv := &http.Server{
-		Handler:           mux,
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		// No read or write timeout: MCP streams and uploads run long. The
@@ -133,29 +135,30 @@ func serve(ctx context.Context, srv *http.Server, ln net.Listener, grace time.Du
 	return nil
 }
 
-// newMux builds the server's whole route table.
-func newMux(cfg config.Config, verifier auth.Verifier, store *sessions.Store, az authz.Authorizer, tracker *idle.Tracker) (*http.ServeMux, *proxy.Proxy) {
-	sessionsAPI := api.New(store, az, cfg.MaxSessionsPerUser)
-	apiMux := http.NewServeMux()
-	sessionsAPI.Register(apiMux)
-
+// newHandler builds the server's whole route table. Requests arrive through
+// Pomerium, for the app's host or for a session's; the proxy tells them
+// apart and serves the sessions' itself.
+func newHandler(cfg config.Config, verifier auth.Verifier, store *sessions.Store, tracker *idle.Tracker) (http.Handler, *proxy.Proxy) {
+	owners := authz.NewOwners(store, ownerTTL)
 	px := &proxy.Proxy{
-		Verifier:  verifier,
-		Authz:     az,
-		Waker:     &proxy.Waker{Store: store, Timeout: cfg.ReadyTimeout, Poll: time.Second, RunningTTL: 2 * time.Second},
-		Idle:      tracker,
-		PublicURL: cfg.PublicURL,
-		Issuer:    cfg.OIDCIssuer,
-		SyncAdmin: sessionsAPI.SyncAdmin,
+		Verifier: verifier,
+		Authz:    owners,
+		Waker:    &proxy.Waker{Store: store, Timeout: cfg.ReadyTimeout, Poll: time.Second, RunningTTL: 2 * time.Second},
+		Idle:     tracker,
+		URLs:     cfg.SessionURLs,
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
-	px.Register(mux) // registers the more specific /api/sessions/{id}/vnc-ticket itself
-	mux.Handle("/api/", auth.Middleware(verifier)(apiMux))
-	// Only the metadata documents registered above exist here. An MCP client
-	// probing for others must be told so, not handed the UI.
-	mux.Handle("/.well-known/", http.NotFoundHandler())
-	mux.Handle("/", webHandler(cfg))
-	return mux, px
+	apiMux := http.NewServeMux()
+	api.New(store, owners, cfg.SessionURLs, cfg.MaxSessionsPerUser).Register(apiMux)
+	px.RegisterApp(apiMux)
+
+	app := http.NewServeMux()
+	app.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
+	app.Handle("/api/", auth.Middleware(verifier)(apiMux))
+	// Pomerium answers for the OAuth metadata of the hosts it fronts. A
+	// client probing here for more must be told there is none, not handed
+	// the UI.
+	app.Handle("/.well-known/", http.NotFoundHandler())
+	app.Handle("/", webHandler(cfg))
+	return px.Handler(app), px
 }
