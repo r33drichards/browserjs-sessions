@@ -6,6 +6,8 @@ const backend = "http://localhost:8080"
 export default defineConfig({
   plugins: [react()],
   optimizeDeps: { include: ["@cloudscape-design/components"] },
+  // noVNC uses top-level await, which Vite's default build target rejects.
+  build: { target: "es2022" },
   server: {
     proxy: {
       "/api": backend,
