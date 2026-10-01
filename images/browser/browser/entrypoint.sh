@@ -12,6 +12,10 @@ PORT="${PORT:-8080}"
 DATA_DIR="${DATA_DIR:-/data}"
 PROFILE_DIR="$DATA_DIR/chrome"
 SCREEN="${SCREEN_GEOMETRY:-1280x800x24}"
+# WxHxDepth; Chromium wants its window size as "W,H".
+SCREEN_W="${SCREEN%%x*}"
+SCREEN_H="${SCREEN#*x}"
+SCREEN_H="${SCREEN_H%%x*}"
 
 SESSION_MODE="${SESSION_MODE:-0}"
 if [ "$SESSION_MODE" != 1 ]; then
@@ -101,7 +105,7 @@ pids+=($!)
     # here (disk full, permissions) must not end this loop.
     prefs="$PROFILE_DIR/Default/Preferences"
     if [ -n "$RESTORE_FLAG" ] && [ -f "$prefs" ]; then
-      sed -i 's/"exit_type":"[A-Za-z]*"/"exit_type":"Normal"/; s/"exited_cleanly":false/"exited_cleanly":true/' "$prefs" ||
+      sed -i 's/"exit_type":"[A-Za-z]*"/"exit_type":"Normal"/' "$prefs" ||
         echo "warning: could not mark $prefs as cleanly exited; Chromium may ask before restoring tabs" >&2
     fi
     # A start URL is opened next to the restored tabs, so with a session to
@@ -122,7 +126,8 @@ pids+=($!)
       --remote-debugging-address=127.0.0.1 \
       --remote-debugging-port=9222 \
       --window-position=0,0 \
-      --window-size="${SCREEN%x*}" \
+      --window-size="$SCREEN_W,$SCREEN_H" \
+      --force-device-scale-factor=1 \
       --start-maximized \
       $RESTORE_FLAG \
       $start_url || true
