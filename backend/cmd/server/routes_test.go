@@ -366,3 +366,70 @@ func TestSessionHostRoutes(t *testing.T) {
 		t.Errorf("%d of them reached the pod", n)
 	}
 }
+
+// The UI reads any redirect from the API as "signed out" and any 401 as the
+// same, so the API never redirects, and 401 means only "no identity".
+func TestAPINeverRedirects(t *testing.T) {
+	s := newServer(t)
+	mine := s.session(alice)
+	for _, user := range []string{alice, ""} {
+		for _, p := range []string{
+			"/api", "/api/", "/api/sessions/", "//api/sessions", "/api//sessions", "/api/sessions//",
+			"/api/./sessions", "/api/x/../sessions", "/x/../api/sessions", "//api/me", "/api/me/",
+			"/api/sessions/" + mine.ID + "/", "/api/sessions/" + mine.ID + "//vnc-ticket",
+		} {
+			for _, method := range []string{"GET", "POST", "DELETE"} {
+				rec := s.do(method, appHost, p, user, "{}")
+				if rec.Code/100 == 3 || rec.Header().Get("Location") != "" {
+					t.Errorf("%s %s as %q: %d, Location %q", method, p, user, rec.Code, rec.Header().Get("Location"))
+				}
+				if user != "" && rec.Code == http.StatusUnauthorized {
+					t.Errorf("%s %s signed in: 401", method, p)
+				}
+				if rec.Code/100 == 2 && rec.Code != http.StatusNoContent && rec.Header().Get("Content-Type") != "application/json" {
+					t.Errorf("%s %s: %d with Content-Type %q", method, p, rec.Code, rec.Header().Get("Content-Type"))
+				}
+			}
+		}
+	}
+}
+
+// Every session the API returns says where its MCP endpoint is, every 2xx
+// body is JSON, and "not yours" is never 401.
+func TestAPIResponsesForTheUI(t *testing.T) {
+	s := newServer(t)
+	mine := s.session(alice)
+	want := "https://" + mine.ID + ".sessions.example.com/mcp"
+	p := "/api/sessions/" + mine.ID
+	for name, rec := range map[string]*httptest.ResponseRecorder{
+		"get":   s.do("GET", appHost, p, alice, ""),
+		"patch": s.do("PATCH", appHost, p, alice, `{"name":"renamed"}`),
+		"list":  s.do("GET", appHost, "/api/sessions", alice, ""),
+		"all":   s.do("GET", appHost, "/api/sessions?all=1", root, ""),
+		"me":    s.do("GET", appHost, "/api/me", alice, ""),
+	} {
+		if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "application/json" {
+			t.Errorf("%s: %d, Content-Type %q", name, rec.Code, rec.Header().Get("Content-Type"))
+		}
+		if name != "me" && !strings.Contains(rec.Body.String(), `"mcp_url":"`+want+`"`) {
+			t.Errorf("%s: no mcp_url in %s", name, rec.Body)
+		}
+	}
+	rec := s.do("POST", appHost, p+"/vnc-ticket", alice, "")
+	var ticket struct{ Ticket, URL string }
+	_ = json.Unmarshal(rec.Body.Bytes(), &ticket)
+	if rec.Header().Get("Content-Type") != "application/json" ||
+		ticket.URL != "wss://"+mine.ID+".sessions.example.com/vnc?ticket="+ticket.Ticket || ticket.Ticket == "" {
+		t.Errorf("ticket: %d %s", rec.Code, rec.Body)
+	}
+	for _, c := range []struct{ method, path string }{
+		{"GET", p}, {"PATCH", p}, {"DELETE", p}, {"POST", p + "/vnc-ticket"}, {"GET", "/api/nope"},
+	} {
+		if rec := s.do(c.method, appHost, c.path, bob, `{"name":"x"}`); rec.Code != http.StatusNotFound {
+			t.Errorf("%s %s as a stranger: %d, want 404", c.method, c.path, rec.Code)
+		}
+	}
+	if rec := s.do("DELETE", appHost, p, alice, ""); rec.Code != http.StatusNoContent || rec.Body.Len() != 0 {
+		t.Errorf("delete: %d %q", rec.Code, rec.Body)
+	}
+}

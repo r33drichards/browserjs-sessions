@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path"
+	"strings"
 	"syscall"
 	"time"
 
@@ -154,11 +156,29 @@ func newHandler(cfg config.Config, verifier auth.Verifier, store *sessions.Store
 
 	app := http.NewServeMux()
 	app.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
-	app.Handle("/api/", auth.Middleware(verifier)(apiMux))
+	apiHandler := auth.Middleware(verifier)(apiMux)
+	app.Handle("/api/", apiHandler)
+	app.Handle("/api", apiHandler) // or the mux redirects it to /api/
 	// Pomerium answers for the OAuth metadata of the hosts it fronts. A
 	// client probing here for more must be told there is none, not handed
 	// the UI.
 	app.Handle("/.well-known/", http.NotFoundHandler())
 	app.Handle("/", webHandler(cfg))
-	return px.Handler(app), px
+	return px.Handler(noAPIRedirects(app)), px
+}
+
+// noAPIRedirects answers 404 where the mux would redirect an API path to
+// its clean spelling ("//api/sessions", "/api/x/../sessions", "/api"). The
+// UI reads any redirect from the API as "signed out", so the API has none.
+func noAPIRedirects(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		clean := path.Clean("/" + r.URL.Path)
+		if (clean == "/api" || strings.HasPrefix(clean, "/api/")) && clean != strings.TrimSuffix(r.URL.Path, "/") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}` + "\n"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
