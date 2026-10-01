@@ -69,6 +69,10 @@ jobs:
       - name: Validate
         run: tofu validate -no-color
 
+      # Mocked provider: checks the configuration's own logic, contacts nothing.
+      - name: Test
+        run: tofu test -no-color
+
       - name: Plan
         run: |
           set -o pipefail
