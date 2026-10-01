@@ -1,0 +1,12 @@
+{
+  "name": "browser-mcp",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "main": "server.js",
+  "bin": { "browser-mcp": "server.js" },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.0",
+    "puppeteer-core": "^24.0.0"
+  }
+}
