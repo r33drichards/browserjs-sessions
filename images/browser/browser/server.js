@@ -157,28 +157,68 @@ function saveTabs() {
   } catch {}
 }
 
+// A tab nobody uses yet: Chromium's startup tab, or the New Tab page it
+// restarts on after a human closed the last tab over VNC.
+const SPARE_URLS = new Set(['about:blank', 'chrome://newtab/', 'chrome://new-tab-page/']);
+
+const isLive = (page) => Boolean(page) && !page.isClosed() && page.browser().connected;
+
+// The restored page a saved name should be rebound to, if any.
+//
+// 1. The unowned page at exactly the saved URL.
+// 2. Otherwise the saved URL is out of date: Chromium writes its own session
+//    about a second after a navigation, so a restore can bring back an older
+//    URL, and a page can redirect when reloaded. Set aside the pages the other
+//    unbound saved names claim by exact URL; if exactly one non-spare page is
+//    then left and this is the only saved name without a match, they belong
+//    together. With several names or several pages left over there is no
+//    telling which is which, so do not guess (the name gets a fresh tab).
+function restoredPage(name, pages) {
+  const wanted = savedTabs[name];
+  if (!wanted) return null;
+  const owned = new Set(tabs.values());
+  const free = pages.filter((p) => !owned.has(p));
+  const take = (url) => {
+    const i = free.findIndex((p) => p.url() === url);
+    return i < 0 ? null : free.splice(i, 1)[0];
+  };
+  const exact = take(wanted);
+  if (exact) return exact;
+  let unmatched = 1;
+  for (const [other, url] of Object.entries(savedTabs)) {
+    if (other === name || isLive(tabs.get(other))) continue;
+    if (!take(url)) unmatched++;
+  }
+  const leftover = free.filter((p) => !SPARE_URLS.has(p.url()));
+  return unmatched === 1 && leftover.length === 1 ? leftover[0] : null;
+}
+
 async function getTab(name) {
   const existing = tabs.get(name);
   // Closed over VNC, or Chromium restarted underneath us: start over.
-  if (existing && !existing.isClosed() && existing.browser().connected) return existing;
+  if (isLive(existing)) return existing;
 
   const browser = await getBrowser();
-  // Prefer the restored page this name last had, then adopt a spare blank
-  // tab (Chromium's startup tab) before opening another.
+  // Prefer the restored page this name last had, then adopt a spare tab
+  // before opening another.
   const owned = new Set(tabs.values());
   const pages = await browser.pages();
-  // Matched on the exact URL: a tab navigated after its last pipeline (by a
-  // human over VNC, or by the page itself), or redirected when restored, will
-  // not rebind and the name gets a fresh tab.
-  const wanted = savedTabs[name];
-  const restored = wanted && pages.find((p) => !owned.has(p) && p.url() === wanted);
-  const blank = pages.find((p) => !owned.has(p) && p.url() === 'about:blank');
-  const page = restored || blank || (await browser.newPage());
+  const page =
+    restoredPage(name, pages) ||
+    pages.find((p) => !owned.has(p) && SPARE_URLS.has(p.url())) ||
+    (await browser.newPage());
   tabs.set(name, page);
   // A quitting Chromium closes every page just like a human closing a tab
   // does, so this must leave the saved state alone: only an explicit
   // `close: true` forgets a name (see executePipeline).
+  // Pipelines are not the only thing that navigates a tab (a human over VNC,
+  // the page itself), so keep the saved URL current as the page moves.
+  const onNavigated = (frame) => {
+    if (frame === page.mainFrame() && tabs.get(name) === page) saveTabs();
+  };
+  page.on('framenavigated', onNavigated);
   page.once('close', () => {
+    page.off('framenavigated', onNavigated);
     if (tabs.get(name) === page) tabs.delete(name);
   });
   return page;
