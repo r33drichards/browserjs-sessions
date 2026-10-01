@@ -2,6 +2,7 @@ package idle
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -11,7 +12,7 @@ import (
 // Sweep puts every running session that has been idle too long to sleep, and
 // stops tracking sessions that no longer exist.
 func Sweep(ctx context.Context, store *sessions.Store, t *Tracker) error {
-	all, err := store.List(ctx, "")
+	all, err := store.ListAll(ctx)
 	if err != nil {
 		return err
 	}
@@ -25,11 +26,14 @@ func Sweep(ctx context.Context, store *sessions.Store, t *Tracker) error {
 	}
 	t.Retain(ids)
 	for _, id := range t.Idle(running) {
-		if err := store.Suspend(ctx, id, sessions.StoppedByIdle); err != nil {
+		switch err := store.Suspend(ctx, id, sessions.StoppedByIdle); {
+		case err == nil:
+			slog.Info("session put to sleep", "session", id)
+		case errors.Is(err, sessions.ErrStateChanged), errors.Is(err, sessions.ErrNotFound):
+			// Its user stopped or deleted it first; nothing left to do.
+		default:
 			slog.Error("idle suspend failed", "session", id, "err", err)
-			continue
 		}
-		slog.Info("session put to sleep", "session", id)
 	}
 	return nil
 }

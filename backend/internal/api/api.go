@@ -111,11 +111,13 @@ func (a *API) storeError(w http.ResponseWriter, err error) {
 }
 
 func (a *API) list(w http.ResponseWriter, r *http.Request, u auth.User) {
-	owner := u.Subject
+	var list []sessions.Session
+	var err error
 	if u.Admin && r.URL.Query().Get("all") == "1" {
-		owner = ""
+		list, err = a.store.ListAll(r.Context())
+	} else {
+		list, err = a.store.List(r.Context(), u.Subject)
 	}
-	list, err := a.store.List(r.Context(), owner)
 	if err != nil {
 		a.storeError(w, err)
 		return

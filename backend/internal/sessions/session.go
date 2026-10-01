@@ -2,6 +2,9 @@
 package sessions
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"regexp"
 	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -11,13 +14,28 @@ import (
 var SandboxGVR = schema.GroupVersionResource{Group: "agents.x-k8s.io", Version: "v1beta1", Resource: "sandboxes"}
 
 const (
-	LabelOwner   = "browserjs.dev/owner"
+	LabelOwner   = "browserjs.dev/owner"    // OwnerLabel(subject), for selecting
+	AnnOwner     = "browserjs.dev/owner-id" // the owner's subject, as issued
 	AnnName      = "browserjs.dev/name"
 	AnnStoppedBy = "browserjs.dev/stopped-by"
 
 	StoppedByUser = "user" // stays stopped until resumed
 	StoppedByIdle = "idle" // wakes on the next request
 )
+
+// OwnerLabel is the value of LabelOwner for a subject. A subject is whatever
+// the identity provider issues (it may be long, or contain "|", ":", "@" or
+// ","), so it cannot be a label value or go into a selector itself.
+func OwnerLabel(subject string) string {
+	sum := sha256.Sum256([]byte(subject))
+	return hex.EncodeToString(sum[:])[:32]
+}
+
+var idPattern = regexp.MustCompile(`^s-[a-z2-7]{10}$`)
+
+// ValidID reports whether id has the form of a session ID. Anything else
+// cannot name a session and need not be sent to the cluster or authorizer.
+func ValidID(id string) bool { return idPattern.MatchString(id) }
 
 type State string
 
@@ -65,17 +83,18 @@ func FromSandbox(obj *unstructured.Unstructured) Session {
 	s := Session{
 		ID:      obj.GetName(),
 		Name:    obj.GetAnnotations()[AnnName],
-		Owner:   obj.GetLabels()[LabelOwner],
+		Owner:   obj.GetAnnotations()[AnnOwner],
 		Created: obj.GetCreationTimestamp().Time,
-	}
-	if ips, _, _ := unstructured.NestedStringSlice(obj.Object, "status", "podIPs"); len(ips) > 0 {
-		s.PodIP = ips[0]
 	}
 	mode, _, _ := unstructured.NestedString(obj.Object, "spec", "operatingMode")
 	conds := conditions(obj)
 	ready := conds["Ready"]
 
 	switch {
+	case obj.GetDeletionTimestamp() != nil:
+		// Deleted but held by a finalizer: going away, whatever the
+		// conditions still say.
+		s.State = Stopping
 	case mode == "Suspended":
 		// The Suspended condition is only meaningful while operatingMode is
 		// Suspended: the controller leaves a stale one behind after a resume.
@@ -91,10 +110,19 @@ func FromSandbox(obj *unstructured.Unstructured) Session {
 		s.State = Running
 	case conds["Finished"].reason == "PodFailed" || ready.reason == "InvalidConfiguration":
 		s.State = Failed
-		s.Message = ready.message
+		if s.Message = ready.message; s.Message == "" {
+			s.Message = conds["Finished"].message
+		}
 	default:
 		s.State = Starting
 		s.Message = ready.message
+	}
+	// Only a running session has a pod to reach; in any other state
+	// status.podIPs may be left over from one that is gone.
+	if s.State == Running {
+		if ips, _, _ := unstructured.NestedStringSlice(obj.Object, "status", "podIPs"); len(ips) > 0 {
+			s.PodIP = ips[0]
+		}
 	}
 	return s
 }

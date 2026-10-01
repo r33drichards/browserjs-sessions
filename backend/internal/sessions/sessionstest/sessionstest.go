@@ -3,14 +3,22 @@ package sessionstest
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+	"sync"
 	"testing"
 
-	"k8s.io/apimachinery/pkg/apis/meta/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/dynamic"
 	dynfake "k8s.io/client-go/dynamic/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
 )
@@ -47,6 +55,7 @@ func New(t *testing.T) (*sessions.Store, dynamic.Interface) {
 	t.Helper()
 	client := dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
 		map[schema.GroupVersionResource]string{sessions.SandboxGVR: "SandboxList"})
+	emulateAPIServer(client)
 	store, err := sessions.NewStore(client, Namespace, Blueprint, "https://sessions.example.com")
 	if err != nil {
 		t.Fatal(err)
@@ -54,20 +63,123 @@ func New(t *testing.T) (*sessions.Store, dynamic.Interface) {
 	return store, client
 }
 
+// emulateAPIServer adds the two API server behaviours the stock fake leaves
+// out and the store depends on: label values are validated on create, and
+// every write bumps metadata.resourceVersion, with an update that carries a
+// stale one refused as a conflict.
+func emulateAPIServer(client *dynfake.FakeDynamicClient) {
+	tracker := client.Tracker()
+	apply := k8stesting.ObjectReaction(tracker)
+	gr := sessions.SandboxGVR.GroupResource()
+	client.PrependReactor("*", sessions.SandboxGVR.Resource, func(action k8stesting.Action) (bool, runtime.Object, error) {
+		switch action.GetVerb() {
+		case "create":
+			obj := action.(k8stesting.CreateAction).GetObject().(*unstructured.Unstructured)
+			podLabels, _, _ := unstructured.NestedStringMap(obj.Object, "spec", "podTemplate", "metadata", "labels")
+			for _, set := range []map[string]string{obj.GetLabels(), podLabels} {
+				for k, v := range set {
+					if problems := validation.IsValidLabelValue(v); len(problems) > 0 {
+						return true, nil, apierrors.NewBadRequest(fmt.Sprintf("label %s=%q: %s", k, v, strings.Join(problems, "; ")))
+					}
+				}
+			}
+		case "update":
+			obj := action.(k8stesting.UpdateAction).GetObject().(*unstructured.Unstructured)
+			cur, err := tracker.Get(sessions.SandboxGVR, action.GetNamespace(), obj.GetName())
+			if err != nil {
+				return true, nil, err
+			}
+			if rv := obj.GetResourceVersion(); rv != "" && rv != cur.(*unstructured.Unstructured).GetResourceVersion() {
+				return true, nil, apierrors.NewConflict(gr, obj.GetName(), errors.New("the object has been modified"))
+			}
+		case "patch":
+		default:
+			return false, nil, nil
+		}
+		_, out, err := apply(action)
+		if err != nil {
+			return true, nil, err
+		}
+		obj := out.(*unstructured.Unstructured)
+		bumpResourceVersion(obj)
+		if err := tracker.Update(sessions.SandboxGVR, obj, action.GetNamespace()); err != nil {
+			return true, nil, err
+		}
+		return true, obj, nil
+	})
+}
+
+func bumpResourceVersion(obj *unstructured.Unstructured) {
+	rv, _ := strconv.Atoi(obj.GetResourceVersion())
+	obj.SetResourceVersion(strconv.Itoa(rv + 1))
+}
+
+// RaceNextGet makes the next read of Sandbox id lose a race: the reader is
+// served the object as it was, and mutate is applied to the stored copy
+// before the reader can act on what it saw.
+func RaceNextGet(t *testing.T, client dynamic.Interface, id string, mutate func(obj *unstructured.Unstructured)) {
+	t.Helper()
+	fake := client.(*dynfake.FakeDynamicClient)
+	tracker := fake.Tracker()
+	var once sync.Once
+	fake.PrependReactor("get", sessions.SandboxGVR.Resource, func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if action.(k8stesting.GetAction).GetName() != id {
+			return false, nil, nil
+		}
+		var seen runtime.Object
+		var err error
+		raced := false
+		once.Do(func() {
+			raced = true
+			if seen, err = tracker.Get(sessions.SandboxGVR, Namespace, id); err != nil {
+				return
+			}
+			changed := seen.DeepCopyObject().(*unstructured.Unstructured)
+			mutate(changed)
+			bumpResourceVersion(changed)
+			err = tracker.Update(sessions.SandboxGVR, changed, Namespace)
+		})
+		if !raced {
+			return false, nil, nil
+		}
+		return true, seen, err
+	})
+}
+
+// UserStop edits a Sandbox the way a user's stop does.
+func UserStop(obj *unstructured.Unstructured) {
+	ann := obj.GetAnnotations()
+	if ann == nil {
+		ann = map[string]string{}
+	}
+	ann[sessions.AnnStoppedBy] = sessions.StoppedByUser
+	obj.SetAnnotations(ann)
+	_ = unstructured.SetNestedField(obj.Object, "Suspended", "spec", "operatingMode")
+}
+
 // SetStatus overwrites a Sandbox's status, as the controller would.
 func SetStatus(t *testing.T, client dynamic.Interface, id string, status map[string]any) {
 	t.Helper()
+	if err := TrySetStatus(client, id, status); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TrySetStatus is SetStatus for use off the test goroutine.
+func TrySetStatus(client dynamic.Interface, id string, status map[string]any) error {
 	ctx := context.Background()
 	res := client.Resource(sessions.SandboxGVR).Namespace(Namespace)
-	obj, err := res.Get(ctx, id, v1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := unstructured.SetNestedMap(obj.Object, status, "status"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := res.Update(ctx, obj, v1.UpdateOptions{}); err != nil {
-		t.Fatal(err)
+	for {
+		obj, err := res.Get(ctx, id, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if err := unstructured.SetNestedMap(obj.Object, status, "status"); err != nil {
+			return err
+		}
+		if _, err = res.Update(ctx, obj, metav1.UpdateOptions{}); !apierrors.IsConflict(err) {
+			return err
+		}
 	}
 }
 
