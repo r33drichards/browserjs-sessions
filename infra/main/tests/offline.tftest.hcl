@@ -95,6 +95,11 @@ run "defaults_pomerium_nlb" {
   }
 
   assert {
+    condition     = !contains(keys(google_project_service.this), "certificatemanager.googleapis.com") && contains(keys(google_project_service.this), "container.googleapis.com")
+    error_message = "pomerium_nlb enables the GKE API but not Certificate Manager."
+  }
+
+  assert {
     condition     = google_container_cluster.this.deletion_protection
     error_message = "Deletion protection must default to on."
   }
@@ -148,6 +153,11 @@ run "gateway_alb" {
   }
 
   assert {
+    condition     = contains(keys(google_project_service.this), "certificatemanager.googleapis.com")
+    error_message = "gateway_alb must enable the Certificate Manager API."
+  }
+
+  assert {
     condition     = length(google_service_account.cert_manager) == 0
     error_message = "gateway_alb must not create cert-manager's service account."
   }
@@ -182,6 +192,16 @@ run "federated_tokens_and_regional_cluster" {
     condition     = length(output.dns_records) == 4
     error_message = "The records to create by hand must still be listed."
   }
+}
+
+run "rejects_cluster_outside_region" {
+  command = plan
+
+  variables {
+    cluster_location = "us-central1-a"
+  }
+
+  expect_failures = [google_container_cluster.this]
 }
 
 run "rejects_e2_session_nodes" {

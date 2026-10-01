@@ -1,20 +1,16 @@
 # Provider binaries and module cache (hundreds of MB; recreated by `tofu init`).
 .terraform/
 
-# State never belongs in git. The bootstrap directory keeps local state until
-# it is migrated into the bucket (see README.md).
+# State lives in the bucket, never in git.
 *.tfstate
 *.tfstate.*
 
-# Real variable values and backend settings; the *.example files are tracked.
-*.tfvars
-*.tfvars.json
-!*.tfvars.example
-backend.hcl
-
-# Saved plans can contain sensitive values.
+# Saved plans.
 *.tfplan
 tfplan
 
 crash.log
 crash.*.log
+
+# terraform.tfvars IS tracked: GitHub Actions reads it. It must never hold a
+# secret, and this configuration takes none.

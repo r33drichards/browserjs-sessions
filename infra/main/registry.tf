@@ -29,6 +29,8 @@ resource "google_artifact_registry_repository" "images" {
       keep_count = var.registry_keep_versions
     }
   }
+
+  depends_on = [google_project_service.this]
 }
 
 locals {

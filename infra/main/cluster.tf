@@ -145,9 +145,17 @@ resource "google_container_cluster" "this" {
       node_config,
       initial_node_count,
     ]
+
+    precondition {
+      condition     = var.cluster_location == var.region || startswith(var.cluster_location, "${var.region}-")
+      error_message = "cluster_location must be var.region or one of its zones: the subnet, address and buckets are in var.region."
+    }
   }
 
-  depends_on = [google_project_iam_member.nodes_default]
+  depends_on = [
+    google_project_service.this,
+    google_project_iam_member.nodes_default,
+  ]
 }
 
 # --- System pool: everything that is not a session --------------------------------

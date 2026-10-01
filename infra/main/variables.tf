@@ -1,7 +1,7 @@
 # --- Project and location ---------------------------------------------------------
 
 variable "project_id" {
-  description = "The project from infra/bootstrap (its project_id output)."
+  description = "The project created by infra/bootstrap/bootstrap.sh. GitHub Actions sets it from the GCP_PROJECT_ID repository variable (TF_VAR_project_id)."
   type        = string
 
   validation {
@@ -11,7 +11,7 @@ variable "project_id" {
 }
 
 variable "region" {
-  description = "Region for the network, registry, buckets and load balancer address."
+  description = "Region for the network, registry, buckets and load balancer address. GitHub Actions sets it from the GCP_REGION repository variable (TF_VAR_region)."
   type        = string
   default     = "us-west1"
 

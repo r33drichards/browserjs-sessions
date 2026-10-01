@@ -1,11 +1,15 @@
-# Copy to terraform.tfvars (which git ignores) and edit. Only project_id has
-# no default; everything else below shows the default or a common change.
+# Settings for the one deployment, read by GitHub Actions on every plan and
+# apply. No secrets belong here, and none are needed.
+#
+# project_id and region are NOT set here: the workflows pass them from the
+# repository variables GCP_PROJECT_ID and GCP_REGION. To run tofu by hand, set
+# TF_VAR_project_id.
+#
+# Every line below restates a default, as the place to change it.
 
-# The project_id output of infra/bootstrap.
-project_id = "browserjs-sessions-xxxx"
-
-region           = "us-west1"
-cluster_location = "us-west1-a" # a zone: zonal control plane, covered by the GKE free tier
+# A zone: zonal control plane, covered by the GKE free tier. Must be in
+# GCP_REGION.
+cluster_location = "us-west1-a"
 
 domain = "browserjs.com"
 
@@ -26,6 +30,7 @@ release_channel = "REGULAR"
 # }
 
 # Session nodes: each n2-standard-4 holds about four 3 GiB sessions.
+# session_max_nodes is the ceiling on what sessions can cost.
 session_machine_type = "n2-standard-4"
 session_max_nodes    = 3
 session_spot         = false

@@ -13,6 +13,8 @@ resource "google_compute_network" "this" {
   name                    = var.name
   auto_create_subnetworks = false
   routing_mode            = "REGIONAL"
+
+  depends_on = [google_project_service.this]
 }
 
 resource "google_compute_subnetwork" "nodes" {

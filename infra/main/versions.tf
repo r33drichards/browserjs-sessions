@@ -11,8 +11,9 @@ terraform {
     }
   }
 
-  # The bucket comes from infra/bootstrap and is given at init time:
-  #   tofu init -backend-config="bucket=<state_bucket output>"
+  # The bucket is created by infra/bootstrap/bootstrap.sh and given at init
+  # time (GitHub Actions passes the TOFU_STATE_BUCKET repository variable):
+  #   tofu init -backend-config="bucket=<project>-tofu-state"
   backend "gcs" {
     prefix = "main"
   }

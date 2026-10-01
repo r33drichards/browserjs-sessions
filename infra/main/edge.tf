@@ -38,6 +38,8 @@ resource "google_compute_address" "edge" {
   address_type = "EXTERNAL"
   network_tier = "PREMIUM"
   description  = "Public address of Pomerium (browserjs sessions)"
+
+  depends_on = [google_project_service.this]
 }
 
 # gateway_alb: a global address for the Gateway (spec.addresses, type
@@ -49,6 +51,8 @@ resource "google_compute_global_address" "edge" {
   address_type = "EXTERNAL"
   ip_version   = "IPV4"
   description  = "Public address of the Gateway (browserjs sessions)"
+
+  depends_on = [google_project_service.this]
 }
 
 # --- DNS ----------------------------------------------------------------------------
@@ -64,6 +68,8 @@ resource "google_dns_managed_zone" "this" {
   dnssec_config {
     state = var.enable_dnssec ? "on" : "off"
   }
+
+  depends_on = [google_project_service.this]
 }
 
 resource "google_dns_record_set" "public" {
@@ -143,6 +149,8 @@ resource "google_certificate_manager_dns_authorization" "this" {
   domain      = each.value
   type        = "FIXED_RECORD"
   description = "Proves control of ${each.value}"
+
+  depends_on = [google_project_service.this]
 }
 
 # The CNAMEs Certificate Manager checks. Each must be the only record at its
@@ -176,6 +184,8 @@ resource "google_certificate_manager_certificate_map" "this" {
 
   name        = var.name
   description = "browserjs sessions Gateway"
+
+  depends_on = [google_project_service.this]
 }
 
 resource "google_certificate_manager_certificate_map_entry" "this" {
