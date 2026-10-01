@@ -28,6 +28,7 @@ func Sweep(ctx context.Context, store *sessions.Store, t *Tracker) error {
 	for _, id := range t.Idle(running) {
 		switch err := store.Suspend(ctx, id, sessions.StoppedByIdle); {
 		case err == nil:
+			t.Reset(id)
 			slog.Info("session put to sleep", "session", id)
 		case errors.Is(err, sessions.ErrStateChanged), errors.Is(err, sessions.ErrNotFound):
 			// Its user stopped or deleted it first; nothing left to do.

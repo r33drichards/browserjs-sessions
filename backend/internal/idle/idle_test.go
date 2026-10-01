@@ -135,3 +135,26 @@ func TestClosingAConnectionOfAForgottenSession(t *testing.T) {
 		t.Errorf("a deleted session is tracked again: last = %v, open = %v", tr.last, tr.open)
 	}
 }
+
+func TestReset(t *testing.T) {
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	tr := New(15*time.Minute, func() time.Time { return now })
+	tr.Touch("a")
+	done := tr.Open("b")
+	now = now.Add(16 * time.Minute)
+	tr.Reset("a")
+	tr.Reset("b")
+	// a starts over; b is still held by its connection.
+	if got := tr.Idle([]string{"a", "b"}); len(got) != 0 {
+		t.Fatalf("Idle = %v, want none", got)
+	}
+	now = now.Add(16 * time.Minute)
+	if got := tr.Idle([]string{"a", "b"}); !slices.Equal(got, []string{"a"}) {
+		t.Errorf("Idle = %v, want [a]", got)
+	}
+	done()
+	now = now.Add(16 * time.Minute)
+	if got := tr.Idle([]string{"b"}); !slices.Equal(got, []string{"b"}) {
+		t.Errorf("Idle = %v, want [b]", got)
+	}
+}

@@ -137,3 +137,66 @@ func TestSweepNeverTakesOverAUserStop(t *testing.T) {
 		check(t, store, client, id)
 	})
 }
+
+// A session its user resumes (the API path: nothing touches the tracker)
+// gets a full idle period, whether or not a sweep saw it asleep in between.
+func TestSweepGivesAResumedSessionAFullIdlePeriod(t *testing.T) {
+	for _, c := range []struct {
+		name        string
+		sweepAsleep bool
+	}{
+		{"resumed after sweeps saw it asleep", true},
+		{"resumed and running again before the next sweep", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := t.Context()
+			store, client := sessionstest.New(t)
+			now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+			tracker := idle.New(15*time.Minute, func() time.Time { return now })
+			sweep := func() {
+				t.Helper()
+				if err := idle.Sweep(ctx, store, tracker); err != nil {
+					t.Fatal(err)
+				}
+			}
+			state := func(id string) sessions.State { s, _ := store.Get(ctx, id); return s.State }
+
+			s, err := store.Create(ctx, "a", "u")
+			if err != nil {
+				t.Fatal(err)
+			}
+			sessionstest.SetStatus(t, client, s.ID, sessionstest.Ready("10.0.0.1"))
+			sweep()
+			now = now.Add(16 * time.Minute)
+			sweep()
+			if state(s.ID) != sessions.Stopping {
+				t.Fatalf("state = %s, want stopping", state(s.ID))
+			}
+			sessionstest.SetStatus(t, client, s.ID, sessionstest.Suspended())
+			if c.sweepAsleep {
+				now = now.Add(2 * time.Hour)
+				sweep()
+			}
+
+			if err := store.Resume(ctx, s.ID); err != nil {
+				t.Fatal(err)
+			}
+			sessionstest.SetStatus(t, client, s.ID, sessionstest.Ready("10.0.0.2"))
+			now = now.Add(30 * time.Second)
+			sweep()
+			if state(s.ID) != sessions.Running {
+				t.Fatalf("state after the sweep following a resume = %s, want running", state(s.ID))
+			}
+			now = now.Add(14 * time.Minute)
+			sweep()
+			if state(s.ID) != sessions.Running {
+				t.Errorf("state %s before a full idle period had passed, want running", state(s.ID))
+			}
+			now = now.Add(2 * time.Minute)
+			sweep()
+			if state(s.ID) != sessions.Stopping {
+				t.Errorf("state = %s after a full idle period, want stopping", state(s.ID))
+			}
+		})
+	}
+}

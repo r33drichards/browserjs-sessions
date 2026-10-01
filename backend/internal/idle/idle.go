@@ -1,4 +1,8 @@
 // Package idle decides which sessions have gone unused long enough to sleep.
+//
+// The tracker's state lives in this process only. The backend must run as
+// exactly one replica: a second one would not see the activity the first
+// proxied, and would put sessions to sleep while they are in use.
 package idle
 
 import (
@@ -48,6 +52,16 @@ func (t *Tracker) Open(id string) (done func()) {
 			}
 		})
 	}
+}
+
+// Reset ends a session's idle period without touching its open connections:
+// the next time it is seen running, a fresh period starts. The sweeper calls
+// it for a session it has just put to sleep, which may be running again (its
+// user resumed it) before a sweep ever sees it asleep.
+func (t *Tracker) Reset(id string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.last, id)
 }
 
 // Forget drops a deleted session.
