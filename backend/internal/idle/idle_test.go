@@ -81,3 +81,57 @@ func TestRetain(t *testing.T) {
 		t.Errorf("Idle = %v, want [kept]", got)
 	}
 }
+
+// A session that slept and was resumed gets a full idle period: its clock
+// must not still be running from before it went to sleep.
+func TestResumedSessionStartsAFreshIdlePeriod(t *testing.T) {
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	tr := New(15*time.Minute, func() time.Time { return now })
+
+	tr.Touch("a")
+	now = now.Add(16 * time.Minute)
+	if got := tr.Idle([]string{"a"}); !slices.Equal(got, []string{"a"}) {
+		t.Fatalf("Idle = %v, want [a]", got)
+	}
+	// It is put to sleep; sweeps go by while it is not running.
+	now = now.Add(time.Hour)
+	if got := tr.Idle(nil); len(got) != 0 {
+		t.Fatalf("Idle = %v", got)
+	}
+	// The user resumes it (nothing touches the tracker on that path).
+	if got := tr.Idle([]string{"a"}); len(got) != 0 {
+		t.Errorf("a just-resumed session was reported idle: %v", got)
+	}
+	now = now.Add(16 * time.Minute)
+	if got := tr.Idle([]string{"a"}); !slices.Equal(got, []string{"a"}) {
+		t.Errorf("Idle = %v, want [a]", got)
+	}
+}
+
+// A viewer attached to a session that is not running yet (it is waking)
+// still holds it awake once it runs.
+func TestOpenConnectionOnAWakingSession(t *testing.T) {
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	tr := New(15*time.Minute, func() time.Time { return now })
+	done := tr.Open("a")
+	tr.Idle(nil) // a sweep while it is still starting
+	now = now.Add(time.Hour)
+	if got := tr.Idle([]string{"a"}); len(got) != 0 {
+		t.Errorf("session with a viewer reported idle: %v", got)
+	}
+	done()
+	now = now.Add(16 * time.Minute)
+	if got := tr.Idle([]string{"a"}); !slices.Equal(got, []string{"a"}) {
+		t.Errorf("Idle = %v, want [a]", got)
+	}
+}
+
+func TestClosingAConnectionOfAForgottenSession(t *testing.T) {
+	tr := New(time.Minute, time.Now)
+	done := tr.Open("a")
+	tr.Forget("a")
+	done()
+	if len(tr.last) != 0 || len(tr.open) != 0 {
+		t.Errorf("a deleted session is tracked again: last = %v, open = %v", tr.last, tr.open)
+	}
+}

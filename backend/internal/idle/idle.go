@@ -41,7 +41,11 @@ func (t *Tracker) Open(id string) (done func()) {
 			if t.open[id]--; t.open[id] <= 0 {
 				delete(t.open, id)
 			}
-			t.last[id] = t.now()
+			// Closing counts as activity, unless the session was dropped
+			// (deleted) while the connection was open.
+			if _, tracked := t.last[id]; tracked {
+				t.last[id] = t.now()
+			}
 		})
 	}
 }
@@ -76,11 +80,22 @@ func (t *Tracker) Retain(ids []string) {
 }
 
 // Idle returns which of the given running sessions should be put to sleep.
-// A session seen for the first time starts its idle period now.
+// A session seen for the first time starts its idle period now, and so does
+// one that stopped running in between (it slept, or was stopped and resumed):
+// its old clock is dropped, unless a connection is still holding it open.
 func (t *Tracker) Idle(running []string) []string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	now := t.now()
+	isRunning := make(map[string]struct{}, len(running))
+	for _, id := range running {
+		isRunning[id] = struct{}{}
+	}
+	for id := range t.last {
+		if _, ok := isRunning[id]; !ok && t.open[id] == 0 {
+			delete(t.last, id)
+		}
+	}
 	var out []string
 	for _, id := range running {
 		last, known := t.last[id]
