@@ -18,7 +18,7 @@ infra/
   main/                    everything else, OpenTofu, run by GitHub Actions
 .github/workflows/
   infra-plan.yml           on pull requests: shows the plan
-  infra-apply.yml          on main: plans, waits for approval, applies
+  infra-apply.yml          started by hand on main: plans, then applies
 ```
 
 Kubernetes objects (Pomerium, Dex, the backend, the Sandbox template, the
@@ -36,19 +36,25 @@ short-lived Google credential (Workload Identity Federation).
 
 ## 1. Bootstrap (once, by hand)
 
+**Already done** for the real deployment: project `browserjs-sessions`, state
+bucket `browserjs-sessions-tofu-state`, and the six repository variables are
+set on `r33drichards/browserjs-sessions`. This section is for a rebuild or a
+second project.
+
 In [Cloud Shell](https://shell.cloud.google.com), signed in as someone who may
 create projects and link the billing account:
 
 ```sh
 git clone https://github.com/r33drichards/browserjs-sessions && cd browserjs-sessions
-./infra/bootstrap/bootstrap.sh
+ORG_ID=<numeric organisation id> ./infra/bootstrap/bootstrap.sh
 ```
 
 It is safe to re-run. Settings are environment variables:
 
 | Variable | Default | Note |
 |---|---|---|
-| `PROJECT_ID` | `browserjs-sessions` | Project IDs are global and permanent. If the name is taken the script stops at project creation; run it again with a suffix, e.g. `PROJECT_ID=browserjs-sessions-$(openssl rand -hex 2)` |
+| `PROJECT_ID` | `browserjs-sessions` | Project IDs are global and permanent. If the name is taken the script stops at project creation; run it again with another ID |
+| `ORG_ID` | unset | Organisation to create the project under. An account that belongs to an organisation must set it (`gcloud organizations list`); a personal account leaves it unset |
 | `REGION` | `us-west1` | |
 | `REPO` | `r33drichards/browserjs-sessions` | the only repository allowed to use the two service accounts |
 | `BILLING` | the first open billing account | set it explicitly if you have more than one |
@@ -57,6 +63,10 @@ It creates the project, links billing, enables the base APIs, creates the
 versioned state bucket `<project>-tofu-state`, the Workload Identity pool and
 provider `github`, and the two service accounts. It also switches Cloud
 Shell's active project. `infra/main` manages none of those.
+
+In a project that is seconds old, IAM can answer `PERMISSION_DENIED` for a
+minute; the script retries the Workload Identity steps for that reason. If it
+still stops, wait a minute and run it again.
 
 ## 2. Repository variables
 
@@ -73,14 +83,13 @@ gh variable set TOFU_PLAN_SA      --body "<value>"
 gh variable set TOFU_APPLY_SA     --body "<value>"
 ```
 
-Then, once:
+The `production` environment must exist (Settings, Environments); the apply
+job names it. On this repository's GitHub plan an environment cannot require a
+reviewer, so it gates nothing: the gate is the procedure in section 4.
 
-- Settings, Environments: create **`production`** and add yourself under
-  "Required reviewers". This is the approval gate before every apply. Without
-  it, a merge applies immediately.
-- Settings, Branches: protect `main` (pull requests required). `tofu-apply` is
-  handed to any workflow that runs on `main`, so who can change `main` is who
-  can change the project.
+Protect `main` as far as the plan allows, and keep the list of people with
+write access short. Google hands `tofu-apply` (project Owner) to any workflow
+that runs on `main`, so whoever can change `main` can change the project.
 
 ## 3. Plan: open a pull request
 
@@ -106,29 +115,30 @@ by design.
 The very first plan creates everything: expect 32 resources to add (default settings) and
 none to change or destroy.
 
-## 4. Apply: merge, then approve
+## 4. Apply: merge, then start it by hand
 
-Merging to `main` runs **infra apply**:
+Nothing is applied by a merge. The steps, in order:
 
-1. `plan` saves a plan and shows it in the run summary.
-2. `apply` waits. Open the run, read the plan, **Review deployments**, approve
-   `production`.
-3. Exactly that saved plan is applied. If the state changed in the meantime,
-   OpenTofu refuses; re-run the workflow.
+1. Read the plan in the pull request's **infra plan** run.
+2. Merge to `main`.
+3. Actions, **infra apply**, Run workflow, branch `main`, type `apply` in the
+   confirm box.
 
-If the plan has no changes, there is nothing to approve. Applies never overlap
-(one concurrency group). The workflow can also be started by hand from the
-Actions tab, on `main` only. The outputs are printed in the apply job's
-summary.
+The job refuses any other branch and any other confirm text. It then plans
+again, prints that plan in the run summary, and applies exactly it, without a
+pause. So apply soon after merging, and do not change the project by other
+means in between: the plan you read is then the plan that runs. Applies never
+overlap (one concurrency group). The outputs are printed in the run summary.
 
 The first apply takes about 15 minutes, most of it the cluster. If creating
 the cluster fails on the Agent Sandbox add-on (Google's own procedure enables
 it after a gVisor node pool exists), set `enable_agent_sandbox = false` in
-`terraform.tfvars`, merge, then set it back to `true` and merge again.
+`terraform.tfvars`, merge and apply, then set it back to `true`, merge and
+apply again.
 
 ## 5. Point the domain at Cloud DNS (manual, once)
 
-Take `dns_name_servers` from the apply job's summary.
+Take `dns_name_servers` from the apply run's summary.
 
 In Namecheap: Domain List, Manage `browserjs.com`, Nameservers, choose
 **Custom DNS**, enter the four `ns-cloud-…googledomains.com` names (without
@@ -187,8 +197,8 @@ There is no destroy workflow, on purpose.
    days). That removes everything, including the state bucket and the
    Workload Identity pool. Then delete the six repository variables.
 
-To remove only part of it, delete the resources from the code and merge; the
-plan shows the destroys before you approve them. The cluster needs
+To remove only part of it, delete the resources from the code; the pull
+request's plan shows the destroys before you merge and apply. The cluster needs
 `deletion_protection = false` applied first, and the snapshots bucket
 `snapshot_bucket_force_destroy = true` if it still holds snapshots.
 
@@ -223,8 +233,9 @@ need a change on the first real apply:
 
 5. Whether `tofu-plan`'s read-only roles are enough for every refresh. Reading
    a bucket needs `storage.buckets.get`, which project Viewer does not
-   include; if a plan fails with a 403 on the snapshots bucket, grant
-   `tofu-plan` `roles/storage.bucketViewer` on the project.
+   include; `bootstrap.sh` now grants `roles/storage.bucketViewer` for that.
+   A project bootstrapped before that line was added needs the script re-run
+   (or that one grant made by hand).
 
 The provider lock file (`infra/main/.terraform.lock.hcl`) was written on
 macOS. It carries the registry's checksums for every platform, so `tofu init`

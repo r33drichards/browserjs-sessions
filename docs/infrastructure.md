@@ -530,16 +530,19 @@ project Viewer's intrinsic Cloud Storage permissions are only
 not `storage.buckets.get`. A bucket created with default settings also gets
 the legacy "project viewers" binding, which includes it, so the plan may work
 anyway; `roles/storage.bucketViewer` on the project for `tofu-plan` removes the
-doubt.
+doubt, and `bootstrap.sh` grants it.
 
 That same legacy binding has a side effect worth knowing: anyone with project
 Viewer, `tofu-plan` included, can read the snapshot objects, which are browser
 memory. ANALYSIS; check the bucket's IAM policy after the first apply.
 
-**Limits of the gate.** ANALYSIS. The `production` environment's required
-reviewers gate the apply job. They do not gate the credential: Google hands
-`tofu-apply` to any workflow on `main`. Branch protection on `main` is
-therefore part of the control. `tofu-plan` can read and write the state bucket
+**Limits of the gate.** ANALYSIS. The repository's GitHub plan has no
+environment protection rules, so there is no required-reviewer gate. Apply is
+started by hand (`workflow_dispatch` on `main`, with a typed confirmation) and
+plans and applies in one job with no pause; the review happens on the pull
+request's plan. Nothing technical stops a workflow on `main` from using
+`tofu-apply`: Google hands it to any workflow on that ref. Who can write to
+`main` is therefore the real control. `tofu-plan` can read and write the state bucket
 from any branch of the repository, so everyone with push access can read
 state.
 
