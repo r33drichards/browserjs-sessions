@@ -1,0 +1,41 @@
+# Settings for the one deployment, read by GitHub Actions on every plan and
+# apply. No secrets belong here, and none are needed.
+#
+# project_id and region are NOT set here: the workflows pass them from the
+# repository variables GCP_PROJECT_ID and GCP_REGION. To run tofu by hand, set
+# TF_VAR_project_id.
+#
+# Every line below restates a default, as the place to change it.
+
+# A zone: zonal control plane, covered by the GKE free tier. Must be in
+# GCP_REGION.
+cluster_location = "us-west1-a"
+
+domain = "browserjs.com"
+
+# "pomerium_nlb": Pomerium terminates TLS behind a passthrough load balancer,
+#                 certificates from cert-manager (recommended).
+# "gateway_alb":  a GKE Gateway terminates TLS with Certificate Manager.
+edge_mode = "pomerium_nlb"
+
+# Agent Sandbox needs GKE 1.36.3-gke.1767000 or later. If REGULAR's default is
+# older when you apply, pin the version or switch to RAPID.
+release_channel = "REGULAR"
+# kubernetes_version = "1.36"
+
+# Who may reach the control plane's public IP endpoint. Leave empty and use
+# the DNS endpoint (see the get_credentials_command output) instead.
+# master_authorized_cidrs = {
+#   home = "203.0.113.7/32"
+# }
+
+# Session nodes: each n2-standard-4 holds about four 3 GiB sessions.
+# session_max_nodes is the ceiling on what sessions can cost.
+session_machine_type = "n2-standard-4"
+session_max_nodes    = 3
+session_spot         = false
+
+# Must match the Sandbox template and PodSnapshotStorageConfig in deploy/.
+sessions_namespace      = "browserjs-sessions"
+session_service_account = "session"
+snapshot_token_source   = "podKSA"

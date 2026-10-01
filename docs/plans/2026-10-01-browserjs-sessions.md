@@ -2961,6 +2961,8 @@ func (m *Memory) ListSessions(context.Context) ([]string, error) {
 
 Run: `go test ./internal/authz/` — Expected: `ok`.
 
+`Memory` already differs from the Task 4 listing (review fixes): `Check` is false for an empty user and for any permission other than `View`/`Manage`, `AddSession` returns an error for an empty session or owner, and it has a `viewer` relation set through `AddViewer(ctx, sessionID, userID)`. `AddViewer` is on `Memory` only — do not add it to `Authorizer`; the API and proxy tests use it to tell `View` from `Manage`. `RemoveSession` drops the session's viewers.
+
 **Step 3: Reconcile (TDD)**
 
 The cluster is the record of truth. Reconcile makes the directory match it.
@@ -3118,6 +3120,22 @@ func TestTopazMatchesMemoryBehaviour(t *testing.T) {
 	if ok, err := a.Check(ctx, admin, "s-does-not-exist", View); ok || err != nil {
 		t.Errorf("missing session: %v, %v; want false, nil", ok, err)
 	}
+	// Fails closed exactly as Memory does: no user and unknown permissions
+	// are a plain "no", not an error.
+	if ok, err := a.Check(ctx, "", "s-contract", View); ok || err != nil {
+		t.Errorf("empty user: %v, %v; want false, nil", ok, err)
+	}
+	for _, p := range []Permission{"", "can_delete"} {
+		if ok, err := a.Check(ctx, owner, "s-contract", p); ok || err != nil {
+			t.Errorf("permission %q: %v, %v; want false, nil", p, ok, err)
+		}
+	}
+	if err := a.AddSession(ctx, "s-contract-2", ""); err == nil {
+		t.Error("AddSession with an empty owner must fail")
+	}
+	if err := a.AddSession(ctx, "", owner); err == nil {
+		t.Error("AddSession with an empty session must fail")
+	}
 	list, _ := a.ListSessions(ctx)
 	found := false
 	for _, id := range list {
@@ -3149,6 +3167,7 @@ package authz
 
 import (
 	"context"
+	"errors"
 	"slices"
 
 	"github.com/aserto-dev/go-aserto"
@@ -3174,6 +3193,10 @@ func NewTopaz(addr string) (*Topaz, error) {
 }
 
 func (t *Topaz) Check(ctx context.Context, userID, sessionID string, p Permission) (bool, error) {
+	// Same answers as Memory: Topaz would reject these as invalid arguments.
+	if userID == "" || sessionID == "" || (p != View && p != Manage) {
+		return false, nil
+	}
 	resp, err := t.client.Reader.Check(ctx, &dsr.CheckRequest{
 		ObjectType: "session", ObjectId: sessionID, Relation: string(p),
 		SubjectType: "user", SubjectId: userID,
@@ -3193,6 +3216,9 @@ func (t *Topaz) setObject(ctx context.Context, typ, id string) error {
 }
 
 func (t *Topaz) AddSession(ctx context.Context, sessionID, ownerID string) error {
+	if sessionID == "" || ownerID == "" {
+		return errors.New("authz: session and owner are required")
+	}
 	for _, o := range [][2]string{{"session", sessionID}, {"user", ownerID}, {"group", adminsGroup}} {
 		if err := t.setObject(ctx, o[0], o[1]); err != nil {
 			return err
@@ -3278,13 +3304,19 @@ Replace `var az authz.Authorizer = authz.NewMemory()` with:
 		return err
 	}
 	reconcile := func() {
-		all, err := store.List(ctx, "")
+		all, err := store.ListAll(ctx) // List(ctx, owner) requires an owner
 		if err != nil {
 			slog.Error("reconcile: list sessions", "err", err)
 			return
 		}
 		cluster := make(map[string]string, len(all))
 		for _, s := range all {
+			if s.Owner == "" {
+				// No owner-id annotation: AddSession would refuse it and stop
+				// the whole reconcile. Nobody can reach it; say so and move on.
+				slog.Warn("reconcile: session has no owner", "session", s.ID)
+				continue
+			}
 			cluster[s.ID] = s.Owner
 		}
 		if err := authz.Reconcile(ctx, az, cluster); err != nil {
@@ -4706,6 +4738,8 @@ spec:
             - { name: PUBLIC_URL, value: "https://CHANGE-ME" }
             - { name: OIDC_ISSUER, value: "https://CHANGE-ME/realms/browserjs" }
             - { name: OIDC_JWKS_URL, value: "http://keycloak:8080/realms/browserjs/protocol/openid-connect/certs" }
+            # Clients whose access tokens the backend accepts (the token's azp).
+            - { name: OIDC_ALLOWED_CLIENTS, value: "browserjs-spa,claude-connector" }
             - { name: KC_URL, value: "https://CHANGE-ME" }
             - { name: TOPAZ_ADDR, value: "topaz:9292" }
             - { name: BLUEPRINT_PATH, value: /etc/browserjs/blueprint.yaml }
@@ -4825,7 +4859,7 @@ configMapGenerator:
 
 For a kind cluster reached through `kubectl port-forward` (backend on `localhost:8080`, Keycloak on `localhost:8081`):
 
-- `patch-backend.yaml`: `PUBLIC_URL=http://localhost:8080`, `OIDC_ISSUER=http://localhost:8081/realms/browserjs`, `KC_URL=http://localhost:8081`, `IDLE_AFTER=2m`.
+- `patch-backend.yaml`: `PUBLIC_URL=http://localhost:8080`, `OIDC_ISSUER=http://localhost:8081/realms/browserjs`, `KC_URL=http://localhost:8081`, `IDLE_AFTER=2m`, `OIDC_ALLOWED_CLIENTS=browserjs-spa,claude-connector,browserjs-test` (the backend rejects tokens issued to any client not listed, so the integration script's `browserjs-test` tokens need it here — and only here).
 - `patch-keycloak.yaml`: args `start-dev --import-realm`, `KC_HOSTNAME=http://localhost:8081`.
 - `realm-test.json`: the base realm with `redirectUris: ["http://localhost:8080/*", "http://localhost:5173/*"]`, three users — `alice`, `bob` (both with `offline_access`), `root` (also `admin`) — each with password `test`, and a public client `browserjs-test` with `directAccessGrantsEnabled: true` so the integration script can get tokens by password. **This client and these users must never be in the base realm.**
 - `kustomization.yaml`: `resources: [../base]`, the two patches, and a `configMapGenerator` with `behavior: replace` for `keycloak-realm` pointing at `realm-test.json`.

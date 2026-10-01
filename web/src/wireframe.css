@@ -1,0 +1,122 @@
+:root {
+  --ink: #111;
+  --pencil: #6b6b6b;
+  /* An uneven radius reads as hand-drawn. */
+  --wobble: 255px 15px 225px 15px / 15px 225px 15px 255px;
+}
+
+body {
+  background: #fff;
+  color: var(--ink);
+  font-family: "Comic Neue", "Chalkboard SE", "Comic Sans MS", "Segoe Print", cursive;
+}
+
+/* Boxes: outlined, never filled or shadowed. Cloudscape class names are
+   awsui_<part>_<component hash>_…: 14iqq is Container (which Table also renders
+   as its outer box), 1d2i7 is Modal. */
+.wf-box,
+[class*="awsui_root_14iqq_"],
+[class*="awsui_container_1d2i7_"] {
+  border: 2px solid var(--ink) !important;
+  border-radius: var(--wobble) !important;
+  box-shadow: none !important;
+  background: #fff !important;
+  /* Inner headers and footers are square and opaque; clip them to the outline. */
+  overflow: hidden !important;
+}
+[class*="awsui_dialog_1d2i7_"] {
+  box-shadow: none !important;
+}
+[class*="awsui_button_vjswe_"] {
+  border-radius: var(--wobble) !important;
+  border-width: 2px !important;
+  box-shadow: none !important;
+}
+/* Cloudscape draws a container's own border and shadow on pseudo-elements. */
+[class*="awsui_root_14iqq_"]::before,
+[class*="awsui_root_14iqq_"]::after {
+  box-shadow: none !important;
+  border: 0 !important;
+}
+
+a {
+  color: var(--ink);
+  text-decoration: underline;
+}
+
+.wf-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 12px 20px;
+  border-bottom: 2px dashed var(--ink);
+}
+.wf-header h1 {
+  margin: 0;
+  font-size: 22px;
+}
+.wf-header button {
+  background: none;
+  border: 0;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.wf-main {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+/* State as text in a box, not a coloured badge. */
+.wf-state {
+  display: inline-block;
+  padding: 0 8px;
+  border: 1.5px solid var(--ink);
+  border-radius: var(--wobble);
+  font-size: 13px;
+}
+.wf-state[data-state="failed"] {
+  border-style: double;
+  border-width: 4px;
+  font-weight: bold;
+}
+.wf-state[data-state="asleep"],
+.wf-state[data-state="stopped"] {
+  border-style: dashed;
+  color: var(--pencil);
+}
+
+/* Placeholder area: diagonal hatching, like an unfilled wireframe region. */
+.wf-placeholder {
+  display: grid;
+  place-items: center;
+  min-height: 420px;
+  border: 2px dashed var(--ink);
+  border-radius: var(--wobble);
+  background: repeating-linear-gradient(45deg, #fff, #fff 10px, #f1f1f1 10px, #f1f1f1 11px);
+  text-align: center;
+}
+
+.wf-screen {
+  border: 2px solid var(--ink);
+  border-radius: 4px;
+  background: #fff;
+  aspect-ratio: 1280 / 800;
+  box-sizing: border-box;
+  width: 100%;
+  overflow: hidden;
+}
+.wf-mono {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 13px;
+  word-break: break-all;
+}
+
+.auth-error {
+  max-width: 480px;
+  margin: 80px auto;
+  padding: 24px;
+  border: 2px solid var(--ink);
+  border-radius: var(--wobble);
+}

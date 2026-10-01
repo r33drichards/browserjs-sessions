@@ -1,0 +1,7 @@
+node_modules/
+web/dist/
+backend/bin/
+.direnv/
+result
+*.log
+.worktrees/

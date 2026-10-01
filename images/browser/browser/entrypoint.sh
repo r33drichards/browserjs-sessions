@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+# One headed Chromium on Xvfb, viewable over noVNC (behind Caddy basic auth on
+# $PORT) and drivable over CDP by the browser MCP server (private port 8081).
+#
+# SESSION_MODE=1 (a browserjs session pod): no Caddy and no VNC password, the
+# backend is the only way in; websockify listens on all interfaces and
+# Chromium restores its tabs across restarts.
+set -euo pipefail
+
+VNC_USER="${VNC_USER:-admin}"
+PORT="${PORT:-8080}"
+DATA_DIR="${DATA_DIR:-/data}"
+PROFILE_DIR="$DATA_DIR/chrome"
+SCREEN="${SCREEN_GEOMETRY:-1280x800x24}"
+# WxHxDepth; Chromium wants its window size as "W,H".
+SCREEN_W="${SCREEN%%x*}"
+SCREEN_H="${SCREEN#*x}"
+SCREEN_H="${SCREEN_H%%x*}"
+
+SESSION_MODE="${SESSION_MODE:-0}"
+if [ "$SESSION_MODE" != 1 ]; then
+  : "${VNC_PASSWORD:?set VNC_PASSWORD (basic-auth password for the /vnc viewer)}"
+fi
+WEBSOCKIFY_BIND=127.0.0.1
+RESTORE_FLAG=""
+if [ "$SESSION_MODE" = 1 ]; then
+  WEBSOCKIFY_BIND=0.0.0.0
+  RESTORE_FLAG="--restore-last-session"
+fi
+
+export DISPLAY=:99
+export HOME=/root
+export XDG_RUNTIME_DIR=/tmp/runtime
+export LIBGL_ALWAYS_SOFTWARE=1
+mkdir -p "$PROFILE_DIR" "$XDG_RUNTIME_DIR" /tmp/.X11-unix
+chmod 700 "$XDG_RUNTIME_DIR"
+chmod 1777 /tmp /tmp/.X11-unix
+
+# A previous container on the same volume leaves Chromium's singleton lock
+# pointing at a dead hostname/pid; Chromium then refuses to start
+# ("profile appears to be in use by another Chromium process").
+rm -f "$PROFILE_DIR"/Singleton{Lock,Socket,Cookie}
+rm -f /tmp/.X99-lock /tmp/.X11-unix/X99
+
+# The main Chromium process: launched with our profile and, unlike its
+# renderer/gpu/utility children, no --type= flag. Matching on the command line
+# works whatever the Nix wrapper names the binary (chromium, .chromium-wrapped).
+browser_pids() {
+  local pid cmd
+  for pid in $(pgrep -f -- "--user-data-dir=$PROFILE_DIR" || true); do
+    # The pid can be gone by now: no cmdline to read, or an empty one.
+    cmd="$({ tr '\0' ' ' <"/proc/$pid/cmdline"; } 2>/dev/null || true)"
+    [ -n "$cmd" ] || continue
+    case "$cmd" in
+      *--type=*) ;;
+      *) echo "$pid" ;;
+    esac
+  done
+}
+
+pids=()
+chromium_loop=""
+cleaned=""
+# Chromium only writes a complete session file on a clean exit, so on SIGTERM
+# (pod shutdown, suspend) ask it to quit and wait before killing the rest.
+cleanup() {
+  local bp
+  # Runs again from the EXIT trap after a signal.
+  [ -z "$cleaned" ] || return 0
+  cleaned=1
+  # Stop the restart loop first so it cannot bring Chromium back.
+  [ -z "$chromium_loop" ] || kill "$chromium_loop" 2>/dev/null || true
+  bp="$(browser_pids)"
+  if [ -n "$bp" ]; then
+    # shellcheck disable=SC2086
+    kill -TERM $bp 2>/dev/null || true
+    for _ in $(seq 1 50); do
+      [ -n "$(browser_pids)" ] || break
+      sleep 0.2
+    done
+  fi
+  kill "${pids[@]}" 2>/dev/null || true
+}
+trap cleanup EXIT
+# Exit after cleaning up, or a signal during startup would let the script
+# carry on starting processes.
+trap 'cleanup; exit 143' TERM INT
+
+Xvfb :99 -screen 0 "$SCREEN" -nolisten tcp -ac &
+pids+=($!)
+for _ in $(seq 1 50); do
+  xdpyinfo -display :99 >/dev/null 2>&1 && break
+  sleep 0.1
+done
+
+openbox --sm-disable &
+pids+=($!)
+
+# Keep Chromium alive: if someone closes the last window over VNC or it
+# crashes, bring it back with the same profile.
+(
+  while true; do
+    # After an unclean exit Chromium shows a "restore pages?" bubble instead
+    # of restoring; mark the previous exit as clean. Best effort: a failure
+    # here (disk full, permissions) must not end this loop.
+    prefs="$PROFILE_DIR/Default/Preferences"
+    if [ -n "$RESTORE_FLAG" ] && [ -f "$prefs" ]; then
+      sed -i 's/"exit_type":"[A-Za-z]*"/"exit_type":"Normal"/' "$prefs" ||
+        echo "warning: could not mark $prefs as cleanly exited; Chromium may ask before restoring tabs" >&2
+    fi
+    # A start URL is opened next to the restored tabs, so with a session to
+    # restore pass none (or every restart would add one more blank tab).
+    start_url=about:blank
+    if [ -n "$RESTORE_FLAG" ] && [ -n "$(ls -A "$PROFILE_DIR/Default/Sessions" 2>/dev/null)" ]; then
+      start_url=""
+    fi
+    # shellcheck disable=SC2086
+    chromium \
+      --no-sandbox \
+      --disable-gpu \
+      --disable-dev-shm-usage \
+      --no-first-run \
+      --no-default-browser-check \
+      --password-store=basic \
+      --user-data-dir="$PROFILE_DIR" \
+      --remote-debugging-address=127.0.0.1 \
+      --remote-debugging-port=9222 \
+      --window-position=0,0 \
+      --window-size="$SCREEN_W,$SCREEN_H" \
+      --force-device-scale-factor=1 \
+      --start-maximized \
+      $RESTORE_FLAG \
+      $start_url || true
+    echo "chromium exited; restarting in 2s" >&2
+    rm -f "$PROFILE_DIR"/Singleton{Lock,Socket,Cookie}
+    sleep 2
+  done
+) &
+chromium_loop=$!
+pids+=($!)
+
+x11vnc -display :99 -localhost -rfbport 5900 -forever -shared -nopw -quiet -noxdamage &
+pids+=($!)
+
+websockify --web "$NOVNC_WEB" "$WEBSOCKIFY_BIND:6080" 127.0.0.1:5900 &
+pids+=($!)
+
+if [ "$SESSION_MODE" != 1 ]; then
+  VNC_HASH="$(caddy hash-password --plaintext "$VNC_PASSWORD")"
+  export VNC_USER VNC_HASH PORT
+  caddy run --adapter caddyfile --config "$CADDYFILE" &
+  pids+=($!)
+fi
+
+browser-mcp &
+pids+=($!)
+
+# Exit (and let Railway restart us) if any core process dies.
+wait -n "${pids[@]}"
+echo "a core process exited; shutting down" >&2
+exit 1
