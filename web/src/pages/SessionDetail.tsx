@@ -9,6 +9,7 @@ import { useCallback, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import type { Session } from "../api"
 import { ApiError, isSessionId } from "../api"
+import { signedOutHandled } from "../auth/signedOut"
 import { VncPane } from "../components/VncPane"
 import { Shell, StateTag, api } from "../shell"
 import { usePolling } from "../usePolling"
@@ -40,7 +41,11 @@ export function SessionDetail({ id }: { id: string }) {
         setSession(s)
         setError("")
       })
-      .catch(e => (e instanceof ApiError && e.status === 404 ? setMissing(true) : setError(String(e.message))))
+      .catch(e => {
+        if (signedOutHandled(e)) return
+        if (e instanceof ApiError && e.status === 404) setMissing(true)
+        else setError(String(e.message))
+      })
   }, [id])
 
   usePolling(load, !missing) // a 404 is final: stop asking
@@ -54,7 +59,6 @@ export function SessionDetail({ id }: { id: string }) {
   }
   if (!session) return <Shell>{error || "Loading…"}</Shell>
 
-  const mcpUrl = `${window.location.origin}/s/${session.id}/mcp`
   const awake = session.state === "running" || session.state === "starting"
 
   // Runs an action and reports whether it succeeded; a failure stays on screen
@@ -65,6 +69,7 @@ export function SessionDetail({ id }: { id: string }) {
       await fn()
       return true
     } catch (e) {
+      if (signedOutHandled(e)) return false
       setActionError(String(e instanceof Error ? e.message : e))
       return false
     }
@@ -89,7 +94,7 @@ export function SessionDetail({ id }: { id: string }) {
     if (await actAndReload(() => api.renameSession(target.id, to))) setName(null)
   }
 
-  async function copyMcpUrl() {
+  async function copyMcpUrl(mcpUrl: string) {
     try {
       await navigator.clipboard.writeText(mcpUrl)
       setCopied("copied")
@@ -171,8 +176,8 @@ export function SessionDetail({ id }: { id: string }) {
           <Box margin={{ top: "m" }}>
             <Box variant="awsui-key-label">MCP URL — add this to Claude as a connector</Box>
             <SpaceBetween direction="horizontal" size="xs" alignItems="center">
-              <span className="wf-mono">{mcpUrl}</span>
-              <Button onClick={copyMcpUrl}>
+              <span className="wf-mono">{session.mcp_url}</span>
+              <Button onClick={() => copyMcpUrl(session.mcp_url)}>
                 {copied === "copied" ? "Copied" : copied === "failed" ? "Couldn't copy" : "Copy"}
               </Button>
             </SpaceBetween>

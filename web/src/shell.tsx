@@ -1,10 +1,17 @@
 import { Link } from "react-router-dom"
-import { createApi } from "./api"
-import { getToken, kc, username } from "./auth/keycloak"
+import { useMe } from "./auth/MeProvider"
 
-export const api = createApi(getToken)
+export { api } from "./api"
+
+declare global {
+  interface Window {
+    // Served by the backend at /config.js, so one build works in every environment.
+    __BROWSERJS_CFG__?: { signOutUrl?: string }
+  }
+}
 
 export function Shell({ children }: { children: React.ReactNode }) {
+  const me = useMe()
   return (
     <>
       <header className="wf-header">
@@ -12,7 +19,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <Link to="/">browserjs sessions</Link>
         </h1>
         <span>
-          {username()} · <button onClick={() => kc.logout({ redirectUri: window.location.origin })}>sign out</button>
+          {me.email} · <a href={window.__BROWSERJS_CFG__?.signOutUrl ?? "/.pomerium/sign_out"}>sign out</a>
         </span>
       </header>
       <main className="wf-main">{children}</main>

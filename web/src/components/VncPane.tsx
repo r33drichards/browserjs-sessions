@@ -1,6 +1,7 @@
 import RFB from "@novnc/novnc"
 import { useEffect, useRef, useState } from "react"
-import { api } from "../shell"
+import { api } from "../api"
+import { signedOutHandled } from "../auth/signedOut"
 import { reconnectDelay } from "./backoff"
 
 type Status = "connecting" | "connected" | "reconnecting" | "paused"
@@ -39,11 +40,10 @@ export function VncPane({ sessionId }: { sessionId: string }) {
       const live = () => !stopped && !paused && mine === generation && screenRef.current
       if (!live()) return
       try {
-        const ticket = await api.vncTicket(sessionId)
+        // The session lives on its own host; the backend says where.
+        const { url } = await api.vncTicket(sessionId)
         const target = live()
         if (!target) return
-        const proto = window.location.protocol === "https:" ? "wss:" : "ws:"
-        const url = `${proto}//${window.location.host}/s/${encodeURIComponent(sessionId)}/vnc?ticket=${encodeURIComponent(ticket)}`
         const conn = new RFB(target, url, {})
         rfb = conn
         conn.scaleViewport = true
@@ -58,7 +58,8 @@ export function VncPane({ sessionId }: { sessionId: string }) {
           rfb = null
           scheduleRetry()
         })
-      } catch {
+      } catch (e) {
+        if (signedOutHandled(e)) return // the page is reloading; don't keep retrying
         if (mine === generation) scheduleRetry()
       }
     }

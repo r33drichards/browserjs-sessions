@@ -10,12 +10,14 @@ import Toggle from "@cloudscape-design/components/toggle"
 import { useCallback, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import type { Session } from "../api"
-import { isAdmin } from "../auth/keycloak"
+import { useMe } from "../auth/MeProvider"
+import { signedOutHandled } from "../auth/signedOut"
 import { Shell, StateTag, api } from "../shell"
 import { usePolling } from "../usePolling"
 
 export function SessionsList() {
   const navigate = useNavigate()
+  const me = useMe()
   const [sessions, setSessions] = useState<Session[] | null>(null)
   const [error, setError] = useState("") // last poll failure; cleared by the next good poll
   const [actionError, setActionError] = useState("") // last failed action; polling leaves it alone
@@ -32,7 +34,9 @@ export function SessionsList() {
         setSessions([...list].sort((a, b) => b.created.localeCompare(a.created)))
         setError("")
       })
-      .catch(e => setError(String(e.message ?? e)))
+      .catch(e => {
+        if (!signedOutHandled(e)) setError(String(e.message ?? e))
+      })
   }, [showAll])
 
   usePolling(load)
@@ -51,7 +55,7 @@ export function SessionsList() {
       const session = await api.createSession(name)
       navigate(`/sessions/${session.id}`)
     } catch (e) {
-      setCreateError(String((e as Error).message))
+      if (!signedOutHandled(e)) setCreateError(String((e as Error).message))
     } finally {
       setBusy(false)
     }
@@ -62,6 +66,7 @@ export function SessionsList() {
     try {
       await fn()
     } catch (e) {
+      if (signedOutHandled(e)) return
       setActionError(String(e instanceof Error ? e.message : e))
     }
     load()
@@ -79,7 +84,7 @@ export function SessionsList() {
             counter={sessions ? `(${sessions.length})` : undefined}
             actions={
               <SpaceBetween direction="horizontal" size="s" alignItems="center">
-                {isAdmin() && (
+                {me.admin && (
                   <Toggle checked={showAll} onChange={e => setShowAll(e.detail.checked)}>
                     everyone&apos;s
                   </Toggle>

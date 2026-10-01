@@ -1,6 +1,9 @@
 import react from "@vitejs/plugin-react"
 import { defineConfig } from "vite"
 
+// The backend takes the user's identity from a header set by the identity-aware
+// proxy in front of it. In dev, point this at such a proxy (one that injects the
+// identity header), or run the backend with its dev settings.
 const backend = "http://localhost:8080"
 
 export default defineConfig({
@@ -13,9 +16,6 @@ export default defineConfig({
     proxy: {
       "/api": backend,
       "/config.js": backend,
-      // Trailing slash matters: keys are prefix matches, and "/s" would also
-      // swallow /src/… (Vite's own modules) and the /sessions/… routes.
-      "/s/": { target: backend, ws: true },
     },
   },
 })
