@@ -8,105 +8,84 @@ needed for certificates.
 Why it is shaped this way, with sources: `docs/infrastructure.md`.
 
 **Nothing here has been applied.** The code passes `tofu validate` and its
-offline tests; it has never met a real project. Read the plan before applying,
+offline tests; it has never met a real project. Read the first plan closely,
 and see "Not verified" at the end.
 
 ```
 infra/
-  bootstrap/   run once, local state: the project (optionally), its APIs,
-               the state bucket, an optional budget
-  main/        everything else, state in that bucket
+  bootstrap/bootstrap.sh   run once by a person: the project, the state
+                           bucket, and keyless access for GitHub Actions
+  main/                    everything else, OpenTofu, run by GitHub Actions
+.github/workflows/
+  infra-plan.yml           on pull requests: shows the plan
+  infra-apply.yml          on main: plans, waits for approval, applies
 ```
 
 Kubernetes objects (Pomerium, Dex, the backend, the Sandbox template, the
 snapshot policy, cert-manager) are not managed here. They live in `deploy/`
 and consume this configuration's outputs.
 
-## Prerequisites
+OpenTofu is never run from a laptop against the real project. There are no
+service account keys: GitHub Actions exchanges its OIDC token for a
+short-lived Google credential (Workload Identity Federation).
 
-- OpenTofu 1.8 or later. In this repository: `nix shell nixpkgs#opentofu`.
-- The Google Cloud CLI, signed in for OpenTofu to use:
-  `gcloud auth application-default login`.
-- A billing account you can attach projects to.
-- Either an existing empty project with billing attached, or the right to
-  create one (see `create_project` below).
-- On the project: Owner, or the sum of Service Usage Admin, Kubernetes Engine
-  Admin, Compute Network Admin, Storage Admin, DNS Admin, Artifact Registry
-  Admin, Service Account Admin, Project IAM Admin, Role Administrator and
-  Certificate Manager Editor.
-- Quota in `us-west1` for N2 CPUs (4 per session node) and a few external
-  addresses. New projects sometimes start with low limits.
+| Service account | Rights | Usable from |
+|---|---|---|
+| `tofu-plan` | project Viewer and Security Reviewer; object admin on the state bucket (for the state lock) | any branch or pull request of this repository |
+| `tofu-apply` | project Owner | `refs/heads/main` of this repository only |
 
-## 1. Bootstrap
+## 1. Bootstrap (once, by hand)
+
+In [Cloud Shell](https://shell.cloud.google.com), signed in as someone who may
+create projects and link the billing account:
 
 ```sh
-cd infra/bootstrap
-cp terraform.tfvars.example terraform.tfvars
-$EDITOR terraform.tfvars
+git clone https://github.com/r33drichards/browserjs-sessions && cd browserjs-sessions
+./infra/bootstrap/bootstrap.sh
 ```
 
-Choose the project ID. IDs are global and permanent, so
-`browserjs-sessions` itself is likely taken: use a suffix, for example
-`browserjs-sessions-$(openssl rand -hex 2)`.
+It is safe to re-run. Settings are environment variables:
 
-Then one of:
+| Variable | Default | Note |
+|---|---|---|
+| `PROJECT_ID` | `browserjs-sessions` | Project IDs are global and permanent. If the name is taken the script stops at project creation; run it again with a suffix, e.g. `PROJECT_ID=browserjs-sessions-$(openssl rand -hex 2)` |
+| `REGION` | `us-west1` | |
+| `REPO` | `r33drichards/browserjs-sessions` | the only repository allowed to use the two service accounts |
+| `BILLING` | the first open billing account | set it explicitly if you have more than one |
 
-- **Use a project you made by hand** (`create_project = false`, the default).
-  Create it in the console or with
-  `gcloud projects create <id>` and
-  `gcloud billing projects link <id> --billing-account <account>`.
-- **Let OpenTofu create it** (`create_project = true`, with `billing_account`
-  and, in an organisation, `org_id` or `folder_id`). You need
-  `roles/resourcemanager.projectCreator` on the organisation or folder and
-  `roles/billing.user` on the billing account. A created project is protected:
-  `tofu destroy` will not delete it.
+It creates the project, links billing, enables the base APIs, creates the
+versioned state bucket `<project>-tofu-state`, the Workload Identity pool and
+provider `github`, and the two service accounts. It also switches Cloud
+Shell's active project. `infra/main` manages none of those.
 
-Optional: `budget_amount` adds e-mail alerts at 50 %, 90 % and 100 % of a
-monthly amount. It needs `roles/billing.costsManager` on the billing account,
-which project Owner does not include. A budget only notifies; it does not cap
-spending. The real ceiling is `session_max_nodes` in `main`.
+## 2. Repository variables
+
+The script ends by printing six values. Set each as a GitHub Actions
+**repository variable** (Settings, Secrets and variables, Actions, Variables;
+they are identifiers, not secrets), or:
 
 ```sh
-tofu init
-tofu plan -out bootstrap.tfplan    # read it
-tofu apply bootstrap.tfplan
-tofu output                        # project_id, state_bucket
+gh variable set GCP_PROJECT_ID    --body "<value>"
+gh variable set GCP_REGION        --body "<value>"
+gh variable set TOFU_STATE_BUCKET --body "<value>"
+gh variable set GCP_WIF_PROVIDER  --body "<value>"
+gh variable set TOFU_PLAN_SA      --body "<value>"
+gh variable set TOFU_APPLY_SA     --body "<value>"
 ```
 
-Bootstrap state is a local `terraform.tfstate`, which git ignores. Keep the
-file, or move it into the bucket it just created:
+Then, once:
 
-```sh
-cat > backend.tf <<'EOF'
-terraform {
-  backend "gcs" {
-    prefix = "bootstrap"
-  }
-}
-EOF
-tofu init -migrate-state -backend-config="bucket=$(tofu output -raw state_bucket)"
-```
+- Settings, Environments: create **`production`** and add yourself under
+  "Required reviewers". This is the approval gate before every apply. Without
+  it, a merge applies immediately.
+- Settings, Branches: protect `main` (pull requests required). `tofu-apply` is
+  handed to any workflow that runs on `main`, so who can change `main` is who
+  can change the project.
 
-(`backend.tf` is then worth committing.)
+## 3. Plan: open a pull request
 
-## 2. Main
-
-```sh
-cd ../main
-cp terraform.tfvars.example terraform.tfvars
-$EDITOR terraform.tfvars            # project_id from bootstrap
-tofu init -backend-config="bucket=<state_bucket from bootstrap>"
-tofu plan -out main.tfplan          # read it
-tofu apply main.tfplan
-tofu output
-```
-
-Expect about 15 minutes, most of it the cluster. If creating the cluster fails
-on the Agent Sandbox add-on (Google's own procedure enables it after a gVisor
-node pool exists), set `enable_agent_sandbox = false`, apply, set it back to
-`true`, apply again.
-
-Decisions to make in `terraform.tfvars`:
+Settings that are not the project or region live in
+`infra/main/terraform.tfvars`, which is tracked (it holds no secrets):
 
 | Variable | Default | When to change |
 |---|---|---|
@@ -119,11 +98,37 @@ Decisions to make in `terraform.tfvars`:
 | `snapshot_token_source` | `podKSA` | `federatedP4SA` if per-ServiceAccount access does not work |
 | `master_authorized_cidrs` | none | only if you want `kubectl` over the public IP endpoint |
 
-## 3. Point the domain at Cloud DNS (manual, once)
+Any pull request that touches `infra/**` runs **infra plan**: format check,
+`init`, `validate`, `plan`. The plan is in the run's summary. It changes
+nothing. Pull requests from forks cannot authenticate and fail at that step,
+by design.
 
-```sh
-tofu output dns_name_servers
-```
+The very first plan creates everything: expect 32 resources to add (default settings) and
+none to change or destroy.
+
+## 4. Apply: merge, then approve
+
+Merging to `main` runs **infra apply**:
+
+1. `plan` saves a plan and shows it in the run summary.
+2. `apply` waits. Open the run, read the plan, **Review deployments**, approve
+   `production`.
+3. Exactly that saved plan is applied. If the state changed in the meantime,
+   OpenTofu refuses; re-run the workflow.
+
+If the plan has no changes, there is nothing to approve. Applies never overlap
+(one concurrency group). The workflow can also be started by hand from the
+Actions tab, on `main` only. The outputs are printed in the apply job's
+summary.
+
+The first apply takes about 15 minutes, most of it the cluster. If creating
+the cluster fails on the Agent Sandbox add-on (Google's own procedure enables
+it after a gVisor node pool exists), set `enable_agent_sandbox = false` in
+`terraform.tfvars`, merge, then set it back to `true` and merge again.
+
+## 5. Point the domain at Cloud DNS (manual, once)
+
+Take `dns_name_servers` from the apply job's summary.
 
 In Namecheap: Domain List, Manage `browserjs.com`, Nameservers, choose
 **Custom DNS**, enter the four `ns-cloud-…googledomains.com` names (without
@@ -138,12 +143,12 @@ This replaces every record Namecheap served for the domain: mail (MX), any
 existing site. Recreate what you still need in the Cloud DNS zone first.
 Certificates cannot be issued until the delegation is live.
 
-## 4. Hand over to `deploy/`
+## 6. Hand over to `deploy/`
 
-```sh
-$(tofu output -raw get_credentials_command)
-$(tofu output -raw docker_login_command)
-```
+Run the `get_credentials_command` and `docker_login_command` outputs on your
+machine. Using `kubectl` and pushing images needs your own Google account to
+hold `roles/container.developer` and `roles/artifactregistry.writer` on the
+project (Owner covers both).
 
 | Output | Where it goes |
 |---|---|
@@ -159,35 +164,33 @@ $(tofu output -raw docker_login_command)
 ## Checking the code without an account
 
 ```sh
-cd infra/bootstrap   # and again in infra/main
+cd infra/main
 tofu fmt -check -recursive
 tofu init -backend=false
 tofu validate
 tofu test            # mocked provider; contacts nothing
 ```
 
+(`nix shell nixpkgs#opentofu` provides `tofu`. The workflows pin 1.10.7.)
+
 ## Destroying
 
-`main` first, then (if ever) `bootstrap`.
+There is no destroy workflow, on purpose.
 
-```sh
-cd infra/main
-# 1. Remove what Kubernetes created in the project: delete the LoadBalancer
-#    Service or Gateway, and the session Sandboxes with their disks
-#    (kubectl delete -k deploy/…). Load balancers and disks made by the
-#    cluster are not in OpenTofu's state and would be left behind, billing.
-# 2. In terraform.tfvars: deletion_protection = false, and
-#    snapshot_bucket_force_destroy = true if the bucket still holds snapshots.
-tofu apply
-tofu destroy
-```
+1. Remove what Kubernetes created in the project: delete the LoadBalancer
+   Service or Gateway, and the session Sandboxes with their disks
+   (`kubectl delete -k deploy/…`). Load balancers and disks made by the
+   cluster are not in OpenTofu's state and would be left behind, billing.
+2. Set Namecheap's nameservers back to "Namecheap BasicDNS" if the domain
+   should keep resolving.
+3. Delete the project: `gcloud projects delete <id>` (recoverable for 30
+   days). That removes everything, including the state bucket and the
+   Workload Identity pool. Then delete the six repository variables.
 
-Then set Namecheap's nameservers back to "Namecheap BasicDNS" if the domain
-should keep resolving.
-
-`bootstrap` refuses to destroy the state bucket (`prevent_destroy`) and never
-deletes a project it created. The simple way to remove everything is to delete
-the project: `gcloud projects delete <id>` (recoverable for 30 days).
+To remove only part of it, delete the resources from the code and merge; the
+plan shows the destroys before you approve them. The cluster needs
+`deletion_protection = false` applied first, and the snapshots bucket
+`snapshot_bucket_force_destroy = true` if it still holds snapshots.
 
 ## Not covered
 
@@ -201,8 +204,10 @@ the project: `gcloud projects delete <id>` (recoverable for 30 days).
 - Pushing images, CI, and who may push (`roles/artifactregistry.writer`).
 - Who may use `kubectl` (`roles/container.developer` or similar).
 - Backups of session disks, alerting, uptime checks, Cloud Armor.
-- More than one environment. A second one is a second project and a second
-  pair of state prefixes.
+- A billing budget or alert. Set one by hand in the console (Billing, Budgets
+  & alerts); the ceiling this code enforces is `session_max_nodes`.
+- More than one environment. A second one is a second project, bootstrapped
+  the same way, and a second set of repository variables.
 
 ## Not verified
 
@@ -216,6 +221,11 @@ need a change on the first real apply:
    Google's tutorial for that still installs the open-source controller.
 4. Quota for N2 in a new project, and `Intel Ice Lake` in the chosen zone.
 
-The provider lock files (`.terraform.lock.hcl`) were generated on
-`darwin_arm64`. On another platform run
-`tofu providers lock -platform=linux_amd64 -platform=darwin_arm64`.
+5. Whether `tofu-plan`'s read-only roles are enough for every refresh. Reading
+   a bucket needs `storage.buckets.get`, which project Viewer does not
+   include; if a plan fails with a 403 on the snapshots bucket, grant
+   `tofu-plan` `roles/storage.bucketViewer` on the project.
+
+The provider lock file (`infra/main/.terraform.lock.hcl`) was written on
+macOS. It carries the registry's checksums for every platform, so `tofu init`
+on the Linux runners verifies the provider against it.

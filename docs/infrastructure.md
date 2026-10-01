@@ -1,6 +1,6 @@
 # Infrastructure research: browserjs sessions on GKE
 
-Date: 2026-10-01. Companion to the OpenTofu code in `infra/` (how to run it:
+Date: 2026-10-01. Companion to the OpenTofu code in `infra/` (how it is run:
 `infra/README.md`). Nothing described here has been applied to a cloud
 account.
 
@@ -508,6 +508,41 @@ session four hours a day comes to roughly $25 a month on top of idle.
 The ceiling is `session_max_nodes` (default 3): three nodes running all month
 are about $460.
 
+## 8. Delivery: GitHub Actions with keyless authentication
+
+OpenTofu runs only in GitHub Actions. `infra/bootstrap/bootstrap.sh` (run once
+by a person) creates the project, the state bucket, a Workload Identity pool
+and provider restricted to this repository, and two service accounts:
+`tofu-plan` (Viewer, Security Reviewer, object admin on the state bucket; any
+ref) and `tofu-apply` (Owner; `refs/heads/main` only). No key exists.
+
+**Is the plan account's access enough?** For what `infra/main` defines, plan
+refreshes: the project, enabled services, network, router, NAT, addresses,
+cluster and node pools, service accounts and their IAM policies, the project
+IAM policy, a custom role, the Artifact Registry repository and its IAM policy,
+the DNS zone and records, Certificate Manager resources (one mode), and a
+bucket with its IAM policy. Viewer covers the resource reads and Security
+Reviewer the `getIamPolicy` calls (UNVERIFIED permission by permission; it is
+what those roles are for). No secret is read. The one gap: VERIFIED
+([IAM roles for Cloud Storage](https://docs.cloud.google.com/storage/docs/access-control/iam-roles)),
+project Viewer's intrinsic Cloud Storage permissions are only
+`storage.buckets.getIpFilter`, `storage.buckets.list` and two HMAC-key ones,
+not `storage.buckets.get`. A bucket created with default settings also gets
+the legacy "project viewers" binding, which includes it, so the plan may work
+anyway; `roles/storage.bucketViewer` on the project for `tofu-plan` removes the
+doubt.
+
+That same legacy binding has a side effect worth knowing: anyone with project
+Viewer, `tofu-plan` included, can read the snapshot objects, which are browser
+memory. ANALYSIS; check the bucket's IAM policy after the first apply.
+
+**Limits of the gate.** ANALYSIS. The `production` environment's required
+reviewers gate the apply job. They do not gate the credential: Google hands
+`tofu-apply` to any workflow on `main`. Branch protection on `main` is
+therefore part of the control. `tofu-plan` can read and write the state bucket
+from any branch of the repository, so everyone with push access can read
+state.
+
 ## Unverified list
 
 Things that cannot be checked without a real project, in the order they
@@ -535,3 +570,6 @@ matter:
     auto-provisioning is accepted as written (it validates; the API has not
     seen it).
 12. All unit prices not marked verified in section 7.
+13. That `tofu-plan`'s roles suffice for every refresh (section 8), and that
+    newly enabled APIs are usable by the time the resources that follow them
+    are created in the same apply.
