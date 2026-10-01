@@ -1,0 +1,22 @@
+{
+	admin off
+	auto_https off
+}
+
+:{$PORT} {
+	# Railway healthcheck; must bypass basic_auth (which Caddy orders first).
+	handle /healthz {
+		respond "ok" 200
+	}
+
+	handle {
+		basic_auth {
+			{$VNC_USER} {$VNC_HASH}
+		}
+
+		# Land on the viewer with autoconnect; the websocket path is relative.
+		redir / /vnc.html?autoconnect=true&resize=scale&path=websockify 302
+
+		reverse_proxy 127.0.0.1:6080
+	}
+}
