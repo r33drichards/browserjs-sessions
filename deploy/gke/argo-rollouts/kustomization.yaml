@@ -3,22 +3,118 @@
 # (../rollouts.yaml, docs/releases.md). Only the controller: no Argo CD, no
 # dashboard, no kubectl plugin.
 #
-# argo-rollouts.v1.10.0.yaml is the release's install manifest, unmodified:
-#   https://github.com/argoproj/argo-rollouts/releases/download/v1.10.0/install.yaml
-#   sha256 ca8a1785391026023627c8a12db5422e227d7a7a6ec7c01f99f7d5b1726ed53c
-# Kept in the repository for the reasons cert-manager's is (../cert-manager).
-# To upgrade: download the new file beside it, change the name here, delete
-# the old one.
+# Version 1.10.0, kept in the repository for the reasons cert-manager's
+# manifest is (../cert-manager):
+#   namespace-install.v1.10.0.yaml is the release's file, unmodified:
+#     https://github.com/argoproj/argo-rollouts/releases/download/v1.10.0/namespace-install.yaml
+#     sha256 630e0f528f00ee1d83cff21197ec5cc6bb1e57b59abc3e89f80866cf090f953a
+#   crds.v1.10.0.yaml is four files of the tag v1.10.0, one after another:
+#     https://raw.githubusercontent.com/argoproj/argo-rollouts/v1.10.0/manifests/crds/
+#     rollout-crd.yaml, analysis-run-crd.yaml, analysis-template-crd.yaml, experiment-crd.yaml
+#     sha256 71f2fc12a1119efc3447278c85a9a1c48ce23e69f43ff5a851bb283d748dbce6
+# To upgrade: new files beside these, the names and the image's digest
+# changed here, the old files deleted, and `release kind` green.
+#
+# The "namespace install": the controller runs in the product's own
+# namespace with --namespaced and a Role there, and has no right anywhere
+# else in the cluster. What is changed from the release's file, below: the
+# Role is cut down to what these two Rollouts use, the cluster-wide roles it
+# offers to other people's accounts are left out, the image is named by
+# digest, and the pod says what it asks of the node.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-# The manifest's ClusterRoleBinding names this namespace.
-namespace: argo-rollouts
+namespace: browserjs-sessions
 
 resources:
-  - namespace.yaml
-  - argo-rollouts.v1.10.0.yaml
+  - crds.v1.10.0.yaml
+  - namespace-install.v1.10.0.yaml
+  - networkpolicy.yaml
+
+images:
+  # v1.10.0, the index (linux/amd64 and linux/arm64), read from quay.io on
+  # 2026-10-02.
+  - name: quay.io/argoproj/argo-rollouts
+    digest: sha256:187630ba722846bb8e079630364d3c29c8246a256be95785fd957b088f621c4e
 
 patches:
+  # Nobody here is given rights on Rollouts through the admin, edit and
+  # view roles.
+  - patch: |-
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: argo-rollouts-aggregate-to-admin
+      $patch: delete
+  - patch: |-
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: argo-rollouts-aggregate-to-edit
+      $patch: delete
+  - patch: |-
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: argo-rollouts-aggregate-to-view
+      $patch: delete
+  # The Role, as little as the backend's and the site's Rollouts need. The
+  # release's own also has: every verb on Ingresses, eviction of pods,
+  # creating and deleting Services, and reading SECRETS, which in this
+  # namespace are Pomerium's, Dex's, Stripe's and the canary's token. The
+  # checks' Jobs get their token from the kubelet, not from the controller.
+  - target:
+      kind: Role
+      name: argo-rollouts
+    patch: |-
+      - op: replace
+        path: /rules
+        value:
+          - apiGroups: ["argoproj.io"]
+            resources: ["rollouts", "rollouts/status", "rollouts/finalizers"]
+            verbs: ["get", "list", "watch", "update", "patch"]
+          - apiGroups: ["argoproj.io"]
+            resources: ["analysisruns", "analysisruns/finalizers"]
+            verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+          # Not used here; the controller watches them all the same.
+          - apiGroups: ["argoproj.io"]
+            resources: ["experiments", "experiments/finalizers"]
+            verbs: ["get", "list", "watch"]
+          - apiGroups: ["argoproj.io"]
+            resources: ["analysistemplates"]
+            verbs: ["get", "list", "watch"]
+          - apiGroups: ["apps"]
+            resources: ["replicasets"]
+            verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+          # The Deployments the Rollouts take their templates from.
+          - apiGroups: ["apps"]
+            resources: ["deployments"]
+            verbs: ["get", "list", "watch", "update"]
+          # The selectors of backend, backend-preview and site-canary.
+          - apiGroups: [""]
+            resources: ["services"]
+            verbs: ["get", "list", "watch", "patch"]
+          # The preview and active labels on the backend's pods.
+          - apiGroups: [""]
+            resources: ["pods"]
+            verbs: ["list", "watch", "update"]
+          # The checks.
+          - apiGroups: ["batch"]
+            resources: ["jobs"]
+            verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+          # Its own configuration (argo-rollouts-config).
+          - apiGroups: [""]
+            resources: ["configmaps"]
+            verbs: ["get", "list", "watch"]
+          # Watched, like experiments; there are none.
+          - apiGroups: ["networking.k8s.io"]
+            resources: ["ingresses"]
+            verbs: ["get", "list", "watch"]
+          - apiGroups: ["coordination.k8s.io"]
+            resources: ["leases"]
+            verbs: ["create", "get", "update"]
+          - apiGroups: [""]
+            resources: ["events"]
+            verbs: ["create", "update", "patch"]
   # The system pool has one small node: say what the controller takes of it.
   - target:
       kind: Deployment
@@ -32,3 +128,6 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/resources/limits/memory
         value: 384Mi
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: IfNotPresent

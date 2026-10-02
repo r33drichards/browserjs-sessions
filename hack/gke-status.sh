@@ -48,7 +48,7 @@ show kubectl -n "$NS" get configmap release -o 'jsonpath={.data.commit}{"  "}{.d
 show kubectl -n "$NS" get rollouts.argoproj.io -o 'custom-columns=NAME:.metadata.name,PHASE:.status.phase,STABLE:.status.stableRS,CURRENT:.status.currentPodHash,READY:.status.readyReplicas,MESSAGE:.status.message'
 show kubectl -n "$NS" get pods -l 'app in (backend,site)' -L browserjs.dev/role,rollouts-pod-template-hash
 show kubectl -n "$NS" get analysisruns.argoproj.io --sort-by=.metadata.creationTimestamp
-show kubectl -n argo-rollouts get pods -o wide
+show kubectl -n "$NS" get pods -l app.kubernetes.io/name=argo-rollouts -o wide
 
 section "Pods"
 for ns in "${namespaces[@]}"; do

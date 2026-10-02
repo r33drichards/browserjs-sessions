@@ -249,8 +249,10 @@ jobs:
       # (deploy/gke/rollouts.yaml). Its CRDs have to be there before the apply.
       - name: Argo Rollouts
         run: |
+          # In the product's namespace, with a Role there and nothing else.
+          kubectl apply -f deploy/base/namespace.yaml
           kubectl apply --server-side --force-conflicts -k deploy/gke/argo-rollouts
-          kubectl -n argo-rollouts rollout status deployment/argo-rollouts --timeout=300s
+          kubectl -n "$NS" rollout status deployment/argo-rollouts --timeout=300s
           kubectl wait --for=condition=Established --timeout=60s \
             crd/rollouts.argoproj.io crd/analysistemplates.argoproj.io crd/analysisruns.argoproj.io
 

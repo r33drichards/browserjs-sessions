@@ -47,8 +47,11 @@ jobs:
             kubectl kustomize "$overlay" >"$RUNNER_TEMP/rendered.yaml"
           done
           # The vendored manifest is the release's, unmodified.
-          want="$(sed -n 's/^#   sha256 //p' deploy/gke/argo-rollouts/kustomization.yaml)"
-          echo "$want  $(ls deploy/gke/argo-rollouts/argo-rollouts.v*.yaml)" | sha256sum -c -
+          # The vendored manifests are the release's, unmodified: the two
+          # checksums the kustomization states, in its order.
+          mapfile -t sums < <(sed -n 's/^#     sha256 //p' deploy/gke/argo-rollouts/kustomization.yaml)
+          printf '%s  %s\n' "${sums[0]}" deploy/gke/argo-rollouts/namespace-install.v*.yaml \
+            "${sums[1]}" deploy/gke/argo-rollouts/crds.v*.yaml | sha256sum -c -
 
       - name: Cluster
         run: |
@@ -77,5 +80,5 @@ jobs:
             echo "=== $job"
             kubectl -n "$ns" logs "$job" --tail=30 || true
           done
-          kubectl -n argo-rollouts logs deployment/argo-rollouts --tail=120 || true
+          kubectl -n "$ns" logs deployment/argo-rollouts --tail=120 || true
           kubectl -n "$ns" get events --sort-by=.lastTimestamp | tail -40 || true

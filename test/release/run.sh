@@ -5,7 +5,7 @@
 #   test/release/run.sh            against the current kubectl context
 #   RESULTS=out.md test/release/run.sh
 #
-# Real: the controller (deploy/gke/argo-rollouts), the two Rollouts, their
+# Real: the controller (deploy/gke/argo-rollouts), with its cut-down Role, the two Rollouts, their
 # Services, AnalysisTemplates and NetworkPolicy (deploy/gke/rollouts.yaml),
 # the backend's and the site's NetworkPolicies, and hack/release.sh
 # rollout-status. Stand-ins (stub.py): the backend, the site, and the canary
@@ -102,13 +102,23 @@ echo "cluster: $(kubectl config current-context)"
 
 # --- install -------------------------------------------------------------------
 step "install"
+kubectl apply -f deploy/base/namespace.yaml >/dev/null
 kubectl apply --server-side --force-conflicts -k deploy/gke/argo-rollouts >/dev/null || { echo "the controller's manifests were refused"; exit 1; }
-kubectl -n argo-rollouts rollout status deployment/argo-rollouts --timeout=300s || exit 1
+k rollout status deployment/argo-rollouts --timeout=300s || exit 1
 kubectl wait --for=condition=Established --timeout=60s crd/rollouts.argoproj.io crd/analysistemplates.argoproj.io >/dev/null
 is "the controller asks for what its kustomization says" "25m 96Mi" \
-  "$(kubectl -n argo-rollouts get deployment argo-rollouts -o jsonpath='{.spec.template.spec.containers[0].resources.requests.cpu} {.spec.template.spec.containers[0].resources.requests.memory}')"
+  "$(k get deployment argo-rollouts -o jsonpath='{.spec.template.spec.containers[0].resources.requests.cpu} {.spec.template.spec.containers[0].resources.requests.memory}')"
 
-kubectl apply -f deploy/base/namespace.yaml >/dev/null
+# The controller: named by digest, in this namespace only, and with no right
+# to read a Secret.
+is "the controller's image is named by digest" "1" \
+  "$(k get deployment argo-rollouts -o jsonpath='{.spec.template.spec.containers[0].image}' | grep -c '^quay.io/argoproj/argo-rollouts@sha256:[0-9a-f]\{64\}$')"
+controller="system:serviceaccount:$NS:argo-rollouts"
+is "the controller cannot read Secrets" "no no" \
+  "$(kubectl -n "$NS" auth can-i get secrets --as="$controller" 2>/dev/null | tail -1) $(kubectl -n "$NS" auth can-i list secrets --as="$controller" 2>/dev/null | tail -1)"
+is "nor anything outside its namespace" "no no" \
+  "$(kubectl -n default auth can-i list pods --as="$controller" 2>/dev/null | tail -1) $(kubectl auth can-i list rollouts.argoproj.io -A --as="$controller" 2>/dev/null | tail -1)"
+is "there is no cluster-wide role of its own" "" "$(kubectl get clusterroles,clusterrolebindings -o name | grep -i argo-rollouts || true)"
 k create configmap release-test-stub --from-file=test/release/stub.py --dry-run=client -o yaml | k apply -f - >/dev/null
 # What the deploy workflow makes of test/canary.py: here, the stand-in.
 k create configmap release-canary --from-file=canary.py=test/release/stub.py --dry-run=client -o yaml | k apply -f - >/dev/null
@@ -201,6 +211,12 @@ if status site 300; then pass "the release of a site that answers is promoted"; 
 until_true 120 pods_are site "4 4xv3"
 is "all four pods are the new site" "4 4xv3" "$(pods site)"
 is "and it is what the Service answers with" "<html><title>site 3</title></html>" "$(ask site /)"
+
+# The controller did all of the above through its NetworkPolicy and with its
+# cut-down Role: what it could not do is in its log.
+is "the controller was refused nothing it asked the API server for" "0" \
+  "$(k logs deployment/argo-rollouts --tail=-1 2>/dev/null | grep -ci 'forbidden' || true)"
+is "and never restarted" "0" "$(k get pods -l app.kubernetes.io/name=argo-rollouts -o jsonpath='{.items[0].status.containerStatuses[0].restartCount}')"
 
 # --- nothing else reaches the standby backend ---------------------------------------------
 step "NetworkPolicy"
