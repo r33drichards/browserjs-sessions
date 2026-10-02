@@ -69,9 +69,10 @@ run "defaults_pomerium_nlb" {
       "app.browserjs.com.",
       "authenticate.browserjs.com.",
       "dex.browserjs.com.",
+      "sessions.browserjs.com.",
       "*.sessions.browserjs.com.",
     ])
-    error_message = "Expected A records for the four public names."
+    error_message = "Expected A records for the five public names."
   }
 
   assert {
@@ -177,21 +178,21 @@ run "gateway_alb" {
 
   assert {
     condition     = length(google_certificate_manager_dns_authorization.this) == 4 && length(google_dns_record_set.dns_authorization) == 4
-    error_message = "Expected a DNS authorisation and its CNAME for each of the four names."
+    error_message = "Expected a DNS authorisation and its CNAME for each of the four names (the sessions' host and its wildcard share one)."
   }
 
   assert {
     condition     = google_certificate_manager_dns_authorization.this["sessions"].domain == "sessions.browserjs.com"
-    error_message = "The wildcard is authorised through its parent name."
+    error_message = "The sessions' host and the wildcard under it are authorised through the one name."
   }
 
   assert {
-    condition     = toset(google_certificate_manager_certificate.this[0].managed[0].domains) == toset(["app.browserjs.com", "authenticate.browserjs.com", "dex.browserjs.com", "*.sessions.browserjs.com"])
-    error_message = "The certificate must cover the three hosts and the session wildcard."
+    condition     = toset(google_certificate_manager_certificate.this[0].managed[0].domains) == toset(["app.browserjs.com", "authenticate.browserjs.com", "dex.browserjs.com", "sessions.browserjs.com", "*.sessions.browserjs.com"])
+    error_message = "The certificate must cover the four hosts and the session wildcard."
   }
 
   assert {
-    condition     = length(google_certificate_manager_certificate_map_entry.this) == 4
+    condition     = length(google_certificate_manager_certificate_map_entry.this) == 5
     error_message = "Expected a certificate map entry per public name."
   }
 
@@ -232,7 +233,7 @@ run "federated_tokens_and_regional_cluster" {
   }
 
   assert {
-    condition     = length(output.dns_records) == 4
+    condition     = length(output.dns_records) == 5
     error_message = "The records to create by hand must still be listed."
   }
 }

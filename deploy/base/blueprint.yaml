@@ -1,6 +1,6 @@
 # The spec of a session's Sandbox (agents.x-k8s.io/v1beta1), rendered by the
 # backend for each new session: {{ .ID }} is the session's ID, {{ .SessionURL }}
-# its own base URL, {{ .PublicURL }} the app's. The backend adds operatingMode
+# its own base URL (https://<sessions host>/<id>), {{ .PublicURL }} the app's. The backend adds operatingMode
 # and the owner label.
 podTemplate:
   metadata:
@@ -59,8 +59,9 @@ podTemplate:
       - name: mcp-js
         image: browserjs/mcp-js:dev
         env:
-          # One-time upload URLs are made from this, so they come back
-          # through the session's own host.
+          # One-time upload URLs are made from this (mcp-js appends
+          # /api/artifact-uploads/<token>), so they come back under the
+          # session's own prefix.
           - name: MCP_V8_PUBLIC_URL
             value: "{{ .SessionURL }}"
         ports:

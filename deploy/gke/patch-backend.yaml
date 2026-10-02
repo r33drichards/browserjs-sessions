@@ -10,7 +10,13 @@ spec:
           env:
             - name: PUBLIC_URL
               value: https://app.browserjs.com
+            # Every session is under one host, by its ID.
             - name: SESSION_URL_TEMPLATE
+              value: https://sessions.browserjs.com/{id}
+            # DEPRECATED: the host each session had before. Requests there
+            # are still served, for the URLs already handed out. Remove this
+            # with the legacy-session-* routes in pomerium-config.yaml.
+            - name: LEGACY_SESSION_URL_TEMPLATE
               value: https://{id}.sessions.browserjs.com
             # Fetched through the public address, with the public
             # certificate. From inside the cluster that address leads

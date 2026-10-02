@@ -14,6 +14,10 @@ spec:
     - app.browserjs.com
     - authenticate.browserjs.com
     - dex.browserjs.com
+    # Every session is under this one name.
+    - sessions.browserjs.com
+    # DEPRECATED: the host each session had before. Remove it with the
+    # legacy-session-* routes in pomerium-config.yaml.
     - "*.sessions.browserjs.com"
   privateKey:
     algorithm: ECDSA

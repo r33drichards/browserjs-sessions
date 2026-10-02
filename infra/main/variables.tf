@@ -451,7 +451,7 @@ variable "domain" {
 }
 
 variable "hostnames" {
-  description = "Left-hand labels of the four public names under domain. sessions is the parent of the per-session wildcard: *.<sessions>.<domain>."
+  description = "Left-hand labels of the public names under domain. sessions is the host every session is under, <sessions>.<domain>/<id>, and the parent of the older per-session wildcard, *.<sessions>.<domain>."
   type = object({
     app          = optional(string, "app")
     authenticate = optional(string, "authenticate")
