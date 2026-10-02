@@ -75,6 +75,7 @@ interface StoredSession {
   policy?: StoredPolicy // undefined with `unsupported`: a session from before policies
   unsupported?: boolean
   stoppedBy?: string
+  stateSaved?: boolean // asleep with a snapshot to wake from
   draining?: string
   deleteAfter?: string
 }
@@ -99,6 +100,7 @@ export interface MockOptions {
   policies?: boolean // false: a backend with the feature off (default true)
   tokens?: boolean // false: a backend without /tokens (default true)
   seed?: boolean // sessions in every policy state (default true)
+  snapshots?: boolean // false: a cluster without Pod Snapshots, where a sleep saves no state (default true)
   billing?: string // a scenario of mock/billing.ts; absent or "off": a backend with billing off
   checkoutPolls?: number
   now?: () => Date
@@ -134,7 +136,7 @@ function sameJson(a: unknown, b: unknown): boolean {
 }
 
 export function createMockBackend(options: MockOptions) {
-  const { presets, policies = true, tokens: tokensOn = true, seed = true, now = () => new Date() } = options
+  const { presets, policies = true, tokens: tokensOn = true, seed = true, snapshots = true, now = () => new Date() } = options
   const sessions = new Map<string, StoredSession>()
   const tokens: { id: string; name: string; scopes: string[]; created: string; expires: string; last_used?: string }[] = []
   let counter = 0
@@ -219,6 +221,7 @@ export function createMockBackend(options: MockOptions) {
     state: s.state,
     created: s.created,
     mcp_url: `https://sessions.example.com/${s.id}/mcp`,
+    ...(s.stateSaved && s.state !== "running" && s.state !== "starting" ? { stateSaved: true } : {}),
     ...(policies ? { policy: summary(s) } : {}),
     ...billing.view(s),
   })
@@ -264,7 +267,7 @@ export function createMockBackend(options: MockOptions) {
     broken.policy!.source += "\nallow_tool_call if http.send({})\n"
     broken.policy!.state = "invalid"
     broken.policy!.errors = [{ row: lines.length + 2, col: 20, code: "rego_type_error", message: "undefined function http.send" }]
-    addSession("from-before", undefined, { unsupported: true, state: "asleep" })
+    addSession("from-before", undefined, { unsupported: true, state: "asleep", stateSaved: true })
   }
   const billing = createBillingMock({
     scenario: options.billing ?? "off",
@@ -324,11 +327,11 @@ export function createMockBackend(options: MockOptions) {
         }
         if (method === "PATCH") {
           if (typeof body.name === "string") s.name = body.name
-          if (body.action === "stop") s.state = "stopped"
+          if (body.action === "stop") Object.assign(s, { state: "stopped", stoppedBy: "user", stateSaved: false })
           if (body.action === "resume") {
             const refused = billing.refuse("resume")
             if (refused) return refused
-            s.state = "running"
+            Object.assign(s, { state: "running", stoppedBy: undefined })
           }
           return json(200, sessionView(s))
         }
@@ -336,6 +339,22 @@ export function createMockBackend(options: MockOptions) {
           sessions.delete(s.id)
           return { status: 204 }
         }
+      }
+      // A user's sleep: the snapshot, then asleep. Asleep already is a no-op.
+      if (rest === "sleep" && method === "POST") {
+        if (s.state === "asleep") return json(200, sessionView(s))
+        if (s.state === "starting") return error(409, "session is still starting; put it to sleep once it is running")
+        if (s.state !== "running") return error(409, `session is ${s.state}, with no running state to save; wake it to start it fresh`)
+        Object.assign(s, { state: "asleep", stoppedBy: "sleep", stateSaved: snapshots })
+        return json(200, sessionView(s))
+      }
+      // PATCH's resume, as a route: from the snapshot if there is one.
+      if (rest === "wake" && method === "POST") {
+        if (s.state === "running" || s.state === "starting") return json(200, sessionView(s))
+        const refused = billing.refuse("resume")
+        if (refused) return refused
+        Object.assign(s, { state: "running", stoppedBy: undefined })
+        return json(200, sessionView(s))
       }
       if (rest === "vnc-ticket" && method === "POST") return error(503, "the mock backend has no browser to show")
       if (rest === "files" && method === "GET") return json(200, { files: [], max_bytes: 1 << 20 })

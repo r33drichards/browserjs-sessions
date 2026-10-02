@@ -26,6 +26,7 @@ type Store interface {
 	List(ctx context.Context, owner string) ([]sessions.Session, error)
 	ListAll(ctx context.Context) ([]sessions.Session, error)
 	Update(ctx context.Context, id string, name *string, action string) error
+	Sleep(ctx context.Context, id, stoppedBy string, stillWanted func() bool) error
 	Delete(ctx context.Context, id string) error
 }
 
@@ -116,6 +117,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/sessions/{id}", a.session(a.get))
 	mux.HandleFunc("PATCH /api/sessions/{id}", a.session(a.patch))
 	mux.HandleFunc("DELETE /api/sessions/{id}", a.session(a.delete))
+	mux.HandleFunc("POST /api/sessions/{id}/sleep", a.session(a.sleep))
+	mux.HandleFunc("POST /api/sessions/{id}/wake", a.session(a.wake))
 	a.registerPolicies(mux)
 }
 
@@ -300,6 +303,70 @@ func (a *API) patch(w http.ResponseWriter, r *http.Request, id string) {
 	// One write, validated as a whole: a bad action must not leave a rename
 	// behind.
 	if err := a.store.Update(r.Context(), id, body.Name, body.Action); err != nil {
+		a.storeError(w, err)
+		return
+	}
+	a.get(w, r, id)
+}
+
+// sleep puts a running session to sleep on its user's request: what the
+// idle sweep does, without waiting for it. The session's pod is snapshotted
+// and removed, and it wakes as it was on the next request to it (an MCP call
+// included) or on wake. The answer is the session, already suspended:
+// stateSaved says whether the snapshot was taken; without one it starts
+// fresh. A session that is asleep already is left as it is.
+func (a *API) sleep(w http.ResponseWriter, r *http.Request, id string) {
+	// The snapshot takes seconds, and a caller that goes away meanwhile has
+	// still asked for the sleep.
+	ctx := context.WithoutCancel(r.Context())
+	// Twice: the session may be put to sleep or stopped by something else
+	// between the look and the sleep, and is then judged as it now is.
+	for range 2 {
+		s, err := a.store.Get(ctx, id)
+		if err != nil {
+			a.storeError(w, err)
+			return
+		}
+		switch {
+		case s.State == sessions.Asleep, s.State == sessions.Stopping && s.GoingToSleep():
+			a.get(w, r, id)
+			return
+		case s.State != sessions.Running:
+			writeError(w, http.StatusConflict, notSleepable[s.State])
+			return
+		}
+		err = a.store.Sleep(ctx, id, sessions.StoppedBySleep, nil)
+		if errors.Is(err, sessions.ErrStateChanged) {
+			continue
+		}
+		if err != nil {
+			a.storeError(w, err)
+			return
+		}
+		a.get(w, r, id)
+		return
+	}
+	writeError(w, http.StatusConflict, "session changed state while it was put to sleep; try again")
+}
+
+// notSleepable is why a session in a state other than running cannot be put
+// to sleep: only a running pod has state to save.
+var notSleepable = map[sessions.State]string{
+	sessions.Starting: "session is still starting; put it to sleep once it is running",
+	sessions.Stopping: "session is stopping",
+	sessions.Stopped:  "session is stopped, with no running state to save; wake it to start it fresh",
+	sessions.Failed:   "session failed to start; there is no running state to save",
+}
+
+// wake starts a session that is asleep or stopped: PATCH's "resume", as a
+// route. One that is asleep is restored from its snapshot if it has one; a
+// stopped one starts fresh. The answer does not wait for it to run.
+func (a *API) wake(w http.ResponseWriter, r *http.Request, id string) {
+	if err := a.mayResume(r.Context(), id, sessions.ActionResume); err != nil {
+		a.refused(w, err)
+		return
+	}
+	if err := a.store.Update(r.Context(), id, nil, sessions.ActionResume); err != nil {
 		a.storeError(w, err)
 		return
 	}

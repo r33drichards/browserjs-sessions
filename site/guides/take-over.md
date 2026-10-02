@@ -29,8 +29,10 @@ confuses both. Wait for the agent's step to finish, or stop it first.
 ## Stop the agent
 
 - **In your MCP client**: cancel the request. This is the normal way.
-- **For certain**: choose **Stop** on the session. A stopped session refuses
-  agent calls until you choose **Resume**.
+- **For certain**: choose **Stop without saving state**, in the menu beside
+  **Sleep** on the session. A stopped session refuses agent calls until you
+  choose **Start**. **Sleep** does not do this: a sleeping session wakes on
+  the agent's next call.
 
 A call that is already running ends within its time limit, 30 seconds by
 default.

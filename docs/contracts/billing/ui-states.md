@@ -135,14 +135,14 @@ it exists."
 
 | `stoppedBy` | In place of the screen | In the list |
 |---|---|---|
-| `credit` | `StatusIndicator` stopped "Asleep: out of credit". "This session is kept as it was. It can wake once you have credit." Buttons "Add credit", "See plans" | "Asleep: out of credit"; "Resume" disabled with that tooltip |
+| `credit` | `StatusIndicator` stopped "Asleep: out of credit". "This session is kept as it was. It can wake once you have credit." Buttons "Add credit", "See plans" | "Asleep: out of credit"; "Wake" disabled with that tooltip |
 | `payment-method` | "Asleep: no payment method". "This session is kept as it was. It can wake once you add a card." Button "Add a card" | "Asleep: no payment method" |
 | `blocked` | "Suspended." | "Suspended" |
 
 A session with `draining` shows a warning over the screen: "Finishing work
 in progress, then going to sleep." Once there is credit and a card, a
 session asleep for these reasons behaves as any sleeping session: it wakes
-on use or on Resume; it is not woken for the user. A session with
+on use or on Wake; it is not woken for the user. A session with
 `deleteAfter` shows "Deleted on <date> unless you add credit" in the list
 and on its page.
 

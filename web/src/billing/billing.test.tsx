@@ -120,7 +120,7 @@ describe("the gate", () => {
     expect(within(await banner()).getByRole("button", { name: "Add a card" })).toBeTruthy()
     expect(within(await banner()).queryByRole("button", { name: "Dismiss" })).toBeNull()
     expect(row.textContent).toContain("Asleep: no payment method")
-    expect(within(row).getByRole("button", { name: "Resume" }).getAttribute("aria-disabled")).toBe("true")
+    expect(within(row).getByRole("button", { name: "Wake" }).getAttribute("aria-disabled")).toBe("true")
     expect(within(row).getByRole("button", { name: "Delete" }).hasAttribute("disabled")).toBe(false)
   })
 
@@ -176,12 +176,12 @@ describe("banners and the balance", () => {
     expect(screen.getByTestId("viewer")).toBeTruthy()
   })
 
-  it("exhausted: asleep and kept, with the list saying why and Resume disabled", async () => {
+  it("exhausted: asleep and kept, with the list saying why and Wake disabled", async () => {
     open("/", "exhausted")
     expect((await banner()).textContent).toMatch(/You are out of credit\. Your sessions are asleep and kept\. Your plan's credit returns on \d+ \w+\./)
     const row = (await screen.findByRole("link", { name: "research" })).closest("tr")!
     expect(row.textContent).toContain("Asleep: out of credit")
-    expect(within(row).getByRole("button", { name: "Resume" }).getAttribute("aria-disabled")).toBe("true")
+    expect(within(row).getByRole("button", { name: "Wake" }).getAttribute("aria-disabled")).toBe("true")
   })
 
   it("deletion: names the day, on the banner and on each session, and cannot be dismissed", async () => {

@@ -21,6 +21,9 @@ const (
 
 	StoppedByUser = "user" // stays stopped until resumed
 	StoppedByIdle = "idle" // wakes on the next request
+	// StoppedBySleep is a sleep its user asked for: a snapshot is taken, as
+	// for an idle one, and it wakes on the next request or when asked to.
+	StoppedBySleep = "sleep"
 	// Billing's reasons (docs/contracts/billing/enforcement.md). A session
 	// asleep for credit or for want of a payment method wakes on the next
 	// request, as an idle one does, if its owner's account then allows it.
@@ -39,8 +42,12 @@ const (
 // wakes reports whether a session suspended for reason by wakes on its next
 // use (Wake), rather than staying stopped until it is resumed.
 func wakes(by string) bool {
-	return by == StoppedByIdle || by == StoppedByCredit || by == StoppedByPaymentMethod
+	return by == StoppedByIdle || by == StoppedBySleep || by == StoppedByCredit || by == StoppedByPaymentMethod
 }
+
+// GoingToSleep reports whether a session that is suspended, or on its way
+// there, wakes on its next use: it is asleep, or will be once its pod is gone.
+func (s Session) GoingToSleep() bool { return wakes(s.StoppedBy) }
 
 // sleepReason reports whether by is a reason Sleep takes.
 func sleepReason(by string) bool { return wakes(by) || by == StoppedByBlocked }
@@ -80,8 +87,12 @@ type Session struct {
 	State   State     `json:"state"`
 	Message string    `json:"message,omitempty"` // why it is starting or failed
 	Created time.Time `json:"created"`
-	PodIP   string    `json:"-"`
-	Node    string    `json:"-"` // the node its pod is scheduled to, if any
+	// StateSaved is whether a suspended session holds a snapshot of its pod
+	// to wake from (see snapshots.go). Without one it starts fresh, with its
+	// disk only.
+	StateSaved bool   `json:"stateSaved,omitempty"`
+	PodIP      string `json:"-"`
+	Node       string `json:"-"` // the node its pod is scheduled to, if any
 	// PolicyCapable is whether the session's mcp-js asks OPA for decisions,
 	// and so whether the session can have a policy (see policy.go).
 	PolicyCapable bool `json:"-"`
@@ -176,6 +187,7 @@ func FromSandbox(obj *unstructured.Unstructured) Session {
 		}
 	} else if obj.GetDeletionTimestamp() == nil {
 		s.StoppedBy = obj.GetAnnotations()[AnnStoppedBy]
+		s.StateSaved = obj.GetAnnotations()[AnnSnapshot] != ""
 	}
 	return s
 }
