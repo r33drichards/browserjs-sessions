@@ -1,0 +1,5 @@
+.provider/
+.terraform/
+*.tfstate
+*.tfstate.*
+tfplan

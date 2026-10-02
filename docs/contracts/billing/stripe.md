@@ -30,8 +30,8 @@ are in section 1 of the design.
 
 | | Makes it | With |
 |---|---|---|
-| The Stripe account, its sandbox, the webhook endpoint, the API keys, the Radar setting | the product owner, by hand in the Dashboard | the to-do list of the design |
-| Products, Prices, the Customer Portal configuration | **OpenTofu** (`infra/billing`), planned and applied from GitHub Actions; no setup command (changed 2026-10-02) | `STRIPE_SETUP_KEY` |
+| The Stripe account, its sandbox, the API keys, the Radar setting | the product owner, by hand in the Dashboard | the to-do list of the design |
+| Products, Prices, the Customer Portal configuration, **the webhook endpoint** | **OpenTofu** (`infra/billing`), planned and applied from GitHub Actions; no setup command (changed 2026-10-02; how: [`docs/billing-iac.md`](../../billing-iac.md)) | `STRIPE_SETUP_KEY` |
 | Customers, Checkout Sessions, Portal sessions, off-session PaymentIntents (auto-recharge) | the backend, at run time | `STRIPE_API_KEY` |
 | SetupIntents, PaymentMethods, Subscriptions, Invoices, Refunds, Disputes | Stripe | |
 
@@ -42,14 +42,21 @@ Stripe. The operator does not.
 
 Defined in OpenTofu (`infra/billing`) from `catalogue.yaml`; a second
 plan shows no change. The backend finds them by the identities below
-(product IDs, lookup keys, the portal configuration's metadata), not by
-anything from OpenTofu's state. Where this file says "run the setup
-again", read "apply `infra/billing`".
+(lookup keys, the portal configuration's metadata), not by anything from
+OpenTofu's state. Where this file says "run the setup again", read "apply
+`infra/billing`".
+
+Two things differ from what was first written here, both because of the
+provider (`stripe/stripe` 0.3.0; `docs/billing-iac.md`, "Providers"):
+a product's ID is Stripe's own, since the provider cannot choose one, and
+the catalogue's `productId` is its `metadata.catalogue_product`; and the
+portal's `subscription_update` is **off** until the provider can manage
+its list of products.
 
 | Object | Identity | Fields |
 |---|---|---|
-| Product, one per plan | `id` = `productId` (`cu_plan_starter`, `cu_plan_pro`, `cu_plan_scale`) | `name` "Computer Use <Name>", `metadata.catalogue_key`, `active` = `enabled` |
-| Product for credit | `id` = `cu_credit` | `name` "Computer Use credit" |
+| Product, one per plan | `metadata.catalogue_product` = `productId` (`cu_plan_starter`, `cu_plan_pro`, `cu_plan_scale`); the ID is Stripe's | `name` "Computer Use <Name>", `metadata.catalogue_key`, `active` = `enabled` |
+| Product for credit | `metadata.catalogue_product` = `cu_credit` | `name` "Computer Use credit" |
 | Price, one per plan (three recurring Prices) | `lookup_key`: `cu_starter_monthly_v1`, `cu_pro_monthly_v1`, `cu_scale_monthly_v1` | `unit_amount`, `currency: usd`, `recurring.interval: month`, licensed (not metered), `metadata.credit_micros` (for people; the backend does not read it) |
 | Price, one per pack (three one-off Prices) | `lookup_key`: `cu_credit_5_v1`, `cu_credit_20_v1`, `cu_credit_50_v1` | `unit_amount`, one-off, `metadata.credit_micros` |
 | Customer Portal configuration | the one with `metadata.managed_by = stripe-setup` (OpenTofu sets it; the value is kept so that the backend's lookup does not change) | below |
@@ -262,9 +269,12 @@ no identity; the only authentication is the signature.
 | `charge.dispute.closed` | status `won`: remove `spec.blocked` if its reason is `dispute`. Otherwise nothing. |
 | anything else | `200`, ignored |
 
-The endpoint in the Dashboard subscribes to exactly the events named in
+The endpoint is made by OpenTofu (`infra/billing/stripe.tf`), which also
+puts its signing secret in the cluster (`deploy.md`, "Secrets"). It
+subscribes to exactly the events named in
 this table, and is created with the API version of the pinned `stripe-go`
-release (2025-03-31 "basil" or later).
+release (`webhook_api_version` in `infra/billing`; 2025-03-31 "basil" or
+later).
 
 ## Returning from Checkout
 
