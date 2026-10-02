@@ -1,0 +1,28 @@
+# cert-manager, applied before deploy/gke (which needs its CRDs and webhook).
+#
+# cert-manager.v1.21.2.yaml is the release's static manifest, unmodified:
+#   https://github.com/cert-manager/cert-manager/releases/download/v1.21.2/cert-manager.yaml
+#   sha256 e03b668ec8675214af6b0a671699d088f2601fa3878e0dbe1b41d3feafd1879f
+# It is kept in the repository so that what reaches the cluster is what was
+# reviewed, a deploy does not depend on GitHub's release downloads, and the
+# annotation below is a patch rather than a second kubectl step. To upgrade:
+# download the new file beside it, change the name here, delete the old one.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - cert-manager.v1.21.2.yaml
+
+patches:
+  # Workload Identity: the controller answers DNS-01 challenges in Cloud DNS
+  # as this Google service account (infra/main/edge.tf; the output
+  # cert_manager_service_account_email). No key exists.
+  - target:
+      kind: ServiceAccount
+      name: cert-manager
+      namespace: cert-manager
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          iam.gke.io/gcp-service-account: browserjs-cert-manager@browserjs-sessions.iam.gserviceaccount.com

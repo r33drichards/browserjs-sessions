@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  template:
+    spec:
+      containers:
+        - name: backend
+          env:
+            - name: PUBLIC_URL
+              value: https://app.browserjs.com
+            - name: SESSION_URL_TEMPLATE
+              value: https://{id}.sessions.browserjs.com
+            # Fetched through the public address, with the public
+            # certificate. From inside the cluster that address leads
+            # straight to Pomerium's Service.
+            - name: POMERIUM_JWKS_URL
+              value: https://app.browserjs.com/.well-known/pomerium/jwks.json
+            - name: ADMIN_EMAILS
+              value: rwendt1337@gmail.com

@@ -125,6 +125,21 @@ run "defaults_pomerium_nlb" {
   }
 
   assert {
+    condition     = google_service_account_iam_member.deployer_github.member == "principalSet://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/github/attribute.repo_ref/r33drichards/browserjs-sessions@refs/heads/main"
+    error_message = "Deploys must be limited to the main branch of the repository, through the bootstrap's pool."
+  }
+
+  assert {
+    condition     = google_service_account_iam_member.deployer_github.role == "roles/iam.workloadIdentityUser" && google_project_iam_member.deployer_cluster.role == "roles/container.admin"
+    error_message = "deployer may be impersonated and may administer Kubernetes Engine; nothing else."
+  }
+
+  assert {
+    condition     = google_service_account.deployer.account_id == "deployer" && output.deployer_service_account_email != null
+    error_message = "The deployer account must exist and be an output (the repository variable DEPLOY_SA)."
+  }
+
+  assert {
     condition     = output.certificate_map_name == null && output.cert_manager_service_account_email != null
     error_message = "Outputs must follow the edge mode."
   }
@@ -232,6 +247,16 @@ run "rejects_pull_request_push_ref" {
   }
 
   expect_failures = [var.images_push_ref]
+}
+
+run "rejects_pull_request_deploy_ref" {
+  command = plan
+
+  variables {
+    deploy_ref = "refs/pull/1/merge"
+  }
+
+  expect_failures = [var.deploy_ref]
 }
 
 run "rejects_unknown_edge_mode" {

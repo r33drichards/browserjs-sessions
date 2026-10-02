@@ -1,0 +1,22 @@
+# deploy/gke, except that the certificate comes from Let's Encrypt's staging
+# service. For proving that issuing works without spending production's rate
+# limits. Nothing trusts a staging certificate: browsers warn, and the
+# backend and Pomerium (which fetch https://app.browserjs.com and
+# https://dex.browserjs.com themselves) refuse it, so the backend does not
+# become ready and nobody can sign in. Apply deploy/gke afterwards; the
+# Certificate is then issued again by production.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../gke
+
+patches:
+  - target:
+      group: cert-manager.io
+      kind: Certificate
+      name: pomerium-tls
+    patch: |-
+      - op: replace
+        path: /spec/issuerRef/name
+        value: letsencrypt-staging

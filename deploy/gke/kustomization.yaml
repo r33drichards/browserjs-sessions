@@ -1,0 +1,61 @@
+# Production, on the GKE cluster infra/main makes: the app on
+# app.browserjs.com, sessions on <id>.sessions.browserjs.com, Pomerium on the
+# reserved address behind a passthrough load balancer, certificates from
+# Let's Encrypt. Applied by .github/workflows/deploy.yml; the procedure is
+# docs/gke-deployment.md.
+#
+# cert-manager itself is cert-manager/, applied first. The Secrets (dex-oauth,
+# pomerium) are made by the workflow and are never in the repository.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: browserjs-sessions
+
+resources:
+  - ../base
+  - session.yaml
+  - certificate.yaml
+
+# THE ONE PLACE the deployed images are chosen. Each digest is what the
+# "images" workflow printed in its run summary for the commit to deploy.
+# After editing, run hack/pin-images.sh: the two session images are named
+# inside blueprint.yaml (a file in a ConfigMap, which kustomize cannot edit),
+# and the script copies them there. The deploy workflow refuses to run while a
+# REPLACE_ placeholder is left or the two files disagree.
+images:
+  - name: browserjs/backend
+    newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/backend
+    digest: sha256:c6c19eac56481e3ff3b196cca85c4539561b7fd9df8d3c83afafa692997fca7b
+  - name: browserjs/browser
+    newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/browser
+    digest: sha256:0d9862ca0e421ad29b3fce8c4a44cf67e4ac9316e5ed32759e3d0e2401529a24
+  - name: browserjs/mcp-js
+    newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/mcp-js
+    digest: sha256:984dceedf06bf2e18473807617bbc491b409b4fe43e1cea93865128719c0cf3b
+
+configMapGenerator:
+  - name: session-blueprint
+    behavior: replace
+    files:
+      - blueprint.yaml
+  - name: pomerium-config
+    behavior: replace
+    files:
+      - config.yaml=pomerium-config.yaml
+  - name: dex-config
+    behavior: replace
+    files:
+      - config.yaml=dex-config.yaml
+
+patches:
+  - path: patch-backend.yaml
+  - path: patch-pomerium.yaml
+  # Pomerium's disk (sessions, MCP client registrations, MCP refresh tokens):
+  # a zonal Persistent Disk that outlives the pod. A StatefulSet's claim
+  # template cannot be changed once it exists.
+  - target:
+      kind: StatefulSet
+      name: pomerium
+    patch: |-
+      - op: add
+        path: /spec/volumeClaimTemplates/0/spec/storageClassName
+        value: browserjs-zonal

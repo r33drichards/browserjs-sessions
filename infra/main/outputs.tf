@@ -71,6 +71,11 @@ output "images_push_service_account_email" {
   value       = google_service_account.images_push.email
 }
 
+output "deployer_service_account_email" {
+  description = "Google service account GitHub Actions deploys with. Set it as the repository variable DEPLOY_SA."
+  value       = google_service_account.deployer.email
+}
+
 output "node_service_account_email" {
   description = "Google service account of every node. It can pull from the registry."
   value       = google_service_account.nodes.email
