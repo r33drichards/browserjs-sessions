@@ -1,3 +1,6 @@
+import Button from "@cloudscape-design/components/button"
+import SpaceBetween from "@cloudscape-design/components/space-between"
+import Textarea from "@cloudscape-design/components/textarea"
 import RFB from "@novnc/novnc"
 import { useEffect, useRef, useState } from "react"
 import { api } from "../api"
@@ -19,6 +22,10 @@ const STATUS_TEXT: Record<Exclude<Status, "connected">, string> = {
 export function VncPane({ sessionId }: { sessionId: string }) {
   const screenRef = useRef<HTMLDivElement>(null)
   const [status, setStatus] = useState<Status>("connecting")
+  // The live connection, for the clipboard box below the screen.
+  const rfbRef = useRef<RFB | null>(null)
+  const [clip, setClip] = useState("")
+  const [note, setNote] = useState("")
 
   useEffect(() => {
     let rfb: RFB | null = null
@@ -51,11 +58,19 @@ export function VncPane({ sessionId }: { sessionId: string }) {
         conn.addEventListener("connect", () => {
           if (rfb !== conn) return
           attempt = 0
+          rfbRef.current = conn
           setStatus("connected")
+        })
+        // Text copied in the remote browser lands in the box.
+        conn.addEventListener("clipboard", e => {
+          if (rfb !== conn) return
+          setClip((e as CustomEvent<{ text: string }>).detail.text)
+          setNote("Copied in the browser. Use Copy to put it on your clipboard.")
         })
         conn.addEventListener("disconnect", () => {
           if (rfb !== conn) return // already replaced, paused or unmounted
           rfb = null
+          rfbRef.current = null
           scheduleRetry()
         })
       } catch (e) {
@@ -69,6 +84,7 @@ export function VncPane({ sessionId }: { sessionId: string }) {
       clearTimeout(retry)
       const conn = rfb
       rfb = null
+      rfbRef.current = null
       conn?.disconnect()
     }
 
@@ -103,10 +119,63 @@ export function VncPane({ sessionId }: { sessionId: string }) {
     }
   }, [sessionId])
 
+  function send(text: string) {
+    const conn = rfbRef.current
+    if (!conn) return
+    conn.clipboardPasteFrom(text)
+    setNote("Sent. Press Ctrl+V in the browser to paste it.")
+  }
+
+  // One step instead of two, where this browser lets the page read the clipboard.
+  async function sendMine() {
+    try {
+      const text = await navigator.clipboard.readText()
+      setClip(text)
+      send(text)
+    } catch {
+      setNote("Couldn't read your clipboard. Paste into the box and use Send to browser.")
+    }
+  }
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(clip)
+      setNote("Copied to your clipboard.")
+    } catch {
+      setNote("Couldn't copy. Select the text in the box and copy it yourself.")
+    }
+  }
+
+  const connected = status === "connected"
+
   return (
     <div>
       <div ref={screenRef} className="wf-screen" />
-      {status !== "connected" && <p>{STATUS_TEXT[status]}</p>}
+      {!connected && <p>{STATUS_TEXT[status]}</p>}
+      <div className="wf-box wf-clipboard">
+        <SpaceBetween size="xs">
+          <strong>Clipboard</strong>
+          <Textarea
+            value={clip}
+            onChange={e => setClip(e.detail.value)}
+            rows={3}
+            ariaLabel="Clipboard shared with the browser"
+            placeholder="Text copied in the browser shows up here. Type or paste text to send it there."
+          />
+          <SpaceBetween direction="horizontal" size="xs" alignItems="center">
+            <Button disabled={!connected || !clip} onClick={() => send(clip)}>
+              Send to browser
+            </Button>
+            <Button disabled={!connected} onClick={sendMine}>
+              Send my clipboard
+            </Button>
+            <Button disabled={!clip} onClick={copy}>
+              Copy
+            </Button>
+            {note && <span className="wf-note">{note}</span>}
+          </SpaceBetween>
+        </SpaceBetween>
+      </div>
     </div>
   )
 }
