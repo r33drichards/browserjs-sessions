@@ -7,8 +7,8 @@
 // redirect) -> sign in at Dex in a headless Chrome -> token -> MCP
 // initialize, tools/list, run_js. Prints what each step answered.
 //
-// Pomerium v0.33.3 does not serve the discovery documents on a wildcard
-// host; SKIP_DISCOVERY=1 supplies the endpoints instead, to test the rest.
+// test/mcp-client.mjs does the same with a real client; this one shows each
+// step. SKIP_DISCOVERY=1 supplies the endpoints instead of discovering them.
 import { createRequire } from "node:module"
 import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"

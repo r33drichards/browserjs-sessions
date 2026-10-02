@@ -107,7 +107,7 @@ signed identity header.
 | `POST /api/sessions/{id}/vnc-ticket` | A one-time ticket, and the websocket URL to open the screen with |
 | everything else | The UI |
 
-**A session's host, `<id>.<session domain>`.** Three wildcard routes; any other
+**A session's host, `<id>.<session domain>`.** Four wildcard routes; any other
 path does not exist.
 
 | Path | Pomerium route | Who checks what |
@@ -115,6 +115,7 @@ path does not exist.
 | `/mcp` | MCP server route: Pomerium is the OAuth server for MCP clients and passes the identity header | Backend: the caller owns the session or is an admin |
 | `GET /vnc?ticket=…` | Public, websockets allowed | Backend: the ticket is unused, unexpired and for this session |
 | `PUT /api/artifact-uploads/{token}` | Public | The session's mcp-js: the one-time token it issued. Backend: size cap, session already running |
+| `GET /.well-known/oauth-…` | Public | Nothing to check: the two OAuth discovery documents for the MCP endpoint |
 
 A session the caller may not use answers 404, not 403, so names do not leak.
 
@@ -149,6 +150,11 @@ the client's next call wakes the session.
   document; the domains allowed to are configured
   (`mcp_allowed_client_id_domains: [claude.ai]`). The token a client gets is
   not bound to one host; the backend's owner check is what protects a session.
+- **The backend serves the OAuth discovery documents for session hosts**
+  (`/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`),
+  through a public route. Pomerium v0.33.3 serves them only on hosts with an
+  exact route, not on hosts matched by a wildcard; the documents say what
+  Pomerium's own would, and the endpoints they name are Pomerium's.
 - **The screen and uploads carry their own credentials**, because a websocket
   from the app's page to another host and an upload from an agent's machine
   have no Pomerium session: a one-time ticket issued to a user who may see the
@@ -158,12 +164,9 @@ the client's next call wakes the session.
 
 Open:
 
-- **MCP discovery on wildcard hosts.** Pomerium v0.33.3 does not serve the two
-  OAuth discovery documents on a host matched only by a wildcard route, so an
-  MCP client cannot begin sign-in on a session's host. Sign-in and MCP calls
-  were verified with the discovery step supplied by hand. See the plan,
-  Phase 4, for the two ways forward. Until one is built Claude cannot add a
-  session as a connector.
+- **Claude as the MCP client is untested.** The MCP SDK's own client signs in
+  and uses a session through Pomerium on the local cluster; Claude's clients
+  have not been tried against it.
 - **Who may sign in** is everyone with a Google or GitHub account until an
   allow-list is added to the routes.
 - Not verified: a completed Google or GitHub sign-in (only the redirect to
@@ -233,8 +236,8 @@ Known limits:
 2. **Snapshotting a browser.** Pod Snapshots are aimed at code sandboxes and
    model servers; restoring a multi-process browser with an X server is
    untested here. Session restore is the fallback.
-3. **MCP sign-in on per-session hosts.** See "Open" under Sign-in and
-   authorization.
+3. **MCP sign-in on per-session hosts** depends on the backend standing in
+   for Pomerium's discovery documents, and is untested with Claude's clients.
 4. **API drift.** Managed GKE Agent Sandbox and the open-source controller
    may differ in version; the backend targets the fields both support.
 

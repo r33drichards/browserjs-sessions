@@ -27,7 +27,8 @@ Safe to run again: it creates what is missing and updates the rest. It
 
 1. creates the kind cluster `browserjs` (kubeconfig in `.local/kubeconfig`;
    your own kubeconfig is not touched);
-2. installs Agent Sandbox (v1.0.4; `SANDBOX_VERSION=…` to change);
+2. installs Agent Sandbox (v1.0.4, because v1.0.5 was released without its
+   controller image; `SANDBOX_VERSION=…` to change);
 3. builds `browserjs/backend:dev`, and the two session images if they are not
    in Docker already (the browser image is a Nix build of about 14 GB of disk:
    it is never rebuilt automatically);
@@ -88,16 +89,24 @@ nix develop -c node test/browser-e2e.mjs
 
 Screenshots and results go to `.local/` (`OUT_DIR` to change).
 
-An MCP client's sign-in, walked by hand, against an existing session of
-alice's (`KEEP=1 node test/browser-e2e.mjs` leaves one and prints its ID):
+An MCP client through Pomerium: the MCP SDK's client does the discovery, the
+OAuth flow and the calls; the script signs the user in at Dex. It needs an
+existing session of alice's (`KEEP=1 node test/browser-e2e.mjs` leaves one and
+prints its ID):
 
 ```bash
-SKIP_DISCOVERY=1 nix develop -c node test/mcp-oauth.mjs <id>.sessions.localtest.me alice@example.com
+nix develop -c node test/mcp-client.mjs <id>.sessions.localtest.me alice@example.com   # works
+nix develop -c node test/mcp-client.mjs <id>.sessions.localtest.me bob@example.com     # 404: not his
 ```
 
-Without `SKIP_DISCOVERY=1` it stops at the discovery documents, which Pomerium
-v0.33.3 does not serve on a wildcard host: a real MCP client (Claude Code, the
-MCP Inspector) cannot connect to a local session yet. See the plan, Phase 4.
+`test/mcp-oauth.mjs` takes the same arguments and walks the same sign-in one
+request at a time, printing what each step answered.
+
+To point a real client at a local session, give it
+`https://<id>.sessions.localtest.me/mcp` and the CA
+(`NODE_EXTRA_CA_CERTS=$PWD/.local/tls/ca.crt` for Node-based clients). Only
+clients whose client ID document is under `claude.ai` are accepted. This has
+not been tried with Claude Code.
 
 ## Changing things
 
@@ -106,6 +115,11 @@ MCP Inspector) cannot connect to a local session yet. See the plan, Phase 4.
 - Manifests: `kubectl apply -k deploy/local` (or run the script).
 - Session images: build `browserjs/mcp-js:dev` or `browserjs/browser:dev`
   yourself, then run the script to load them. New sessions use the new image.
+  After the next browser image build, delete `deploy/local/blueprint.yaml`
+  and its entry in `deploy/local/kustomization.yaml`: it only exists because
+  the current local image predates a fix in its entrypoint.
+- The images built here are arm64. Production images for GKE (amd64) are
+  built in CI.
 
 ## Tear down
 
