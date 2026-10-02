@@ -44,7 +44,7 @@ podTemplate:
       # the system call filter), and the policies do not ask for one.
     containers:
       - name: browser
-        image: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/browser@sha256:e0b9ce739233ab7f7f281cc24567c7dfd54bfb4f277e35eb78bc47f589888a49
+        image: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/browser@sha256:dc8925c03f0ffff1c92175962ab004f00c288a7fcf58e7d69e107c9b791b9606
         env:
           - name: SESSION_MODE
             value: "1"
