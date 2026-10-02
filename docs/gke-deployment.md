@@ -32,6 +32,11 @@ collected at the end.
   ClusterIssuer; VERIFIED
   <https://cert-manager.io/docs/configuration/acme/dns01/google/>).
 - **`deploy/gke`** (kustomize, on `deploy/base`):
+  - The public site on `https://computeruse.site` (`site.yaml`): one nginx pod
+    serving the static build of `site/`, a Service, and a NetworkPolicy that
+    lets only Pomerium in. Pomerium's `site` route needs no sign-in and
+    passes no identity. The name is on the certificate, and its A record is
+    in `infra/main/edge.tf`. `www.computeruse.site` is not set up.
   - Pomerium's Service as a regional external passthrough Network Load
     Balancer on the reserved address: `type: LoadBalancer`,
     `loadBalancerClass: networking.gke.io/l4-regional-external`, annotation
