@@ -65,7 +65,7 @@ try {
   await page.waitForSelector('[role="dialog"] input', { visible: true })
   await page.type('[role="dialog"] input', "browser e2e")
   await clickButton(page, "Create")
-  await page.waitForFunction(() => /\/sessions\/s-[a-z2-7]{10}$/.test(location.pathname), { timeout: 20000 })
+  await page.waitForFunction(() => /\/sessions\/s-([a-z2-7]{10}|[a-z0-9]{5})$/.test(location.pathname), { timeout: 20000 })
   sid = page.url().split("/").pop()
   const t0 = Date.now()
   await page.waitForFunction(() => document.body.innerText.includes("running"), { timeout: 120000 })

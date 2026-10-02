@@ -50,7 +50,8 @@ show kubectl -n "$NS" get certificate,certificaterequest,order,challenge -o wide
 show kubectl get clusterissuers -o wide
 
 section "Sessions"
-show kubectl -n "$NS" get sandboxes.agents.x-k8s.io -o wide
+# launch-type says how each started: "warm" from the pool, "cold" otherwise.
+show kubectl -n "$NS" get sandboxes.agents.x-k8s.io -o wide -L agents.x-k8s.io/launch-type
 show kubectl -n "$NS" get pvc
 
 section "Pod Snapshots"
@@ -75,7 +76,36 @@ kubectl -n "$NS" get pods -l app=browserjs-session -o json 2>&1 | jq -r '
   "\($pod.metadata.name)  node=\($pod.spec.nodeName)  PodRestored=\(.status)  reason=\(.reason // "")  \(.message // "")"' 2>&1
 printf '```\n'
 
+section "Warm pool"
+echo "Sessions started ahead of time (deploy/gke/warmpool.yaml). A Sandbox owned by the"
+echo "SandboxWarmPool is waiting; one owned by a SandboxClaim is somebody's session."
+for kind in sandboxwarmpools sandboxtemplates sandboxclaims; do
+  show kubectl -n "$NS" get "$kind.extensions.agents.x-k8s.io" -o wide
+done
+printf '```\n'
+kubectl -n "$NS" get sandboxes.agents.x-k8s.io -o json 2>&1 | jq -r '
+  .items[] | "\(.metadata.name)  owner=\((.metadata.ownerReferences // [])[0] | if . then "\(.kind)/\(.name)" else "none (made by the backend)" end)  session=\(if .metadata.labels["browserjs.dev/owner"] then "yes" else "no" end)  made=\(.metadata.creationTimestamp)  adopted=\(.metadata.annotations["browserjs.dev/created"] // "-")"' 2>&1
+printf '```\n'
+
+# Where the session pods are, waiting ones included, and whether the cluster
+# autoscaler may evict them to remove their node.
+show kubectl -n "$NS" get pods -l app=browserjs-session -o 'custom-columns=NAME:.metadata.name,NODE:.spec.nodeName,PHASE:.status.phase,CLAIM:.metadata.labels.agents\.x-k8s\.io/claim-uid,SAFE-TO-EVICT:.metadata.annotations.cluster-autoscaler\.kubernetes\.io/safe-to-evict'
+
 [ -n "$full" ] || exit 0
+
+section "Warm pool in full"
+show kubectl -n "$NS" get sandboxwarmpools.extensions.agents.x-k8s.io,sandboxtemplates.extensions.agents.x-k8s.io,sandboxclaims.extensions.agents.x-k8s.io -o yaml
+# What the served v1beta1 schemas accept: the manifests and the backend's
+# claims are written against upstream's types, which the managed add-on may
+# not match field for field.
+echo "Fields of the v1beta1 specs, as this cluster serves them:"
+printf '```\n'
+kubectl get crd -o json 2>&1 | jq -r '
+  .items[] | select(.spec.group == "extensions.agents.x-k8s.io") | . as $crd |
+  .spec.versions[] | select(.name == "v1beta1") |
+  "\($crd.spec.names.kind).spec: \(.schema.openAPIV3Schema.properties.spec.properties // {} | keys | join(", "))",
+  "\($crd.spec.names.kind).status: \(.schema.openAPIV3Schema.properties.status.properties // {} | keys | join(", "))"' 2>&1
+printf '```\n'
 
 section "Nodes"
 show kubectl get nodes -o wide -L sandbox.gke.io/runtime,cloud.google.com/gke-nodepool,browserjs.com/pool,cloud.google.com/machine-family,topology.kubernetes.io/zone
@@ -140,6 +170,9 @@ fi
 if [ -n "${SANDBOX:-}" ]; then
   section "Sandbox $SANDBOX"
   show kubectl -n "$NS" get sandboxes.agents.x-k8s.io "$SANDBOX" -o yaml
+  claim="$(kubectl -n "$NS" get sandboxes.agents.x-k8s.io "$SANDBOX" \
+    -o jsonpath='{.metadata.ownerReferences[?(@.kind=="SandboxClaim")].name}' 2>/dev/null)"
+  [ -z "$claim" ] || show kubectl -n "$NS" get sandboxclaims.extensions.agents.x-k8s.io "$claim" -o yaml
   show kubectl -n "$NS" describe pod "$SANDBOX"
   show kubectl -n "$NS" logs "$SANDBOX" --all-containers --prefix --tail="${TAIL:-200}"
   show kubectl -n "$NS" get pvc -o wide

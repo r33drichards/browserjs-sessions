@@ -14,14 +14,16 @@ resources:
   - ../base
   - session.yaml
   - snapshots.yaml
+  - warmpool.yaml
   - certificate.yaml
 
 # THE ONE PLACE the deployed images are chosen. Each digest is what the
 # "images" workflow printed in its run summary for the commit to deploy.
 # After editing, run hack/pin-images.sh: the two session images are named
-# inside blueprint.yaml (a file in a ConfigMap, which kustomize cannot edit),
-# and the script copies them there. The deploy workflow refuses to run while a
-# REPLACE_ placeholder is left or the two files disagree.
+# inside blueprint.yaml (a file in a ConfigMap, which kustomize cannot edit)
+# and warmpool.yaml (a custom resource, which it does not edit either), and
+# the script copies them there. The deploy workflow refuses to run while a
+# REPLACE_ placeholder is left or the files disagree.
 images:
   - name: browserjs/backend
     newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/backend

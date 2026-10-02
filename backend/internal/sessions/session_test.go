@@ -169,7 +169,13 @@ func TestValidID(t *testing.T) {
 			t.Fatalf("generated ID %q is not valid", id)
 		}
 	}
-	for _, id := range []string{"", "s-", "s-missing000", "s-ABCDEFGHIJ", "s-abcdefghijk", "x-abcdefghij", "s-abcde/ghij", "../sandboxes", "s-abcdefghij\n"} {
+	// A Sandbox from the warm pool "s" is named by the API server.
+	for _, id := range []string{"s-bcdfg", "s-x2z89"} {
+		if !ValidID(id) {
+			t.Errorf("ValidID(%q) = false", id)
+		}
+	}
+	for _, id := range []string{"", "s-", "s-missing000", "s-abcd", "s-abcdef", "s-ABCDE", "s-ab/de", "s-ABCDEFGHIJ", "s-abcdefghijk", "x-abcdefghij", "s-abcde/ghij", "../sandboxes", "s-abcdefghij\n"} {
 		if ValidID(id) {
 			t.Errorf("ValidID(%q) = true", id)
 		}

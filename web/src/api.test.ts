@@ -141,9 +141,11 @@ describe("signed-out detection", () => {
 })
 
 describe("isSessionId", () => {
-  it("accepts only s- followed by ten base32 characters", () => {
-    expect(isSessionId("s-abcdefg234")).toBe(true)
-    for (const bad of ["", "s-1", "s-abcdefg23", "s-abcdefg2345", "s-ABCDEFG234", "s-abcdefg189", "x-abcdefg234", "s-abcdefg234/", "s-abcdefg234\n", "../s-abcdefg234"]) {
+  it("accepts only s- followed by ten base32 characters, or by five from the warm pool", () => {
+    for (const good of ["s-abcdefg234", "s-bcdfg", "s-x2z89"]) {
+      expect(isSessionId(good), good).toBe(true)
+    }
+    for (const bad of ["", "s-1", "s-abcd", "s-abcdef", "s-ABCDE", "s-ab/de", "s-bcdfg\n", "s-abcdefg23", "s-abcdefg2345", "s-ABCDEFG234", "s-abcdefg189", "x-abcdefg234", "s-abcdefg234/", "s-abcdefg234\n", "../s-abcdefg234"]) {
       expect(isSessionId(bad), bad).toBe(false)
     }
   })
