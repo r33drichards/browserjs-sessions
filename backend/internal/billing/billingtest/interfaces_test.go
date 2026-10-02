@@ -1,13 +1,13 @@
 package billingtest_test
 
 import (
-	"github.com/r33drichards/browserjs-sessions/backend/internal/api"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/authz"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing/billingtest"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/idle"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/proxy"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
+	"github.com/r33drichards/computer-use/backend/internal/api"
+	"github.com/r33drichards/computer-use/backend/internal/authz"
+	"github.com/r33drichards/computer-use/backend/internal/billing"
+	"github.com/r33drichards/computer-use/backend/internal/billing/billingtest"
+	"github.com/r33drichards/computer-use/backend/internal/idle"
+	"github.com/r33drichards/computer-use/backend/internal/proxy"
+	"github.com/r33drichards/computer-use/backend/internal/sessions"
 )
 
 // The fakes are every interface the real things sit behind, and the real

@@ -9,15 +9,15 @@ import (
 
 	"k8s.io/client-go/dynamic"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/api"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/auth"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing/kube"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing/metronome"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/config"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/proxy"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/tokens"
+	"github.com/r33drichards/computer-use/backend/internal/api"
+	"github.com/r33drichards/computer-use/backend/internal/auth"
+	"github.com/r33drichards/computer-use/backend/internal/billing"
+	"github.com/r33drichards/computer-use/backend/internal/billing/kube"
+	"github.com/r33drichards/computer-use/backend/internal/billing/metronome"
+	"github.com/r33drichards/computer-use/backend/internal/config"
+	"github.com/r33drichards/computer-use/backend/internal/proxy"
+	"github.com/r33drichards/computer-use/backend/internal/sessions"
+	"github.com/r33drichards/computer-use/backend/internal/tokens"
 )
 
 // How often the stop sequence is swept, and the deletion pass made.

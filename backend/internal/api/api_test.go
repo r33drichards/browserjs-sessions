@@ -17,11 +17,11 @@ import (
 	dynfake "k8s.io/client-go/dynamic/fake"
 	k8stesting "k8s.io/client-go/testing"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/api"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/auth"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/authz"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions/sessionstest"
+	"github.com/r33drichards/computer-use/backend/internal/api"
+	"github.com/r33drichards/computer-use/backend/internal/auth"
+	"github.com/r33drichards/computer-use/backend/internal/authz"
+	"github.com/r33drichards/computer-use/backend/internal/sessions"
+	"github.com/r33drichards/computer-use/backend/internal/sessions/sessionstest"
 )
 
 type fixture struct {

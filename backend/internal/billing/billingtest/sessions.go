@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
+	"github.com/r33drichards/computer-use/backend/internal/billing"
+	"github.com/r33drichards/computer-use/backend/internal/sessions"
 )
 
 // Sessions is the session store as a map with a state machine: a session

@@ -3,7 +3,7 @@ package stripe
 import (
 	"fmt"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing"
+	"github.com/r33drichards/computer-use/backend/internal/billing"
 )
 
 func find(items []billing.Item, match func(billing.Item) bool) (billing.Item, bool) {

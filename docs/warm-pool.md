@@ -101,7 +101,7 @@ to change. It is 7 (one node).
 
 **Why 7.** A session pod requests 200m CPU and 1280Mi. A session node
 (n2-standard-4; `cluster info` run
-[36961294377](https://github.com/r33drichards/browserjs-sessions/actions/runs/36961294377)):
+[36961294377](https://github.com/r33drichards/computer-use/actions/runs/36961294377)):
 
 | | CPU | memory |
 |---|---|---|
@@ -202,7 +202,7 @@ left split over two nodes (above) costs two.
 ## Sources and what is confirmed
 
 - **Served versions.** VERIFIED on the cluster (`cluster info` run
-  [36957250957](https://github.com/r33drichards/browserjs-sessions/actions/runs/36957250957)):
+  [36957250957](https://github.com/r33drichards/computer-use/actions/runs/36957250957)):
   `sandboxclaims`, `sandboxtemplates` and `sandboxwarmpools` in
   `extensions.agents.x-k8s.io` serve `v1alpha1,v1beta1`; the add-on's
   component version is 1.36.12.

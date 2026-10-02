@@ -12,8 +12,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/auth"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
+	"github.com/r33drichards/computer-use/backend/internal/auth"
+	"github.com/r33drichards/computer-use/backend/internal/sessions"
 )
 
 const (

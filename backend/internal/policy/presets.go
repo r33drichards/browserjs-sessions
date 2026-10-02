@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
+	"github.com/r33drichards/computer-use/backend/internal/sessions"
 )
 
 // The ready-made policies: copies of docs/contracts/policy/examples/*.rego,

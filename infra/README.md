@@ -42,14 +42,14 @@ short-lived Google credential (Workload Identity Federation).
 
 **Already done** for the real deployment: project `browserjs-sessions`, state
 bucket `browserjs-sessions-tofu-state`, and the six repository variables are
-set on `r33drichards/browserjs-sessions`. This section is for a rebuild or a
+set on `r33drichards/computer-use`. This section is for a rebuild or a
 second project.
 
 In [Cloud Shell](https://shell.cloud.google.com), signed in as someone who may
 create projects and link the billing account:
 
 ```sh
-git clone https://github.com/r33drichards/browserjs-sessions && cd browserjs-sessions
+git clone https://github.com/r33drichards/computer-use && cd computer-use
 ORG_ID=<numeric organisation id> ./infra/bootstrap/bootstrap.sh
 ```
 
@@ -60,7 +60,7 @@ It is safe to re-run. Settings are environment variables:
 | `PROJECT_ID` | `browserjs-sessions` | Project IDs are global and permanent. If the name is taken the script stops at project creation; run it again with another ID |
 | `ORG_ID` | unset | Organisation to create the project under. An account that belongs to an organisation must set it (`gcloud organizations list`); a personal account leaves it unset |
 | `REGION` | `us-west1` | |
-| `REPO` | `r33drichards/browserjs-sessions` | the only repository allowed to use the two service accounts |
+| `REPO` | `r33drichards/computer-use` | the only repository allowed to use the two service accounts |
 | `REPO_ID` | looked up from `REPO` (`gh api repos/<owner>/<name> -q .id`) | the repository's numeric ID. It is what Google checks: the provider accepts only tokens with this `repository_id`, and each service account is granted to it. A rename or a transfer keeps the ID, so neither breaks the access |
 | `BILLING` | the first open billing account | set it explicitly if you have more than one |
 

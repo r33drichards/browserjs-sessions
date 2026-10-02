@@ -23,15 +23,15 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/api"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/auth"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/authz"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/config"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/idle"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/policy"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/proxy"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/tokens"
+	"github.com/r33drichards/computer-use/backend/internal/api"
+	"github.com/r33drichards/computer-use/backend/internal/auth"
+	"github.com/r33drichards/computer-use/backend/internal/authz"
+	"github.com/r33drichards/computer-use/backend/internal/config"
+	"github.com/r33drichards/computer-use/backend/internal/idle"
+	"github.com/r33drichards/computer-use/backend/internal/policy"
+	"github.com/r33drichards/computer-use/backend/internal/proxy"
+	"github.com/r33drichards/computer-use/backend/internal/sessions"
+	"github.com/r33drichards/computer-use/backend/internal/tokens"
 )
 
 // How long a session's owner, once read, is taken to still be its owner

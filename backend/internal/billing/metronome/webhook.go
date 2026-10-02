@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing"
+	"github.com/r33drichards/computer-use/backend/internal/billing"
 )
 
 // The alert at a zero balance.

@@ -246,7 +246,7 @@ Never in a file or a command's arguments. From the Keychain items the local
 setup uses (`gh secret set` reads the value from stdin):
 
 ```sh
-cd ~/browserjs-sessions
+cd ~/computer-use
 for pair in google-client-id:DEX_GOOGLE_CLIENT_ID google-client-secret:DEX_GOOGLE_CLIENT_SECRET \
             github-client-id:DEX_GITHUB_CLIENT_ID github-client-secret:DEX_GITHUB_CLIENT_SECRET; do
   security find-generic-password -s "browserjs-sessions-${pair%%:*}" -w | gh secret set "${pair##*:}"
@@ -286,7 +286,7 @@ before deploying.
 2. Open the pull request for this branch. `infra plan` should show: three
    resources to add (`google_service_account.deployer`,
    `google_project_iam_member.deployer_cluster`,
-   `google_service_account_iam_member.deployer_github`), one output, and
+   `google_service_account_iam_member.deployer_github_id`), one output, and
    `google_container_cluster.this` updated in place (`min_master_version`).
    Anything else, stop.
 3. Merge. `infra apply` starts by itself on `main` (a merge that changes

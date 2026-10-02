@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
+	"github.com/r33drichards/computer-use/backend/internal/sessions"
 )
 
 // SessionStore is the part of the session store that finds the pod behind a

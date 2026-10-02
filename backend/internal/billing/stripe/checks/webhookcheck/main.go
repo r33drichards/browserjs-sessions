@@ -15,10 +15,10 @@ import (
 	"os"
 	"time"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing/billingtest"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing/stripe"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing/stripe/stripetest"
+	"github.com/r33drichards/computer-use/backend/internal/billing"
+	"github.com/r33drichards/computer-use/backend/internal/billing/billingtest"
+	"github.com/r33drichards/computer-use/backend/internal/billing/stripe"
+	"github.com/r33drichards/computer-use/backend/internal/billing/stripe/stripetest"
 )
 
 func main() {
