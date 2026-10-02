@@ -88,6 +88,10 @@ spec:
         - podSelector:
             matchLabels:
               app: pomerium
+        # A release's check of the new pods (rollouts.yaml).
+        - podSelector:
+            matchLabels:
+              app: release-canary
       ports:
         - port: 8080
           protocol: TCP

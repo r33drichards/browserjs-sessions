@@ -294,6 +294,9 @@ func newHandlerWith(cfg config.Config, verifier auth.Verifier, store *sessions.S
 
 	apiMux := http.NewServeMux()
 	sessionAPI := api.New(store, owners, cfg.SessionURLs, cfg.MaxSessionsPerUser)
+	// The release's canary (docs/releases.md): the admins, by address, may
+	// start a session on other digests of the session images.
+	sessionAPI.SetCanary(cfg.AdminEmails)
 	sessionAPI.EnablePolicies(policies)
 	bill.enable(sessionAPI, px, apiMux)
 	sessionAPI.Register(apiMux)

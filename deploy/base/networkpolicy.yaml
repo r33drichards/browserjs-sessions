@@ -72,7 +72,10 @@ spec:
           protocol: TCP
 ---
 # Identity is whatever Pomerium says it is, and the upload and VNC routes
-# have no login at all: nothing but Pomerium talks to the backend.
+# have no login at all: nothing but Pomerium talks to the backend. The one
+# exception is a release's canary (deploy/gke/rollouts.yaml), which asks a
+# backend that is not serving yet, as the API host, with an API token: that
+# host believes no header, only the token.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -87,6 +90,9 @@ spec:
         - podSelector:
             matchLabels:
               app: pomerium
+        - podSelector:
+            matchLabels:
+              app: release-canary
       ports:
         - port: 8080
           protocol: TCP

@@ -1,0 +1,126 @@
+# What test/release/run.sh gives deploy/gke/rollouts.yaml to release: the
+# two Deployments as deploy/gke has them once patch-rollouts.yaml is applied
+# (no pods of their own; the backend with its labels as a file), with
+# stand-ins (stub.py) for the programs, and the two Services.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  labels:
+    app: backend
+spec:
+  replicas: 0
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 2
+      containers:
+        - name: backend
+          image: python:3.13-alpine@sha256:2dd78ad5cf13a0b68f5134dc49aa9950203a8cf4b7463431b9f3b398287c5059
+          command: ["python3", "/stub/stub.py", "backend"]
+          env:
+            - name: VERSION
+              value: "1"
+            - name: VERDICT
+              value: pass
+            - name: ACTIVE_FILE
+              value: /etc/podinfo/labels
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 1
+          volumeMounts:
+            - name: stub
+              mountPath: /stub
+            - name: podinfo
+              mountPath: /etc/podinfo
+              readOnly: true
+      volumes:
+        - name: stub
+          configMap:
+            name: release-test-stub
+        - name: podinfo
+          downwardAPI:
+            items:
+              - path: labels
+                fieldRef:
+                  fieldPath: metadata.labels
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+spec:
+  selector:
+    app: backend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: site
+  labels:
+    app: site
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: site
+  template:
+    metadata:
+      labels:
+        app: site
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 2
+      containers:
+        - name: site
+          image: python:3.13-alpine@sha256:2dd78ad5cf13a0b68f5134dc49aa9950203a8cf4b7463431b9f3b398287c5059
+          command: ["python3", "/stub/stub.py", "site"]
+          env:
+            - name: VERSION
+              value: "1"
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 1
+          volumeMounts:
+            - name: stub
+              mountPath: /stub
+      volumes:
+        - name: stub
+          configMap:
+            name: release-test-stub
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: site
+spec:
+  selector:
+    app: site
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

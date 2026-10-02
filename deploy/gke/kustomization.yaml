@@ -24,6 +24,8 @@ resources:
   # it the whole apply fails. docs/metrics.md says how to check, then
   # uncomment.
   # - monitoring.yaml
+  # How the backend and the site are released (docs/releases.md).
+  - rollouts.yaml
 
 # THE ONE PLACE the deployed images are chosen. Each digest is what the
 # "images" workflow printed in its run summary for the commit to deploy.
@@ -74,6 +76,7 @@ configMapGenerator:
 patches:
   - path: patch-backend.yaml
   - path: patch-pomerium.yaml
+  - path: patch-rollouts.yaml
   # Pomerium's disk (sessions, MCP client registrations, MCP refresh tokens):
   # a zonal Persistent Disk that outlives the pod. A StatefulSet's claim
   # template cannot be changed once it exists.

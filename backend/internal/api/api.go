@@ -47,6 +47,22 @@ type API struct {
 	policies *policy.Handlers // nil: no session policies (see policy.go)
 
 	billing Billing // nil: no billing (see billing.go)
+
+	// Who may ask for a canary session (see SetCanary). Empty: nobody.
+	canary map[string]bool
+}
+
+// SetCanary names the users, by email address, whose create requests may
+// carry "canary": a session started cold from the blueprint with the image
+// digests the request gives, for trying a new build of the session images
+// on one session before the warm pool gets them (docs/releases.md). It goes
+// by the address and not by auth.User.Admin, because the release workflow
+// calls with an API token, and a token is never an admin.
+func (a *API) SetCanary(emails []string) {
+	a.canary = map[string]bool{}
+	for _, email := range emails {
+		a.canary[email] = true
+	}
 }
 
 func New(store Store, az authz.Checker, urls *sessions.URLTemplate, maxPerUser int) *API {
@@ -178,7 +194,7 @@ func (a *API) storeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, sessions.ErrNotFound):
 		writeError(w, http.StatusNotFound, "session not found")
-	case errors.Is(err, sessions.ErrInvalidName), errors.Is(err, sessions.ErrInvalidAction):
+	case errors.Is(err, sessions.ErrInvalidName), errors.Is(err, sessions.ErrInvalidAction), errors.Is(err, sessions.ErrCanary):
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, sessions.ErrPolicyUnsupported):
 		writeError(w, http.StatusConflict, "new sessions cannot be given a policy here yet")
@@ -235,11 +251,25 @@ func (a *API) create(w http.ResponseWriter, r *http.Request, u auth.User) {
 	var body struct {
 		Name   string        `json:"name"`
 		Policy *policy.Input `json:"policy"`
+		// Container name to image digest: see SetCanary.
+		Canary map[string]string `json:"canary"`
 	}
 	// The name is optional, and so is a body that would only carry it.
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, a.maxCreateBody())).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "body must be JSON, optionally with a name")
 		return
+	}
+	ctx := r.Context()
+	if body.Canary != nil {
+		if !a.canary[u.Subject] {
+			writeError(w, http.StatusForbidden, "canary sessions are for the deployment's admins")
+			return
+		}
+		if err := sessions.CheckImageDigests(body.Canary); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		ctx = sessions.WithImageDigests(ctx, body.Canary)
 	}
 	// Checked before anything is created: an invalid policy creates nothing.
 	asked, ok := a.policyFor(w, r, u, body.Policy)
@@ -266,7 +296,7 @@ func (a *API) create(w http.ResponseWriter, r *http.Request, u auth.User) {
 	}
 	// The owner is recorded on the session itself; that is all there is to
 	// who may use it.
-	s, err := a.store.CreateWithPolicy(r.Context(), name, u.Subject, asked)
+	s, err := a.store.CreateWithPolicy(ctx, name, u.Subject, asked)
 	if err != nil {
 		a.storeError(w, err)
 		return

@@ -1,0 +1,105 @@
+name: canary kind
+
+# The release canary before a change merges: the whole system built from the
+# pull request (hack/local-up.sh) on a throwaway kind cluster inside the
+# runner, and test/canary.py against it through Pomerium and the API host
+# with an API token, as the deploy workflow runs it against production.
+#
+# What it cannot show (docs/releases.md): gVisor, Pod Snapshots, the warm
+# pool, and the images as the registry has them, which a pull request cannot
+# pull. It builds the same sources instead, so it says "this code works",
+# not "these digests work"; the digests are the deploy's canary's to check.
+# Nothing here signs in anywhere or touches the production cluster.
+
+on:
+  pull_request:
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "backend/**"
+      - "web/**"
+      - "images/**"
+      - "deploy/**"
+      - "docs/contracts/policy/**"
+      - "hack/**"
+      - "test/canary.py"
+      - "test/canary-kind.sh"
+      - ".github/workflows/canary-kind.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: canary-kind-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  canary:
+    name: canary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Scripts
+        run: |
+          set -euo pipefail
+          shellcheck -S warning hack/release.sh test/canary-kind.sh
+          python3 -m py_compile test/canary.py
+          # Without a token it says so and does nothing.
+          if env -u CANARY_API_TOKEN test/canary.py; then
+            echo "::error::canary.py ran without a token"
+            exit 1
+          fi
+          hack/release.sh pinned
+
+      # The browser image is a Nix build of several GB, and the cluster gets
+      # a copy of it.
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/share/swift /usr/local/share/boost
+          sudo docker image prune --all --force >/dev/null
+          df -h /
+
+      # Session policies as production has them, so that the canary's policy
+      # step has something to bind. Billing stays off.
+      - name: The local cluster, policies enforcing
+        env:
+          MIN_FREE_GB: "5"
+          BROWSER_MIN_FREE_GB: "12"
+        run: |
+          set -euo pipefail
+          hack/policy-stage.sh local enforcing
+          hack/local-up.sh
+          df -h /
+
+      - name: test/canary.py
+        run: |
+          printf '## The release canary, on kind\n\n' >> "$GITHUB_STEP_SUMMARY"
+          UP=0 SUMMARY="$GITHUB_STEP_SUMMARY" test/canary-kind.sh
+
+      - name: What the cluster looked like
+        if: ${{ failure() }}
+        run: |
+          export KUBECONFIG="$PWD/.local/kubeconfig"
+          ns=browserjs-sessions
+          kubectl -n "$ns" get pods,sandboxes.agents.x-k8s.io,sessionpolicies.browserjs.dev,pvc -o wide || true
+          kubectl -n "$ns" describe pods -l app=browserjs-session | tail -80 || true
+          for target in deployment/backend deployment/policy-operator deployment/opa statefulset/pomerium; do
+            echo "=== $target"
+            kubectl -n "$ns" logs "$target" --all-containers --tail=60 || true
+          done
+          for pod in $(kubectl -n "$ns" get pods -l app=browserjs-session -o name); do
+            echo "=== $pod"
+            kubectl -n "$ns" logs "$pod" --all-containers --prefix --tail=40 || true
+          done
+          kubectl -n "$ns" get events --sort-by=.lastTimestamp | tail -60 || true
+          kubectl -n agent-sandbox-system logs deploy/agent-sandbox-controller --tail=40 || true
