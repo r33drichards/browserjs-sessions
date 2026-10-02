@@ -91,7 +91,7 @@ From the mock, in headless Chrome: [`billing-ui/`](billing-ui/).
   schema does not have; the UI shows `observedAt` if the backend sends it and
   "the last known" otherwise.
 - **The legal pages, pricing and the support address** are on the public
-  site: `https://computeruse.site` and `support@computeruse.site` unless
+  site: `https://computeruse.site` and `browserjs06@gmail.com` unless
   `/config.js` sets `siteUrl` and `supportEmail`.
 - **A session asleep for billing** is held back in the UI only while the
   account still lacks the credit or the card; after that Wake and Resume are
