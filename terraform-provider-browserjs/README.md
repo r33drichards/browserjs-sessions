@@ -26,16 +26,40 @@ answers with a warning when it does not, and the plan and the apply show it.
 
 It is its own Go module, so none of its dependencies reach `backend/`.
 
+## It is built on the SDK, and so needs cgo
+
+The provider has no HTTP client of its own. It calls the API through the
+Computer Use SDK's Go package ([`../sdk/go`](../sdk/go)), which is bindings
+to a Rust library. `internal/client` turns the SDK's records and errors into
+the provider's. What that means for building it:
+
+| | Before | Now |
+| --- | --- | --- |
+| A build | `go build`, pure Go, `CGO_ENABLED=0` works | cgo, a C compiler, and `libcomputeruse.a` in `.lib/`. `make lib` builds it from `../sdk` with cargo (2 to 4 minutes the first time) |
+| A bare `go build` or `go test` | works | fails at link until `make lib` has run and `CGO_LDFLAGS="-L$PWD/.lib"` is set. The make targets do both |
+| The binary | static | the SDK is linked into it, so nothing is shipped beside it; it is larger, and it is linked to the system's C library (glibc on Linux) |
+| Cross-compiling | `GOOS=... GOARCH=... go build` from any machine | not from one machine: each platform needs the Rust library built for it and a C toolchain for it. In practice one runner per platform |
+| Platforms that can be released | everything Go targets | where the SDK's library is built: Linux x86_64 and aarch64 with glibc 2.35 or newer, macOS arm64 and x86_64. **Not** Windows, not musl (Alpine), not FreeBSD, not 32-bit |
+| `go install ...@version` from outside the repository | worked | does not: `go.mod` points at `../sdk/go` with a `replace` |
+
+The provider is released nowhere yet, so no released platform is lost today;
+the table is what a release can have.
+
+The provider sends the token itself on each request (it does not use the
+SDK's token exchange), gets the SDK's retries of `429`, `502`, `503` and
+`504`, and accepts an `http` endpoint with a warning, as before.
+
 ## Install locally
 
 The provider is in no registry yet. Until it is, build it here and tell
-OpenTofu or Terraform where it is. Go comes from the repository's Nix dev
-shell (`nix develop`, from the repository root or this directory).
+OpenTofu or Terraform where it is. Go, a C compiler and cargo come from the
+repository's `sdk` dev shell (`nix develop ..#sdk`, from this directory).
+The first build also builds the SDK's library.
 
 ### For development: `dev_overrides`
 
 ```sh
-nix develop -c make build      # ./terraform-provider-browserjs
+nix develop ..#sdk -c make build      # ./terraform-provider-browserjs
 ```
 
 In `~/.tofurc` for OpenTofu, `~/.terraformrc` for Terraform (or any file named
@@ -59,7 +83,7 @@ uses the new binary.
 ### To use it like a released provider: a local mirror
 
 ```sh
-nix develop -c make install    # version 0.1.0 into ~/.terraform.d/plugins
+nix develop ..#sdk -c make install    # version 0.1.0 into ~/.terraform.d/plugins
 ```
 
 That directory is the one both tools search without being told. The binary
@@ -107,7 +131,7 @@ provider marks it sensitive and never logs it.
 `docs/contracts/policy/backend-api.yaml`:
 
 ```sh
-nix develop -c make fakeapi      # http://127.0.0.1:18080, token bjs_fake_token
+nix develop ..#sdk -c make fakeapi      # http://127.0.0.1:18080, token bjs_fake_token
 export BROWSERJS_ENDPOINT=http://127.0.0.1:18080 BROWSERJS_TOKEN=bjs_fake_token
 ```
 
@@ -119,10 +143,10 @@ which compiles the module and asks it.
 ## Develop
 
 ```sh
-nix develop -c make test                                # go vet, unit tests
-nix shell nixpkgs#opentofu -c nix develop -c make testacc   # real plans and applies
-nix shell nixpkgs#opentofu -c nix develop -c make e2e       # the example, end to end
-nix shell nixpkgs#opentofu -c nix develop -c make docs      # regenerate docs/
+nix develop ..#sdk -c make test                                # go vet, unit tests
+nix shell nixpkgs#opentofu -c nix develop ..#sdk -c make testacc   # real plans and applies
+nix shell nixpkgs#opentofu -c nix develop ..#sdk -c make e2e       # the example, end to end
+nix shell nixpkgs#opentofu -c nix develop ..#sdk -c make docs      # regenerate docs/
 ```
 
 - **Unit tests** drive the provider over protocol 6 in process, as Terraform

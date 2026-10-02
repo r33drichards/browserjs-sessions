@@ -41,6 +41,7 @@ impl Client {
             retry_base_delay_ms: None,
             wake_timeout_ms: None,
             user_agent: None,
+            allow_insecure_http: None,
         })
     }
 
@@ -71,7 +72,7 @@ impl Client {
         self.transport
             .send(Call::new(Method::GET, "/v1/sessions", "list sessions"))
             .await?
-            .json()
+            .json_list()
     }
 
     /// Creates a session. Scope `sessions:write`.
@@ -160,7 +161,7 @@ impl Client {
                 "list policy presets",
             ))
             .await?
-            .json()
+            .json_list()
     }
 
     /// Checks a Rego policy without saving it. An invalid policy is not an

@@ -652,6 +652,15 @@ func uniffiCheckChecksums() {
 	}
 	{
 		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_computeruse_checksum_method_clientoptionsbuilder_allow_insecure_http()
+		})
+		if checksum != 14757 {
+			// If this happens try cleaning and rebuilding your project
+			panic("computeruse: uniffi_computeruse_checksum_method_clientoptionsbuilder_allow_insecure_http: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
 			return C.uniffi_computeruse_checksum_method_clientoptionsbuilder_api_token()
 		})
 		if checksum != 29878 {
@@ -1706,6 +1715,10 @@ func (_ FfiDestroyerClient) Destroy(value *Client) {
 
 // Builds a [`ClientOptions`]. Each setter returns a new builder; the receiver is unchanged.
 type ClientOptionsBuilderInterface interface {
+	// Accept an `http` base URL that is not a loopback address. The token
+	// then crosses the network in the clear: for a private network or a
+	// test only. Default false.
+	AllowInsecureHttp(value bool) *ClientOptionsBuilder
 	// An API token (`bjs_<id>_<secret>`), or an access token made from one.
 	ApiToken(value string) *ClientOptionsBuilder
 	// The API host, without a path. Default: `https://api.computeruse.site`.
@@ -1747,6 +1760,18 @@ type ClientOptionsBuilder struct {
 func NewClientOptionsBuilder() *ClientOptionsBuilder {
 	return FfiConverterClientOptionsBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
 		return C.uniffi_computeruse_fn_constructor_clientoptionsbuilder_new(_uniffiStatus)
+	}))
+}
+
+// Accept an `http` base URL that is not a loopback address. The token
+// then crosses the network in the clear: for a private network or a
+// test only. Default false.
+func (_self *ClientOptionsBuilder) AllowInsecureHttp(value bool) *ClientOptionsBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*ClientOptionsBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterClientOptionsBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_computeruse_fn_method_clientoptionsbuilder_allow_insecure_http(
+			_pointer, FfiConverterBoolINSTANCE.Lower(value), _uniffiStatus)
 	}))
 }
 
@@ -3307,6 +3332,10 @@ type ClientOptions struct {
 	WakeTimeoutMs *uint64
 	// Added in front of the SDK's own `User-Agent`.
 	UserAgent *string
+	// Accept an `http` base URL that is not a loopback address. The token
+	// then crosses the network in the clear: for a private network or a
+	// test only. Default false.
+	AllowInsecureHttp *bool
 }
 
 func (r *ClientOptions) Destroy() {
@@ -3320,6 +3349,7 @@ func (r *ClientOptions) Destroy() {
 	FfiDestroyerOptionalUint64{}.Destroy(r.RetryBaseDelayMs)
 	FfiDestroyerOptionalUint64{}.Destroy(r.WakeTimeoutMs)
 	FfiDestroyerOptionalString{}.Destroy(r.UserAgent)
+	FfiDestroyerOptionalBool{}.Destroy(r.AllowInsecureHttp)
 }
 
 type FfiConverterClientOptions struct{}
@@ -3342,6 +3372,7 @@ func (c FfiConverterClientOptions) Read(reader io.Reader) ClientOptions {
 		FfiConverterOptionalUint64INSTANCE.Read(reader),
 		FfiConverterOptionalUint64INSTANCE.Read(reader),
 		FfiConverterOptionalStringINSTANCE.Read(reader),
+		FfiConverterOptionalBoolINSTANCE.Read(reader),
 	}
 }
 
@@ -3364,6 +3395,7 @@ func (c FfiConverterClientOptions) Write(writer io.Writer, value ClientOptions) 
 	FfiConverterOptionalUint64INSTANCE.Write(writer, value.RetryBaseDelayMs)
 	FfiConverterOptionalUint64INSTANCE.Write(writer, value.WakeTimeoutMs)
 	FfiConverterOptionalStringINSTANCE.Write(writer, value.UserAgent)
+	FfiConverterOptionalBoolINSTANCE.Write(writer, value.AllowInsecureHttp)
 }
 
 type FfiDestroyerClientOptions struct{}
@@ -4684,22 +4716,32 @@ func (self ComputerUseErrorPaymentRequired) Is(target error) bool {
 }
 
 // 403: the token lacks the scope the route needs, or is bound to
-// another session.
+// another session; or billing has blocked the account (`code` and
+// `billing_url` are then set).
 type ComputerUseErrorForbidden struct {
-	Message string
+	Message    string
+	Code       *string
+	BillingUrl *string
 }
 
 // 403: the token lacks the scope the route needs, or is bound to
-// another session.
+// another session; or billing has blocked the account (`code` and
+// `billing_url` are then set).
 func NewComputerUseErrorForbidden(
 	message string,
+	code *string,
+	billingUrl *string,
 ) *ComputerUseError {
 	return &ComputerUseError{err: &ComputerUseErrorForbidden{
-		Message: message}}
+		Message:    message,
+		Code:       code,
+		BillingUrl: billingUrl}}
 }
 
 func (e ComputerUseErrorForbidden) destroy() {
 	FfiDestroyerString{}.Destroy(e.Message)
+	FfiDestroyerOptionalString{}.Destroy(e.Code)
+	FfiDestroyerOptionalString{}.Destroy(e.BillingUrl)
 }
 
 func (err ComputerUseErrorForbidden) Error() string {
@@ -4708,6 +4750,12 @@ func (err ComputerUseErrorForbidden) Error() string {
 
 		"Message=",
 		err.Message,
+		", ",
+		"Code=",
+		err.Code,
+		", ",
+		"BillingUrl=",
+		err.BillingUrl,
 	)
 }
 
@@ -4748,30 +4796,36 @@ func (self ComputerUseErrorNotFound) Is(target error) bool {
 }
 
 // 409: the session limit is reached, the session is stopped, or the
-// policy is managed elsewhere (`managed_url` then says where).
+// policy is managed elsewhere (`managed_url` then says where). A limit
+// of the account's plan carries `code` and `billing_url`.
 type ComputerUseErrorConflict struct {
 	Message    string
 	Code       *string
 	ManagedUrl *string
+	BillingUrl *string
 }
 
 // 409: the session limit is reached, the session is stopped, or the
-// policy is managed elsewhere (`managed_url` then says where).
+// policy is managed elsewhere (`managed_url` then says where). A limit
+// of the account's plan carries `code` and `billing_url`.
 func NewComputerUseErrorConflict(
 	message string,
 	code *string,
 	managedUrl *string,
+	billingUrl *string,
 ) *ComputerUseError {
 	return &ComputerUseError{err: &ComputerUseErrorConflict{
 		Message:    message,
 		Code:       code,
-		ManagedUrl: managedUrl}}
+		ManagedUrl: managedUrl,
+		BillingUrl: billingUrl}}
 }
 
 func (e ComputerUseErrorConflict) destroy() {
 	FfiDestroyerString{}.Destroy(e.Message)
 	FfiDestroyerOptionalString{}.Destroy(e.Code)
 	FfiDestroyerOptionalString{}.Destroy(e.ManagedUrl)
+	FfiDestroyerOptionalString{}.Destroy(e.BillingUrl)
 }
 
 func (err ComputerUseErrorConflict) Error() string {
@@ -4786,6 +4840,9 @@ func (err ComputerUseErrorConflict) Error() string {
 		", ",
 		"ManagedUrl=",
 		err.ManagedUrl,
+		", ",
+		"BillingUrl=",
+		err.BillingUrl,
 	)
 }
 
@@ -5096,7 +5153,9 @@ func (c FfiConverterComputerUseError) Read(reader io.Reader) *ComputerUseError {
 		}}
 	case 6:
 		return &ComputerUseError{&ComputerUseErrorForbidden{
-			Message: FfiConverterStringINSTANCE.Read(reader),
+			Message:    FfiConverterStringINSTANCE.Read(reader),
+			Code:       FfiConverterOptionalStringINSTANCE.Read(reader),
+			BillingUrl: FfiConverterOptionalStringINSTANCE.Read(reader),
 		}}
 	case 7:
 		return &ComputerUseError{&ComputerUseErrorNotFound{
@@ -5107,6 +5166,7 @@ func (c FfiConverterComputerUseError) Read(reader io.Reader) *ComputerUseError {
 			Message:    FfiConverterStringINSTANCE.Read(reader),
 			Code:       FfiConverterOptionalStringINSTANCE.Read(reader),
 			ManagedUrl: FfiConverterOptionalStringINSTANCE.Read(reader),
+			BillingUrl: FfiConverterOptionalStringINSTANCE.Read(reader),
 		}}
 	case 9:
 		return &ComputerUseError{&ComputerUseErrorInvalidPolicy{
@@ -5170,6 +5230,8 @@ func (c FfiConverterComputerUseError) Write(writer io.Writer, value *ComputerUse
 	case *ComputerUseErrorForbidden:
 		writeInt32(writer, 6)
 		FfiConverterStringINSTANCE.Write(writer, variantValue.Message)
+		FfiConverterOptionalStringINSTANCE.Write(writer, variantValue.Code)
+		FfiConverterOptionalStringINSTANCE.Write(writer, variantValue.BillingUrl)
 	case *ComputerUseErrorNotFound:
 		writeInt32(writer, 7)
 		FfiConverterStringINSTANCE.Write(writer, variantValue.Message)
@@ -5178,6 +5240,7 @@ func (c FfiConverterComputerUseError) Write(writer io.Writer, value *ComputerUse
 		FfiConverterStringINSTANCE.Write(writer, variantValue.Message)
 		FfiConverterOptionalStringINSTANCE.Write(writer, variantValue.Code)
 		FfiConverterOptionalStringINSTANCE.Write(writer, variantValue.ManagedUrl)
+		FfiConverterOptionalStringINSTANCE.Write(writer, variantValue.BillingUrl)
 	case *ComputerUseErrorInvalidPolicy:
 		writeInt32(writer, 9)
 		FfiConverterStringINSTANCE.Write(writer, variantValue.Message)

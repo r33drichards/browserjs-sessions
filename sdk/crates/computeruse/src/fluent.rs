@@ -28,6 +28,7 @@ impl ClientBuilder {
             retry_base_delay_ms: None,
             wake_timeout_ms: None,
             user_agent: None,
+            allow_insecure_http: None,
         })
     }
 
@@ -95,6 +96,13 @@ impl ClientBuilder {
     /// Added in front of the SDK's own `User-Agent`.
     pub fn user_agent(mut self, user_agent: impl Into<String>) -> Self {
         self.options().user_agent = Some(user_agent.into());
+        self
+    }
+
+    /// Accept an `http` base URL that is not a loopback address. The token
+    /// then crosses the network in the clear.
+    pub fn allow_insecure_http(mut self, allow: bool) -> Self {
+        self.options().allow_insecure_http = Some(allow);
         self
     }
 

@@ -403,6 +403,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: true,
     },
+    "uniffi_computeruse_fn_method_clientoptionsbuilder_allow_insecure_http": {
+      args: [FfiType.Handle, FfiType.Int8],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
     "uniffi_computeruse_fn_method_clientoptionsbuilder_api_token": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -724,6 +729,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_computeruse_checksum_constructor_clientoptionsbuilder_new": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_computeruse_checksum_method_clientoptionsbuilder_allow_insecure_http": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -1076,6 +1086,7 @@ interface NativeModuleInterface {
     uniffi_computeruse_fn_method_client_session(uniffiSelf: bigint, id: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_computeruse_fn_method_client_validate_policy(uniffiSelf: bigint, source: Uint8Array): bigint;
     uniffi_computeruse_fn_constructor_clientoptionsbuilder_new(uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_computeruse_fn_method_clientoptionsbuilder_allow_insecure_http(uniffiSelf: bigint, value: number, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_computeruse_fn_method_clientoptionsbuilder_api_token(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_computeruse_fn_method_clientoptionsbuilder_base_url(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_computeruse_fn_method_clientoptionsbuilder_build(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -1141,6 +1152,7 @@ interface NativeModuleInterface {
     uniffi_computeruse_checksum_method_client_session(): number;
     uniffi_computeruse_checksum_method_client_validate_policy(): number;
     uniffi_computeruse_checksum_constructor_clientoptionsbuilder_new(): number;
+    uniffi_computeruse_checksum_method_clientoptionsbuilder_allow_insecure_http(): number;
     uniffi_computeruse_checksum_method_clientoptionsbuilder_api_token(): number;
     uniffi_computeruse_checksum_method_clientoptionsbuilder_base_url(): number;
     uniffi_computeruse_checksum_method_clientoptionsbuilder_build(): number;

@@ -139,7 +139,8 @@ Behaviour that is the same everywhere, because it is one implementation:
   the snapshot is taken.
 - **Typed errors.** `Unauthorized` (401), `PaymentRequired` (402, with the
   `code` and the billing URL), `Forbidden` (403), `NotFound` (404),
-  `Conflict` (409, with `managed_url` for a policy managed elsewhere),
+  `Conflict` (409, with `managed_url` for a policy managed elsewhere; 403
+  and 409 carry `code` and the billing URL too when billing refused),
   `InvalidPolicy` (422, with the diagnostics), `RateLimited` (429), `Api`
   (any other status), and `Configuration`, `Transport`, `Timeout`,
   `Decode`, `Mcp`, `Tool`, `SessionFailed`.
@@ -150,7 +151,10 @@ Behaviour that is the same everywhere, because it is one implementation:
 - **No secrets in output.** The client, its options and its builders do not
   print the token; no error carries it.
 - **TLS** is rustls with the platform's trust roots. There is no OpenSSL.
-  `http` is accepted for a loopback address only.
+  `http` is accepted for a loopback address only, unless
+  `allow_insecure_http` is set.
+- **Lists the API writes as `null`** (a Go server's empty list) are empty
+  lists.
 
 Not in it: billing endpoints (they are switched off in the service), making
 and revoking API tokens (the API takes the browser's cookie only for that),

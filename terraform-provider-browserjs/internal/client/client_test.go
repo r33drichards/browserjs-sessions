@@ -7,11 +7,23 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 )
 
 const token = "bjs_id_secret"
+
+// sameJSON reports whether two JSON documents say the same thing: the SDK
+// writes an object's keys in its own order.
+func sameJSON(a, b string) bool {
+	var x, y any
+	if json.Unmarshal([]byte(a), &x) != nil || json.Unmarshal([]byte(b), &y) != nil {
+		return false
+	}
+	return reflect.DeepEqual(x, y)
+}
 
 func serve(t *testing.T, h http.HandlerFunc) *Client {
 	t.Helper()
@@ -43,7 +55,8 @@ func TestRequestShape(t *testing.T) {
 		if got := r.Header.Get("Authorization"); got != "Bearer "+token {
 			t.Errorf("Authorization %q", got)
 		}
-		if got := r.UserAgent(); got != "terraform-provider-browserjs/1.2.3" {
+		// The provider's name and version, then the SDK's.
+		if got := r.UserAgent(); !strings.HasPrefix(got, "terraform-provider-browserjs/1.2.3 computeruse-sdk/") {
 			t.Errorf("User-Agent %q", got)
 		}
 		if got := r.Header.Get("Content-Type"); got != "application/json" {
@@ -51,7 +64,7 @@ func TestRequestShape(t *testing.T) {
 		}
 		body, _ := io.ReadAll(r.Body)
 		const want = `{"kind":"rego","source":"package browserjs.policy","management":{"mode":"iac","managed_url":"https://example.com/x"}}`
-		if string(body) != want {
+		if !sameJSON(string(body), want) {
 			t.Errorf("body %s", body)
 		}
 		w.WriteHeader(http.StatusAccepted)
@@ -69,7 +82,7 @@ func TestRequestShape(t *testing.T) {
 func TestValidateSendsOnlyTheSource(t *testing.T) {
 	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		if string(body) != `{"kind":"rego","source":"package p"}` {
+		if !sameJSON(string(body), `{"kind":"rego","source":"package p"}`) {
 			t.Errorf("body %s", body)
 		}
 		_ = json.NewEncoder(w).Encode(Validation{Errors: []Diagnostic{{Row: 1, Col: 2, Code: "package", Message: "the package must be browserjs.policy"}}})
@@ -115,9 +128,10 @@ func TestErrors(t *testing.T) {
 		t.Errorf("409: %+v", e)
 	}
 
-	// An answer that is not the API's JSON still reports its status.
+	// An answer that is not the API's JSON still reports its status, and
+	// what came with it. (The SDK tries a 502 again before it gives up.)
 	_, err = c.ListSessions(ctx)
-	if StatusOf(err) != 502 || err.Error() != "the API answered 502 Bad Gateway" {
+	if StatusOf(err) != 502 || err.Error() != "the API answered 502: <html>bad gateway</html>" {
 		t.Errorf("502: %v", err)
 	}
 	if StatusOf(errors.New("x")) != 0 || StatusOf(nil) != 0 {
@@ -126,12 +140,22 @@ func TestErrors(t *testing.T) {
 }
 
 func TestSessionCalls(t *testing.T) {
+	// The requests are made by the SDK's own threads, not by a goroutine the
+	// race detector can follow, so what the handler writes is locked.
+	var mu sync.Mutex
 	var seen []string
 	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
 		seen = append(seen, r.Method+" "+r.URL.Path+" "+string(body))
+		mu.Unlock()
 		switch r.Method {
 		case "DELETE":
+			if strings.HasSuffix(r.URL.Path, "/policy") {
+				// A reset answers the policy it left.
+				_, _ = w.Write([]byte(`{"kind":"rego","version":2,"state":"ready","management":{"mode":"editor"}}`))
+				return
+			}
 			w.WriteHeader(http.StatusNoContent)
 		case "POST":
 			w.WriteHeader(http.StatusCreated)
@@ -164,19 +188,21 @@ func TestSessionCalls(t *testing.T) {
 		"DELETE /v1/sessions/s-ab2cd ",
 		"DELETE /v1/sessions/s-ab2cd/policy ",
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	if strings.Join(seen, "\n") != strings.Join(want, "\n") {
 		t.Errorf("requests\n%s\nwant\n%s", strings.Join(seen, "\n"), strings.Join(want, "\n"))
 	}
 }
 
-// A transport error names the method and path, and never the token.
+// A transport error names what was being done, and never the token.
 func TestTransportErrorHidesTheToken(t *testing.T) {
 	c, err := New("http://127.0.0.1:1", token, "1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = c.ListSessions(context.Background())
-	if err == nil || strings.Contains(err.Error(), token) || !strings.Contains(err.Error(), "GET /sessions") {
+	if err == nil || strings.Contains(err.Error(), token) || !strings.Contains(err.Error(), "list sessions") {
 		t.Errorf("%v", err)
 	}
 }

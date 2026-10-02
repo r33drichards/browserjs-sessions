@@ -566,6 +566,11 @@ uint64_t uniffi_computeruse_fn_constructor_clientoptionsbuilder_new(RustCallStat
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_FN_METHOD_CLIENTOPTIONSBUILDER_ALLOW_INSECURE_HTTP
+#define UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_FN_METHOD_CLIENTOPTIONSBUILDER_ALLOW_INSECURE_HTTP
+uint64_t uniffi_computeruse_fn_method_clientoptionsbuilder_allow_insecure_http(uint64_t ptr, int8_t value, RustCallStatus *out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_FN_METHOD_CLIENTOPTIONSBUILDER_API_TOKEN
 #define UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_FN_METHOD_CLIENTOPTIONSBUILDER_API_TOKEN
 uint64_t uniffi_computeruse_fn_method_clientoptionsbuilder_api_token(uint64_t ptr, RustBuffer value, RustCallStatus *out_status
@@ -1209,6 +1214,12 @@ uint16_t uniffi_computeruse_checksum_method_session_wait_until_running(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_CHECKSUM_METHOD_SESSION_WAKE
 #define UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_CHECKSUM_METHOD_SESSION_WAKE
 uint16_t uniffi_computeruse_checksum_method_session_wake(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_CHECKSUM_METHOD_CLIENTOPTIONSBUILDER_ALLOW_INSECURE_HTTP
+#define UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_CHECKSUM_METHOD_CLIENTOPTIONSBUILDER_ALLOW_INSECURE_HTTP
+uint16_t uniffi_computeruse_checksum_method_clientoptionsbuilder_allow_insecure_http(void
     
 );
 #endif

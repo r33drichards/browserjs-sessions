@@ -1,18 +1,20 @@
-// Package client speaks the API of docs/contracts/policy/backend-api.yaml on
-// the API host, with an API token.
+// Package client is the provider's view of the API of
+// docs/contracts/policy/backend-api.yaml: the types the resources work with,
+// and the calls they make.
+//
+// The calls are made by the Computer Use SDK (sdk/go, the Rust client behind
+// UniFFI bindings), not by HTTP code of the provider's own. This package
+// turns the SDK's records and errors into the provider's, and gives each
+// blocking SDK call the context of the Terraform operation it is part of.
 package client
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
-	"strings"
-	"time"
+
+	"github.com/r33drichards/computer-use/sdk/go/computeruse"
 )
 
 // Policy states, as PolicyState in the API.
@@ -140,141 +142,352 @@ func IsNotFound(err error) bool { return StatusOf(err) == http.StatusNotFound }
 
 // Client is an API client. The token is sent and never printed.
 type Client struct {
-	base      string
-	token     string
-	userAgent string
-	http      *http.Client
+	sdk *computeruse.Client
 }
 
 // New makes a client for the API host at endpoint (without /v1).
 func New(endpoint, token, version string) (*Client, error) {
-	u, err := url.Parse(endpoint)
-	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
-		return nil, fmt.Errorf("endpoint must be an http(s) URL such as https://api.computeruse.site")
-	}
 	if token == "" {
 		return nil, errors.New("token is empty")
 	}
-	return &Client{
-		base:      strings.TrimRight(endpoint, "/") + "/v1",
-		token:     token,
-		userAgent: "terraform-provider-browserjs/" + version,
-		http:      &http.Client{Timeout: 60 * time.Second},
-	}, nil
+	userAgent := "terraform-provider-browserjs/" + version
+	// The token is sent as it is, as the provider always has: one request
+	// per call, and nothing to refresh during a long apply. An http endpoint
+	// is the provider's to warn about (provider.go), not the SDK's to refuse.
+	no, yes := false, true
+	sdk, err := computeruse.NewClient(computeruse.ClientOptions{
+		ApiToken:          token,
+		BaseUrl:           &endpoint,
+		ExchangeToken:     &no,
+		AllowInsecureHttp: &yes,
+		UserAgent:         &userAgent,
+	})
+	if err != nil {
+		var bad *computeruse.ComputerUseErrorConfiguration
+		if errors.As(err, &bad) {
+			return nil, fmt.Errorf("endpoint must be an http(s) URL such as https://api.computeruse.site: %s", bad.Reason)
+		}
+		return nil, convert(err)
+	}
+	return &Client{sdk: sdk}, nil
 }
 
-// do sends one request. out, when not nil, receives a 2xx body. The status
-// is returned so callers can tell 200 from 202.
-func (c *Client) do(ctx context.Context, method, path string, in, out any) (int, error) {
-	var body io.Reader
-	if in != nil {
-		b, err := json.Marshal(in)
-		if err != nil {
-			return 0, err
-		}
-		body = bytes.NewReader(b)
+// call runs one blocking SDK call and gives up waiting for it when ctx ends
+// (a Terraform timeout, an interrupt). The SDK's own time limit then ends the
+// call itself.
+func call[T any](ctx context.Context, f func() (T, error)) (T, error) {
+	type result struct {
+		value T
+		err   error
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.base+path, body)
-	if err != nil {
-		return 0, err
+	done := make(chan result, 1)
+	go func() {
+		value, err := f()
+		done <- result{value, err}
+	}()
+	select {
+	case r := <-done:
+		return r.value, convert(r.err)
+	case <-ctx.Done():
+		var zero T
+		return zero, ctx.Err()
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("User-Agent", c.userAgent)
-	req.Header.Set("Accept", "application/json")
-	if in != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		// A *url.Error names the method and URL, never a header.
-		return 0, fmt.Errorf("%s %s: %w", method, path, err)
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if err != nil {
-		return resp.StatusCode, fmt.Errorf("%s %s: reading the answer: %w", method, path, err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		var e struct {
-			Error      string       `json:"error"`
-			Errors     []Diagnostic `json:"errors"`
-			Warnings   []Diagnostic `json:"warnings"`
-			ManagedURL string       `json:"managed_url"`
-			Code       string       `json:"code"`
-			BillingURL string       `json:"billingUrl"`
-		}
-		_ = json.Unmarshal(raw, &e)
-		return resp.StatusCode, &APIError{Status: resp.StatusCode, Message: e.Error, Errors: e.Errors, Warnings: e.Warnings,
-			ManagedURL: e.ManagedURL, Code: e.Code, BillingURL: e.BillingURL}
-	}
-	if out != nil && len(bytes.TrimSpace(raw)) > 0 {
-		if err := json.Unmarshal(raw, out); err != nil {
-			return resp.StatusCode, fmt.Errorf("%s %s: the answer is not the JSON expected: %w", method, path, err)
-		}
-	}
-	return resp.StatusCode, nil
 }
 
-func sessionPath(id string) string { return "/sessions/" + url.PathEscape(id) }
+// convert turns an SDK error into the provider's: an *APIError for an answer
+// of the API, and the SDK's sentence for anything else. No SDK error carries
+// the token.
+func convert(err error) error {
+	if err == nil {
+		return nil
+	}
+	str := func(s *string) string {
+		if s == nil {
+			return ""
+		}
+		return *s
+	}
+	var (
+		unauthorized *computeruse.ComputerUseErrorUnauthorized
+		payment      *computeruse.ComputerUseErrorPaymentRequired
+		forbidden    *computeruse.ComputerUseErrorForbidden
+		notFound     *computeruse.ComputerUseErrorNotFound
+		conflict     *computeruse.ComputerUseErrorConflict
+		invalid      *computeruse.ComputerUseErrorInvalidPolicy
+		limited      *computeruse.ComputerUseErrorRateLimited
+		other        *computeruse.ComputerUseErrorApi
+		transport    *computeruse.ComputerUseErrorTransport
+		timeout      *computeruse.ComputerUseErrorTimeout
+		decode       *computeruse.ComputerUseErrorDecode
+		config       *computeruse.ComputerUseErrorConfiguration
+	)
+	switch {
+	case errors.As(err, &unauthorized):
+		return &APIError{Status: http.StatusUnauthorized, Message: unauthorized.Message}
+	case errors.As(err, &payment):
+		return &APIError{Status: http.StatusPaymentRequired, Message: payment.Message, Code: str(payment.Code), BillingURL: str(payment.BillingUrl)}
+	case errors.As(err, &forbidden):
+		return &APIError{Status: http.StatusForbidden, Message: forbidden.Message, Code: str(forbidden.Code), BillingURL: str(forbidden.BillingUrl)}
+	case errors.As(err, &notFound):
+		return &APIError{Status: http.StatusNotFound, Message: notFound.Message}
+	case errors.As(err, &conflict):
+		return &APIError{Status: http.StatusConflict, Message: conflict.Message, Code: str(conflict.Code),
+			ManagedURL: str(conflict.ManagedUrl), BillingURL: str(conflict.BillingUrl)}
+	case errors.As(err, &invalid):
+		return &APIError{Status: http.StatusUnprocessableEntity, Message: invalid.Message,
+			Errors: diagnostics(invalid.Errors), Warnings: diagnostics(invalid.Warnings)}
+	case errors.As(err, &limited):
+		return &APIError{Status: http.StatusTooManyRequests, Message: limited.Message}
+	case errors.As(err, &other):
+		return &APIError{Status: int(other.Status), Message: other.Message, Code: str(other.Code)}
+	case errors.As(err, &transport):
+		return errors.New(transport.Reason)
+	case errors.As(err, &timeout):
+		return fmt.Errorf("%s: no answer in time", timeout.Operation)
+	case errors.As(err, &decode):
+		return fmt.Errorf("the answer is not the JSON expected: %s", decode.Reason)
+	case errors.As(err, &config):
+		return errors.New(config.Reason)
+	}
+	return err
+}
+
+func diagnostics(in []computeruse.Diagnostic) []Diagnostic {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]Diagnostic, len(in))
+	for i, d := range in {
+		out[i] = Diagnostic{Code: d.Code, Message: d.Message}
+		if d.Row != nil {
+			out[i].Row = int(*d.Row)
+		}
+		if d.Col != nil {
+			out[i].Col = int(*d.Col)
+		}
+	}
+	return out
+}
+
+var sessionStates = map[computeruse.SessionState]string{
+	computeruse.SessionStateStarting: "starting",
+	computeruse.SessionStateRunning:  "running",
+	computeruse.SessionStateStopping: "stopping",
+	computeruse.SessionStateAsleep:   "asleep",
+	computeruse.SessionStateStopped:  "stopped",
+	computeruse.SessionStateFailed:   "failed",
+}
+
+var policyStates = map[computeruse.PolicyState]string{
+	computeruse.PolicyStateReady:       StateReady,
+	computeruse.PolicyStateLoading:     StateLoading,
+	computeruse.PolicyStateInvalid:     StateInvalid,
+	computeruse.PolicyStateUnsupported: StateUnsupported,
+}
+
+// named is the API's word for an SDK enum value; a value this SDK does not
+// know is "unknown".
+func named[K comparable](names map[K]string, value K) string {
+	if name, ok := names[value]; ok {
+		return name
+	}
+	return "unknown"
+}
+
+func management(in *computeruse.Management) *Management {
+	if in == nil {
+		return nil
+	}
+	out := &Management{Mode: "unknown"}
+	switch in.Mode {
+	case computeruse.ManagementModeEditor:
+		out.Mode = ModeEditor
+	case computeruse.ManagementModeIac:
+		out.Mode = ModeIaC
+	}
+	if in.ManagedUrl != nil {
+		out.ManagedURL = *in.ManagedUrl
+	}
+	return out
+}
+
+func deref[T any](p *T) (zero T) {
+	if p == nil {
+		return zero
+	}
+	return *p
+}
+
+func session(in computeruse.SessionInfo) *Session {
+	out := &Session{ID: in.Id, Name: in.Name, Owner: in.Owner, State: named(sessionStates, in.State), MCPURL: deref(in.McpUrl)}
+	if p := in.Policy; p != nil {
+		out.Policy = &PolicySummary{Kind: deref(p.Kind), Version: deref(p.Version), Hash: deref(p.Hash),
+			State: named(policyStates, p.State), Management: management(p.Management)}
+	}
+	return out
+}
+
+func policy(in computeruse.Policy) *Policy {
+	out := &Policy{
+		PolicySummary: PolicySummary{Kind: deref(in.Kind), Version: deref(in.Version), Hash: deref(in.Hash),
+			State: named(policyStates, in.State), Management: management(in.Management)},
+		Source: deref(in.Source), Rego: deref(in.Rego),
+		Errors: diagnostics(in.Errors), Warnings: diagnostics(in.Warnings),
+		Updated: deref(in.Updated), UpdatedBy: deref(in.UpdatedBy),
+	}
+	if in.Loaded != nil {
+		out.Loaded = &Loaded{Replicas: int(in.Loaded.Replicas), Total: int(in.Loaded.Total)}
+	}
+	return out
+}
+
+// handle is the SDK's handle to the session id. What is not a session id
+// names no session: the API's own answer to it is a 404.
+func (c *Client) handle(id string) (*computeruse.Session, error) {
+	h, err := c.sdk.Session(id)
+	if err != nil {
+		return nil, &APIError{Status: http.StatusNotFound, Message: "session not found"}
+	}
+	return h, nil
+}
 
 // CreateSession makes a session; an empty name lets the server choose one.
 func (c *Client) CreateSession(ctx context.Context, name string) (*Session, error) {
-	in := map[string]string{}
+	request := computeruse.CreateSessionRequest{}
 	if name != "" {
-		in["name"] = name
+		request.Name = &name
 	}
-	var s Session
-	_, err := c.do(ctx, http.MethodPost, "/sessions", in, &s)
-	return &s, err
+	return call(ctx, func() (*Session, error) {
+		created, err := c.sdk.CreateSession(request)
+		if err != nil {
+			return nil, err
+		}
+		info := created.LastInfo()
+		if info == nil {
+			return nil, errors.New("the SDK created a session and has nothing to say about it")
+		}
+		return session(*info), nil
+	})
 }
 
 func (c *Client) GetSession(ctx context.Context, id string) (*Session, error) {
-	var s Session
-	_, err := c.do(ctx, http.MethodGet, sessionPath(id), nil, &s)
-	return &s, err
+	h, err := c.handle(id)
+	if err != nil {
+		return nil, err
+	}
+	return call(ctx, func() (*Session, error) {
+		info, err := h.Refresh()
+		if err != nil {
+			return nil, err
+		}
+		return session(info), nil
+	})
 }
 
 func (c *Client) ListSessions(ctx context.Context) ([]Session, error) {
-	var l []Session
-	_, err := c.do(ctx, http.MethodGet, "/sessions", nil, &l)
-	return l, err
+	return call(ctx, func() ([]Session, error) {
+		list, err := c.sdk.ListSessions()
+		if err != nil {
+			return nil, err
+		}
+		out := make([]Session, len(list))
+		for i, info := range list {
+			out[i] = *session(info)
+		}
+		return out, nil
+	})
 }
 
 func (c *Client) RenameSession(ctx context.Context, id, name string) (*Session, error) {
-	var s Session
-	_, err := c.do(ctx, http.MethodPatch, sessionPath(id), map[string]string{"name": name}, &s)
-	return &s, err
+	h, err := c.handle(id)
+	if err != nil {
+		return nil, err
+	}
+	return call(ctx, func() (*Session, error) {
+		info, err := h.Rename(name)
+		if err != nil {
+			return nil, err
+		}
+		return session(info), nil
+	})
 }
 
 // DeleteSession deletes a session, its disk and its browser's logins.
 func (c *Client) DeleteSession(ctx context.Context, id string) error {
-	_, err := c.do(ctx, http.MethodDelete, sessionPath(id), nil, nil)
+	h, err := c.handle(id)
+	if err != nil {
+		return err
+	}
+	_, err = call(ctx, func() (struct{}, error) { return struct{}{}, h.Delete() })
 	return err
 }
 
 func (c *Client) GetPolicy(ctx context.Context, id string) (*Policy, error) {
-	var p Policy
-	_, err := c.do(ctx, http.MethodGet, sessionPath(id)+"/policy", nil, &p)
-	return &p, err
+	h, err := c.handle(id)
+	if err != nil {
+		return nil, err
+	}
+	return call(ctx, func() (*Policy, error) {
+		p, err := h.Policy()
+		if err != nil {
+			return nil, err
+		}
+		return policy(p), nil
+	})
 }
 
-// PutPolicy replaces the policy. loading is true for 202: saved, not yet in
-// force everywhere.
+// PutPolicy replaces the policy. loading is true when it is saved and not
+// yet in force everywhere (the API's 202).
 func (c *Client) PutPolicy(ctx context.Context, id string, in PolicyInput) (p *Policy, loading bool, err error) {
-	p = &Policy{}
-	status, err := c.do(ctx, http.MethodPut, sessionPath(id)+"/policy", in, p)
-	return p, status == http.StatusAccepted, err
+	h, err := c.handle(id)
+	if err != nil {
+		return nil, false, err
+	}
+	// Rego is the only kind, and the SDK says so itself.
+	input := computeruse.PolicyInput{Source: in.Source}
+	if m := in.Management; m != nil {
+		input.Management = &computeruse.Management{Mode: computeruse.ManagementModeEditor}
+		if m.Mode == ModeIaC {
+			input.Management.Mode = computeruse.ManagementModeIac
+		}
+		if m.ManagedURL != "" {
+			input.Management.ManagedUrl = &m.ManagedURL
+		}
+	}
+	p, err = call(ctx, func() (*Policy, error) {
+		saved, err := h.PutPolicy(input)
+		if err != nil {
+			return nil, err
+		}
+		return policy(saved), nil
+	})
+	if err != nil {
+		return &Policy{}, false, err
+	}
+	return p, p.State == StateLoading, nil
 }
 
 // ResetPolicy puts back the unrestricted policy, in editor mode.
 func (c *Client) ResetPolicy(ctx context.Context, id string) error {
-	_, err := c.do(ctx, http.MethodDelete, sessionPath(id)+"/policy", nil, nil)
+	h, err := c.handle(id)
+	if err != nil {
+		return err
+	}
+	_, err = call(ctx, func() (struct{}, error) {
+		_, err := h.ResetPolicy()
+		return struct{}{}, err
+	})
 	return err
 }
 
-// ValidatePolicy checks a Rego policy without saving it.
+// ValidatePolicy checks a policy without saving it.
 func (c *Client) ValidatePolicy(ctx context.Context, source string) (*Validation, error) {
-	var v Validation
-	_, err := c.do(ctx, http.MethodPost, "/policies/validate", PolicyInput{Kind: KindRego, Source: source}, &v)
-	return &v, err
+	return call(ctx, func() (*Validation, error) {
+		v, err := c.sdk.ValidatePolicy(source)
+		if err != nil {
+			return nil, err
+		}
+		return &Validation{OK: v.Ok, Rego: deref(v.Rego), Hash: deref(v.Hash),
+			Errors: diagnostics(v.Errors), Warnings: diagnostics(v.Warnings)}, nil
+	})
 }

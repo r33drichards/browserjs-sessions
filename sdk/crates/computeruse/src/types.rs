@@ -17,6 +17,16 @@ pub const SCOPE_POLICIES_READ: &str = "policies:read";
 /// Scope: write a session's policy and its management mode.
 pub const SCOPE_POLICIES_WRITE: &str = "policies:write";
 
+/// A list the API may send as `null`: a Go server writes an empty list that
+/// way.
+pub(crate) fn null_as_empty<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 /// How a [`Client`](crate::Client) is made. Only `api_token` is required.
 ///
 /// Its `Debug` does not print the token.
@@ -60,6 +70,11 @@ pub struct ClientOptions {
     /// Added in front of the SDK's own `User-Agent`.
     #[uniffi(default = None)]
     pub user_agent: Option<String>,
+    /// Accept an `http` base URL that is not a loopback address. The token
+    /// then crosses the network in the clear: for a private network or a
+    /// test only. Default false.
+    #[uniffi(default = None)]
+    pub allow_insecure_http: Option<bool>,
 }
 
 impl fmt::Debug for ClientOptions {
@@ -76,6 +91,7 @@ impl fmt::Debug for ClientOptions {
             .field("retry_base_delay_ms", &self.retry_base_delay_ms)
             .field("wake_timeout_ms", &self.wake_timeout_ms)
             .field("user_agent", &self.user_agent)
+            .field("allow_insecure_http", &self.allow_insecure_http)
             .finish()
     }
 }
@@ -251,9 +267,9 @@ pub struct Policy {
     /// The module in force: the last source that compiled.
     #[serde(default)]
     pub rego: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty")]
     pub errors: Vec<Diagnostic>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty")]
     pub warnings: Vec<Diagnostic>,
     #[serde(default)]
     pub loaded: Option<Loaded>,
@@ -290,9 +306,9 @@ pub struct Validation {
     pub rego: Option<String>,
     #[serde(default)]
     pub hash: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty")]
     pub errors: Vec<Diagnostic>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty")]
     pub warnings: Vec<Diagnostic>,
 }
 
@@ -304,7 +320,7 @@ pub struct Evaluation {
     /// The decision, when `ok`.
     #[serde(default)]
     pub allow: Option<bool>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_empty")]
     pub errors: Vec<Diagnostic>,
 }
 
