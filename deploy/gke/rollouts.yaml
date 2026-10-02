@@ -1,0 +1,314 @@
+# How the backend and the site are released on GKE: by Argo Rollouts
+# (argo-rollouts/), which starts the new version beside the old one, checks
+# it, and only then lets users reach it. The why, and what was compared:
+# docs/releases.md.
+#
+# Each Rollout takes its pod template from the Deployment of the same name
+# (workloadRef), which the base and the other overlays keep using as it is;
+# here the Deployment itself has no pods (patch-rollouts.yaml). A changed
+# image, variable or ConfigMap is a changed Deployment, as before, and the
+# Rollout is what acts on it.
+#
+# BACKEND: blue-green. Exactly one backend may serve users (its VNC tickets
+# and idle tracking are in its memory), so there is no share of traffic to
+# give a second one. The new pod starts on STANDBY (the label
+# browserjs.dev/role, read by the backend from /etc/podinfo/labels: it
+# answers requests and does nothing unasked), behind the Service
+# backend-preview, which nothing routes users to. The release's canary
+# (test/canary.py) is run against it, a whole session end to end. Passed:
+# the Service backend is switched to it, it is told it is active, and the
+# old pod goes 30 seconds later. Failed, or not ready in ten minutes: the
+# new pod is removed, and users never met it.
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: backend
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  # A new pod that never becomes ready is given up on, like a failed check.
+  progressDeadlineSeconds: 600
+  progressDeadlineAbort: true
+  workloadRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend
+  strategy:
+    blueGreen:
+      activeService: backend
+      previewService: backend-preview
+      autoPromotionEnabled: true
+      prePromotionAnalysis:
+        templates:
+          - templateName: release-canary
+      # In-flight calls on the old pod get this long after the switch.
+      scaleDownDelaySeconds: 30
+      activeMetadata:
+        labels:
+          browserjs.dev/role: active
+      previewMetadata:
+        labels:
+          browserjs.dev/role: preview
+---
+# The new backend, before it is the backend. Only the release's checks are
+# let in (NetworkPolicy backend); no route of Pomerium's leads here.
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-preview
+spec:
+  selector:
+    app: backend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+# The canary against the standby backend: test/canary.py, as the deploy
+# workflow put it in the ConfigMap release-canary, with the token of the
+# Secret release-canary. It talks to backend-preview as Pomerium would have
+# on the API host (the Host header), so nothing of it passes the edge.
+# Without the Secret (the canary is not switched on) it passes, saying so.
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: release-canary
+spec:
+  metrics:
+    - name: canary
+      # One run decides.
+      count: 1
+      failureLimit: 0
+      provider:
+        job:
+          metadata:
+            labels:
+              app: release-canary
+          spec:
+            backoffLimit: 0
+            activeDeadlineSeconds: 1200
+            ttlSecondsAfterFinished: 86400
+            template:
+              metadata:
+                # The NetworkPolicies select on this label.
+                labels:
+                  app: release-canary
+              spec:
+                restartPolicy: Never
+                automountServiceAccountToken: false
+                enableServiceLinks: false
+                securityContext:
+                  runAsNonRoot: true
+                  runAsUser: 65532
+                  runAsGroup: 65532
+                  seccompProfile:
+                    type: RuntimeDefault
+                containers:
+                  - name: canary
+                    # python:3.13-alpine: the script needs the standard
+                    # library and nothing else.
+                    image: python:3.13-alpine@sha256:2dd78ad5cf13a0b68f5134dc49aa9950203a8cf4b7463431b9f3b398287c5059
+                    command:
+                      - sh
+                      - -c
+                      - |
+                        if [ -z "$CANARY_API_TOKEN" ]; then
+                          echo "no token (the Secret release-canary): the release canary is not switched on, and this backend goes out unchecked"
+                          exit 0
+                        fi
+                        exec python3 /canary/canary.py
+                    env:
+                      - name: CANARY_API_TOKEN
+                        valueFrom:
+                          secretKeyRef:
+                            name: release-canary
+                            key: token
+                            optional: true
+                      - name: API_URL
+                        value: http://backend-preview.browserjs-sessions.svc
+                      # The API host's name, as patch-backend.yaml gives the
+                      # backend its API_URL.
+                      - name: API_HOST
+                        value: api.computeruse.site
+                      # The edge is not this check's: the deploy workflow
+                      # looks at the app and the site afterwards.
+                      - name: APP_URL
+                        value: ""
+                      - name: SITE_URL
+                        value: ""
+                      - name: START_TIMEOUT
+                        value: "300"
+                    resources:
+                      requests:
+                        cpu: 10m
+                        memory: 32Mi
+                      limits:
+                        memory: 128Mi
+                    securityContext:
+                      allowPrivilegeEscalation: false
+                      readOnlyRootFilesystem: true
+                      capabilities:
+                        drop: ["ALL"]
+                    volumeMounts:
+                      - name: canary
+                        mountPath: /canary
+                        readOnly: true
+                volumes:
+                  - name: canary
+                    configMap:
+                      name: release-canary
+---
+# SITE: a canary by weight. Four pods behind the Service site, which Pomerium
+# sends every visitor to: one pod of the new version is a quarter of the
+# traffic, with no router in between (the Service spreads connections over
+# its pods; Pomerium keeps connections open, so "a quarter" is of
+# connections, and rough). The new pod is checked through site-canary, which
+# selects only it, before the share grows; a failed check takes the new pods
+# away and leaves the three old ones serving.
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: site
+spec:
+  replicas: 4
+  revisionHistoryLimit: 3
+  progressDeadlineSeconds: 300
+  progressDeadlineAbort: true
+  workloadRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: site
+  strategy:
+    canary:
+      canaryService: site-canary
+      # Never fewer than four serving; one extra while it moves.
+      maxSurge: 1
+      maxUnavailable: 0
+      steps:
+        - setWeight: 25
+        - analysis:
+            templates:
+              - templateName: site-answers
+        - setWeight: 50
+        - pause:
+            duration: 30s
+        - setWeight: 100
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: site-canary
+spec:
+  selector:
+    app: site
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+# The new site's pods answer: the front page, as HTML, and the health path,
+# twenty times each.
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: site-answers
+spec:
+  metrics:
+    - name: answers
+      count: 1
+      failureLimit: 0
+      provider:
+        job:
+          metadata:
+            labels:
+              app: release-canary
+          spec:
+            backoffLimit: 0
+            activeDeadlineSeconds: 300
+            ttlSecondsAfterFinished: 86400
+            template:
+              metadata:
+                labels:
+                  app: release-canary
+              spec:
+                restartPolicy: Never
+                automountServiceAccountToken: false
+                enableServiceLinks: false
+                securityContext:
+                  runAsNonRoot: true
+                  runAsUser: 65532
+                  runAsGroup: 65532
+                  seccompProfile:
+                    type: RuntimeDefault
+                containers:
+                  - name: check
+                    image: python:3.13-alpine@sha256:2dd78ad5cf13a0b68f5134dc49aa9950203a8cf4b7463431b9f3b398287c5059
+                    command:
+                      - python3
+                      - -c
+                      - |
+                        import sys, urllib.request
+                        base = "http://site-canary.browserjs-sessions.svc"
+                        for attempt in range(20):
+                            for path, want in (("/", b"<html"), ("/healthz", b"")):
+                                with urllib.request.urlopen(base + path, timeout=10) as r:
+                                    body = r.read()
+                                    if r.status != 200 or want not in body.lower():
+                                        sys.exit("%s answered %d, %d bytes, without %r" % (path, r.status, len(body), want))
+                        print("the new site answered / and /healthz twenty times")
+                    resources:
+                      requests:
+                        cpu: 10m
+                        memory: 32Mi
+                      limits:
+                        memory: 128Mi
+                    securityContext:
+                      allowPrivilegeEscalation: false
+                      readOnlyRootFilesystem: true
+                      capabilities:
+                        drop: ["ALL"]
+---
+# The release's checks hold the canary's token: they reach the standby
+# backend and the new site's pods, DNS, and nothing else.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: release-canary
+spec:
+  podSelector:
+    matchLabels:
+      app: release-canary
+  policyTypes: ["Ingress", "Egress"]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+        # NodeLocal DNSCache on GKE: see session-pods.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: node-local-dns
+        - ipBlock:
+            cidr: 169.254.20.10/32
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app: backend
+        - podSelector:
+            matchLabels:
+              app: site
+      ports:
+        - port: 8080
+          protocol: TCP

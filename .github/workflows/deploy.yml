@@ -36,10 +36,12 @@ name: deploy
 # The release canary (docs/releases.md) is on when the repository VARIABLE
 # CANARY is "on"; it needs the secret CANARY_API_TOKEN, an API token of the
 # deployment. On, a run: tries new session images on one canary session
-# before anything is applied; applies; checks that what runs is what is
-# pinned; runs the canary (test/canary.py) against the result; and goes back
-# to the last good release if any of that fails. Off, a run applies and
-# checks nothing afterwards, as it always did, and says so.
+# before anything is applied; applies; lets Argo Rollouts check the new
+# backend with the canary (test/canary.py) before users reach it, and the
+# new site on a quarter of its pods; checks that what runs is what is
+# pinned; runs the canary against the result; and goes back to the last good
+# release if any of that fails. Off, the rollouts still happen, with nothing
+# checking the backend, and the run says so.
 
 on:
   workflow_dispatch:
@@ -86,7 +88,7 @@ jobs:
     name: deploy
     runs-on: ubuntu-24.04
     # Shorter than the hour the cluster credentials last.
-    timeout-minutes: 55
+    timeout-minutes: 58
     environment: production
     defaults:
       run:
@@ -243,6 +245,15 @@ jobs:
             sleep 10
           done
 
+      # The controller that releases the backend and the site
+      # (deploy/gke/rollouts.yaml). Its CRDs have to be there before the apply.
+      - name: Argo Rollouts
+        run: |
+          kubectl apply --server-side --force-conflicts -k deploy/gke/argo-rollouts
+          kubectl -n argo-rollouts rollout status deployment/argo-rollouts --timeout=300s
+          kubectl wait --for=condition=Established --timeout=60s \
+            crd/rollouts.argoproj.io crd/analysistemplates.argoproj.io crd/analysisruns.argoproj.io
+
       - name: Issuers
         env:
           ISSUER: ${{ inputs.issuer }}
@@ -340,6 +351,28 @@ jobs:
           METRONOME_PRODUCTION_API_TOKEN: ${{ secrets.METRONOME_PRODUCTION_API_TOKEN }}
           METRONOME_PRODUCTION_WEBHOOK_SECRET: ${{ secrets.METRONOME_PRODUCTION_WEBHOOK_SECRET }}
         run: hack/billing-secrets.sh
+
+      # What the rollout of the backend runs against the new one before users
+      # reach it: the script, and the token if the canary is on. Without the
+      # token that check passes, saying it checked nothing.
+      - name: "Release: the canary's script and token"
+        env:
+          CANARY_ON: ${{ steps.canary.outputs.on }}
+          CANARY_API_TOKEN: ${{ secrets.CANARY_API_TOKEN }}
+        run: |
+          kubectl -n "$NS" create configmap release-canary --from-file=canary.py=test/canary.py --dry-run=client -o yaml |
+            kubectl apply -f - >/dev/null
+          echo "configmap/release-canary applied"
+          if [ "$CANARY_ON" = true ]; then
+            # On stdin: never in a command line, a file or this log.
+            echo "token=$CANARY_API_TOKEN" |
+              kubectl -n "$NS" create secret generic release-canary --from-env-file=/dev/stdin --dry-run=client -o yaml |
+              kubectl apply -f - >/dev/null
+            echo "secret/release-canary applied"
+          else
+            kubectl -n "$NS" delete secret release-canary --ignore-not-found >/dev/null
+            echo "the canary is off: secret/release-canary is absent"
+          fi
 
       # What this run changes, and what there is to go back to.
       - name: "Release: what changes"
@@ -497,8 +530,14 @@ jobs:
           if [ "$POMERIUM_RESTARTED" = true ] || [ "$BILLING_CHANGED" = true ] || [ -z "$backend_started" ] || [[ "$backend_started" < "$pomerium_ready" ]]; then
             kubectl -n "$NS" rollout restart deployment/backend
           fi
-          kubectl -n "$NS" rollout status deployment/backend --timeout=300s
-          kubectl -n "$NS" rollout status deployment/site --timeout=300s
+          # Released by their Rollouts (deploy/gke/rollouts.yaml). The
+          # backend: the new pod on standby, test/canary.py against it, and
+          # only then the switch. The site: a quarter of its pods first. A
+          # version that fails is taken away again, users never having met
+          # the backend's; this step then fails, and what follows puts the
+          # rest of the release back.
+          hack/release.sh rollout-status backend 1200
+          hack/release.sh rollout-status site 600
           if [ "$ISSUER" = staging ]; then
             echo "::warning::Deployed with a STAGING certificate: nothing trusts it, so sign-in and the backend's key fetch do not work. Run again with issuer=production."
           fi

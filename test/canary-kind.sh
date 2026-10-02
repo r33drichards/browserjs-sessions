@@ -46,8 +46,30 @@ trap 'kubectl -n "$NS" delete apitokens.browserjs.dev "$name" --ignore-not-found
 policies=0
 [ "$(hack/policy-stage.sh | sed -n 's|^policy-stage: deploy/local is ||p')" != enforcing ] || policies=1
 
+images="$(awk '$1 == "image:" { n = split($2, p, "/"); sub(/:.*/, "", p[n]); printf "%s%s=%s", sep, p[n], $2; sep = "," }' deploy/local/blueprint.yaml)"
+failed=""
+
+echo "=== through the edge: Pomerium, the API host"
 CANARY_API_TOKEN="$token" DOMAIN=localtest.me SITE_URL="" CA_FILE="$LOCAL_DIR/tls/ca.crt" \
   EXPECT_STATE_SAVED=0 EXPECT_POLICIES="$policies" \
-  SESSION_HOOK="hack/release.sh verify-session" \
-  EXPECT_IMAGES="$(awk '$1 == "image:" { n = split($2, p, "/"); sub(/:.*/, "", p[n]); printf "%s%s=%s", sep, p[n], $2; sep = "," }' deploy/local/blueprint.yaml)" \
-  test/canary.py
+  SESSION_HOOK="hack/release.sh verify-session" EXPECT_IMAGES="$images" \
+  test/canary.py || failed=1
+
+# As the backend's Rollout runs it on GKE against a backend on standby
+# (deploy/gke/rollouts.yaml): straight at the backend, saying which host it
+# is being asked as.
+echo
+echo "=== straight at the backend, as a rollout's check"
+port=$((20000 + RANDOM % 20000))
+kubectl -n "$NS" port-forward service/backend "$port:80" >/dev/null 2>&1 &
+forward=$!
+trap 'kill "$forward" 2>/dev/null; kubectl -n "$NS" delete apitokens.browserjs.dev "$name" --ignore-not-found >/dev/null' EXIT
+for _ in $(seq 1 30); do
+  curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$port/healthz" && break
+  sleep 0.5
+done
+CANARY_API_TOKEN="$token" API_URL="http://127.0.0.1:$port" API_HOST=api.localtest.me APP_URL="" SITE_URL="" \
+  EXPECT_STATE_SAVED=0 EXPECT_POLICIES="$policies" \
+  test/canary.py || failed=1
+
+[ -z "$failed" ]

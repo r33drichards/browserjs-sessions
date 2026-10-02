@@ -19,6 +19,9 @@ The environment:
                        app https://app.<DOMAIN>, the site https://<DOMAIN>.
   API_URL, APP_URL,    each of those, to say otherwise. APP_URL or SITE_URL
   SITE_URL             empty: that check is left out.
+  API_HOST             the Host header sent to API_URL, when API_URL is not
+                       the public name: a backend asked directly, inside the
+                       cluster (the rollout's check of a standby backend)
   CA_FILE              a CA certificate to trust (a local cluster's)
   CANARY_DIGESTS       "browser=sha256:...,mcp-js=sha256:...": the session is
                        a canary session, started cold on those digests of the
@@ -54,6 +57,7 @@ DOMAIN = os.environ.get("DOMAIN", "computeruse.site")
 API = os.environ.get("API_URL", "https://api." + DOMAIN).rstrip("/")
 APP = os.environ.get("APP_URL", "https://app." + DOMAIN).rstrip("/")
 SITE = os.environ.get("SITE_URL", "https://" + DOMAIN).rstrip("/")
+API_HOST = os.environ.get("API_HOST", "")
 TOKEN = os.environ.get("CANARY_API_TOKEN", "")
 EXPECT_STATE_SAVED = os.environ.get("EXPECT_STATE_SAVED", "1") != "0"
 EXPECT_POLICIES = os.environ.get("EXPECT_POLICIES", "1") != "0"
@@ -98,6 +102,8 @@ def http(method, url, body=None, headers=None, timeout=60):
         headers.setdefault("Content-Type", "application/json")
     elif body is not None:
         data = body
+    if API_HOST and url.startswith(API + "/"):
+        headers["Host"] = API_HOST
     request = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
         with OPENER.open(request, timeout=timeout) as response:

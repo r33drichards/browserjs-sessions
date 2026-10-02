@@ -22,8 +22,12 @@
 #   hack/release.sh changes                 running against pinned, as a table;
 #                                           also previous=, session_images= and
 #                                           changed= lines for $GITHUB_OUTPUT
+#   hack/release.sh rollout-status <name> [seconds]
+#                                           waits for the Rollout of the backend
+#                                           or the site: promoted, or given up on
+#                                           (then it says why, and fails)
 #   hack/release.sh verify-deployments [tree]
-#                                           every Deployment runs what is pinned
+#                                           every workload runs what is pinned
 #   hack/release.sh verify-session          the pod of $SESSION_ID runs the
 #                                           session images in $EXPECT_IMAGES
 #                                           (default: the pinned ones)
@@ -111,6 +115,49 @@ case "${1:-}" in
     fi
     ;;
 
+  rollout-status)
+    name="${2:-}"
+    [ -n "$name" ] || die "rollout-status takes the Rollout's name"
+    if ! k get rollouts.argoproj.io "$name" >/dev/null 2>&1; then
+      # Not released by a Rollout here (a cluster without them): the Deployment.
+      k rollout status "deployment/$name" --timeout="${3:-600}s"
+      exit
+    fi
+    deadline=$((SECONDS + ${3:-600}))
+    last=""
+    while :; do
+      json="$(k get rollouts.argoproj.io "$name" -o json)"
+      # The Rollout has seen the Deployment's template as it now is.
+      seen="$(jq -r '.status.workloadObservedGeneration // ""' <<<"$json")"
+      want="$(k get deployment "$name" -o jsonpath='{.metadata.generation}')"
+      phase="$(jq -r '.status.phase // "Unknown"' <<<"$json")"
+      line="rollout/$name: $phase$(jq -r 'if .status.message then " (" + .status.message + ")" else "" end' <<<"$json")"
+      [ "$line" = "$last" ] || echo "$line"
+      last="$line"
+      if [ "$seen" = "$want" ]; then
+        case "$phase" in
+          Healthy)
+            # Promoted: the pods users reach are the new template's.
+            if [ "$(jq -r '.status.stableRS == .status.currentPodHash' <<<"$json")" = true ]; then exit 0; fi
+            ;;
+          Degraded)
+            echo "rollout/$name was given up on: the new version was not promoted, and what served before still serves"
+            k get analysisruns.argoproj.io -l "rollouts-pod-template-hash=$(jq -r '.status.currentPodHash' <<<"$json")" \
+              -o 'custom-columns=ANALYSIS:.metadata.name,PHASE:.status.phase,MESSAGE:.status.message' 2>/dev/null || true
+            # What the check said. Its output has no token and no address
+            # in it (test/canary.py).
+            for job in $(k get jobs -l app=release-canary --sort-by=.metadata.creationTimestamp -o name 2>/dev/null | tail -1); do
+              k logs "$job" --tail=80 2>/dev/null || true
+            done
+            exit 1
+            ;;
+        esac
+      fi
+      [ "$SECONDS" -lt "$deadline" ] || die "rollout/$name is still $phase after ${3:-600}s"
+      sleep 5
+    done
+    ;;
+
   verify-deployments)
     tree="${2:-.}"
     failed=""
@@ -120,6 +167,30 @@ case "${1:-}" in
       json="$(k get deployment "$deployment" -o json)" || die "no deployment/$deployment"
       have="$(jq -r '.spec.template.spec.containers[0].image' <<<"$json")"
       replicas="$(jq -r '.spec.replicas' <<<"$json")"
+      if rollout="$(k get rollouts.argoproj.io "$deployment" -o json 2>/dev/null)"; then
+        # Its pods are the Rollout's, made from the Deployment's template.
+        if [ "$have" != "$want" ]; then
+          echo "FAIL  $deployment is to run ${have##*@}, not the pinned ${want##*@}"
+          failed=1
+          continue
+        fi
+        if [ "$(jq -r '.status.phase == "Healthy" and .status.stableRS == .status.currentPodHash' <<<"$rollout")" != true ]; then
+          echo "FAIL  $deployment's rollout is $(jq -r '.status.phase' <<<"$rollout"): the pinned version is not what serves ($(jq -r '.status.message // "no message"' <<<"$rollout"))"
+          failed=1
+          continue
+        fi
+        digest="${want##*@}"
+        pods="$(k get pods -l "app=$deployment" -o json | jq -r --arg d "$digest" '
+          [.items[] | select(.metadata.deletionTimestamp == null) | select(.status.phase == "Running")] |
+          "\(length) \([.[] | .status.containerStatuses[0].imageID | select(contains($d) | not)] | unique | join(" "))"')"
+        if [ "${pods%% *}" = 0 ] || [ -n "${pods#* }" ]; then
+          echo "FAIL  $deployment has ${pods%% *} pods running, some not the pinned $digest: ${pods#* }"
+          failed=1
+          continue
+        fi
+        echo "ok    $deployment runs the pinned $digest (${pods%% *} pods, released by its Rollout)"
+        continue
+      fi
       if [ "$replicas" = 0 ]; then
         echo "ok    $deployment has no pods (its feature is off)"
         continue
@@ -228,8 +299,11 @@ case "${1:-}" in
     (cd "$tree" && hack/pin-images.sh --check)
     kubectl apply -k "$tree/deploy/gke"
     failed=""
-    for deployment in policy-operator opa billing-operator backend site; do
+    for deployment in policy-operator opa billing-operator; do
       k rollout status "deployment/$deployment" --timeout=300s || failed=1
+    done
+    for rollout in backend site; do
+      "$0" rollout-status "$rollout" 900 || failed=1
     done
     "$0" verify-deployments "$tree" || failed=1
     rm -rf "$tree"

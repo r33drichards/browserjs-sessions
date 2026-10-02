@@ -1,0 +1,81 @@
+name: release kind
+
+# How the backend and the site are released, on a throwaway kind cluster
+# inside the runner: Argo Rollouts as deploy/gke installs it, the Rollouts of
+# deploy/gke/rollouts.yaml as they are, and stand-ins for the two programs
+# and for the canary (test/release/run.sh). A version that fails its check is
+# taken away and users stay on the old one; one that passes is promoted.
+# Nothing here signs in anywhere or touches the production cluster.
+
+on:
+  pull_request:
+    paths:
+      - "deploy/gke/argo-rollouts/**"
+      - "deploy/gke/rollouts.yaml"
+      - "deploy/gke/site.yaml"
+      - "deploy/base/networkpolicy.yaml"
+      - "hack/release.sh"
+      - "test/release/**"
+      - ".github/workflows/release-kind.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-kind-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kind:
+    name: rollouts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Manifests
+        run: |
+          set -euo pipefail
+          shellcheck -S warning hack/release.sh test/release/run.sh
+          for overlay in deploy/gke deploy/gke-staging-issuer deploy/gke/argo-rollouts; do
+            kubectl kustomize "$overlay" >"$RUNNER_TEMP/rendered.yaml"
+          done
+          # The vendored manifest is the release's, unmodified.
+          want="$(sed -n 's/^#   sha256 //p' deploy/gke/argo-rollouts/kustomization.yaml)"
+          echo "$want  $(ls deploy/gke/argo-rollouts/argo-rollouts.v*.yaml)" | sha256sum -c -
+
+      - name: Cluster
+        run: |
+          set -euo pipefail
+          kind create cluster --name release --wait 120s
+          kubectl version
+
+      - name: test/release/run.sh
+        run: RESULTS="$RUNNER_TEMP/results.md" test/release/run.sh
+
+      - name: Results to job summary
+        if: ${{ !cancelled() }}
+        run: |
+          if [ -f "$RUNNER_TEMP/results.md" ]; then
+            { echo "## Releases on kind"; echo; cat "$RUNNER_TEMP/results.md"; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: What the cluster looked like
+        if: ${{ failure() }}
+        run: |
+          ns=browserjs-sessions
+          kubectl -n "$ns" get rollouts.argoproj.io,analysisruns.argoproj.io,pods,jobs,services -o wide --show-labels || true
+          kubectl -n "$ns" describe rollouts.argoproj.io | tail -120 || true
+          kubectl -n "$ns" describe analysisruns.argoproj.io | tail -80 || true
+          for job in $(kubectl -n "$ns" get jobs -o name); do
+            echo "=== $job"
+            kubectl -n "$ns" logs "$job" --tail=30 || true
+          done
+          kubectl -n argo-rollouts logs deployment/argo-rollouts --tail=120 || true
+          kubectl -n "$ns" get events --sort-by=.lastTimestamp | tail -40 || true

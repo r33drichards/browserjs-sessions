@@ -1,9 +1,97 @@
 # Releases
 
 How a change reaches users without breaking them: a canary before the
-merge, a canary before and after the deploy, and an automatic way back. One
-cluster, no second environment, no service mesh; what that buys and what it
-does not is at the end.
+merge; at the deploy, the new backend checked on standby before users reach
+it, the new site on a quarter of its pods, new session images on one
+session; a canary after; and an automatic way back. One cluster, no second
+environment, no service mesh.
+
+## What does the releasing, and why
+
+| | Released how | By |
+|---|---|---|
+| **site** | **canary by weight**: 1 pod in 4 is the new version, checked, then 2, then all; a failed check takes the new pods away | Argo Rollouts |
+| **backend** | **blue-green**: the new pod on standby beside the old, the whole canary run against it, then the switch; a failed check removes it, and users never met it | Argo Rollouts |
+| **session images** (browser, mcp-js) | **one canary session** on the new digests before the warm pool gets them | the backend's `canary` create option, the deploy workflow |
+| operators, OPA, Pomerium, Dex, CRDs, routes | applied, then the canary against the whole, then back to the last good commit if it fails | the deploy workflow |
+
+**Why the backend is blue-green and not weighted.** Weighted means two
+backends answering users at once, and this backend cannot: a VNC ticket is
+in the memory of the process that issued it (the next request, the
+websocket, would land on the other one and be refused), and so is idle
+tracking (the one that runs the sweep would put to sleep the sessions that
+are busy on the other). No router fixes that; it needs those two kept
+outside the process (signed tickets, activity on the Sandbox), which is
+backend work of its own. Blue-green needs much less: the second backend
+must only **do nothing unasked** while it is checked, which it now does
+(`backend/cmd/server/active.go`: the idle sweep, the warm pool's claim
+recovery and billing's sweeps start when the pod's label
+`browserjs.dev/role` says `active`). The cut-over itself is what a restart
+has always been (tickets and idle clocks start again), without the gap.
+
+**Why the site's weights need no router.** Its four pods are behind one
+Service, which Pomerium sends every visitor to; one new pod among four is a
+quarter of the connections. That is a real share of real traffic, and rough:
+Pomerium keeps connections open, so it is a quarter of connections, not of
+requests. With two users the traffic says nothing either way, so the
+decision is made by a check that asks the new pods directly (twenty requests
+for the front page and the health path), not by a success rate. A broken
+new site is therefore served to about a quarter of visitors for the few
+seconds its check takes; that is what a canary by weight is.
+
+### Flagger or Argo Rollouts
+
+Both were read against their current documentation (2026-10-02). Neither
+needs the other's ecosystem: Flagger runs without Flux, Argo Rollouts
+without Argo CD (only its controller is installed here).
+
+| | Flagger 1.45 | Argo Rollouts 1.10 |
+|---|---|---|
+| Weighted traffic needs | one of its providers: "Istio, Linkerd, App Mesh, NGINX, Skipper, Contour, Gloo Edge, Traefik, Kuma, Gateway API, Apache APISIX, Knative" ([deployment strategies](https://docs.flagger.app/usage/deployment-strategies)). Pomerium is not one | a traffic router (Gateway API by a plugin, and others), **or none**: "the Rollout makes a best effort attempt to achieve the percentage listed in the last `setWeight` step between the new and old version" by the ratio of pods ([canary](https://argo-rollouts.readthedocs.io/en/stable/features/canary/)) |
+| Without a router | blue-green only, "with Kubernetes L4 networking" | blue-green, or the canary by pod ratio used for the site |
+| Its check | webhooks, called by Flagger; for a command, its load tester has to be deployed ([blue/green tutorial](https://docs.flagger.app/tutorials/kubernetes-blue-green)); metric checks are Prometheus queries, and its Gateway API tutorial installs Prometheus for them ([Gateway API](https://docs.flagger.app/tutorials/gatewayapi-progressive-delivery)) | an `AnalysisTemplate` whose metric is a Kubernetes **Job**: our canary script, as it is, in a pod. No Prometheus |
+| What it does to the workload | makes `deployment/<name>-primary` and Services `<name>`, `<name>-primary`, `<name>-canary`; "the target deployment is scaled to zero"; the pods users reach are labelled `app=<name>-primary` ([how it works](https://docs.flagger.app/usage/how-it-works)) | a `Rollout` that takes its template from the Deployment (`workloadRef`, [migrating](https://argo-rollouts.readthedocs.io/en/stable/migrating/)); pods keep their labels; the Services keep their names and gain a selector |
+| For this repository | every NetworkPolicy that says `app: backend` (the sessions' ingress, the policy operator's), `cluster info`, and the checks would have to learn `backend-primary`; the Services would be Flagger's, not the manifests' | the base, `deploy/local` and the kind tests are untouched: the Deployments stay, and only `deploy/gke` adds Rollouts beside them |
+| Telling the new pod it is not serving yet | nothing built in | `previewMetadata` and `activeMetadata`: labels put on the pods and changed in place at promotion ([ephemeral metadata](https://argo-rollouts.readthedocs.io/en/stable/features/ephemeral-metadata/)), which is how the backend knows to stand by |
+| A failed check | "the green version is scaled to zero and the rollout is marked as failed" | before promotion the switch never happens ([blue-green](https://argo-rollouts.readthedocs.io/en/stable/features/bluegreen/)); the Rollout is `Degraded` |
+| SandboxTemplate, SandboxWarmPool | not a kind it handles | not a kind it handles |
+| Footprint | the controller, the load tester, and Prometheus for metric checks | one controller pod (25m CPU and 96Mi asked for here) |
+
+**Argo Rollouts**, for four reasons that are all about this system: the
+check we have is a script, and a Job runs it as it is; it can weight the
+site with no router; it leaves names, labels and the other overlays alone;
+and it can tell a pod whether it is the one serving, which the backend
+needs.
+
+**A router for true weights on the backend's side** was looked at in the
+order asked, and none is built, because the backend cannot use one yet:
+
+1. *GKE's Gateway API, internal class, between Pomerium and the backend.*
+   Flagger and Argo Rollouts can both drive its HTTPRoute weights. It needs
+   a proxy-only subnet and an internal load balancer in `infra/main`, the
+   NetworkPolicy of the backend opened to that subnet instead of to
+   Pomerium's pods, and backend timeouts raised for MCP streams and the VNC
+   websocket. Its cost and its behaviour with our long streams were **not
+   measured**.
+2. *An in-cluster Gateway (Envoy Gateway, Contour, NGINX Gateway Fabric,
+   Traefik).* A controller and a proxy on the one system node, which is
+   already about four fifths asked for, in the path of every request.
+3. *Pomerium's own upstream weights.* A route can name several upstreams
+   with weights, in its configuration file only
+   ([load balancing](https://www.pomerium.com/docs/reference/routes/load-balancing));
+   nothing can change them but an edit of that file, and here a changed
+   file is a new ConfigMap and a restart of Pomerium. Driving it would be a
+   controller of our own, which is the hand-rolling this was meant to avoid.
+
+When the backend can run twice, (3) with Argo's pod-ratio canary (no router
+at all, as the site) is the first thing to try, then (1).
+
+**What it costs.** One more controller pod. During a release: a second
+backend pod for the minutes of its check (100m CPU, 128Mi), four site pods
+at all times instead of one (10m and 32Mi each), and the check's own pod.
+On the system node that is roughly 55m more CPU asked for at rest and 165m
+during a release. Whether that still fits beside OPA and the operators on
+today's one node is **not verified** (see the end).
 
 ## The flow
 
@@ -21,13 +109,16 @@ hack/release.sh            # or: hack/release.sh backend=sha256:… site=sha256:
    1. prints **what changes**: per image, what runs and what is pinned;
    2. tries **new session images on one canary session**, before anything
       is applied. A failure stops the run with nothing changed;
-   3. **applies** `deploy/gke`, and waits for the rollouts as before;
+   3. **applies** `deploy/gke`. Argo Rollouts then releases the **backend**
+      (standby, the canary against it, the switch) and the **site** (a
+      quarter, a check, half, all); a version that fails is taken away;
    4. checks that **what is pinned is what runs**, and waits for the warm
       pool to be replaced;
-   5. runs **the canary** against the result, on an ordinary session;
+   5. runs **the canary** against the result through the edge, on an
+      ordinary session;
    6. on success **records** the commit as the last good release; on any
-      failure from the apply on, **rolls back** to the last good release and
-      runs the canary again to say whether the product is whole.
+      failure from the apply on, **rolls back** the rest to the last good
+      release and runs the canary again to say whether the product is whole.
 5. `hack/release.sh` follows the run and says released or failed. The run's
    summary has the table of what changed, each canary check, and what was
    promoted or rolled back.
@@ -53,7 +144,7 @@ first check ("the token is exchanged"), which says so; make another.
 
 | `CANARY` | `CANARY_API_TOKEN` | A deploy |
 |---|---|---|
-| not set, or `off` | any | applies and verifies nothing afterwards, as before this existed, with a warning that says so |
+| not set, or `off` | any | the rollouts still happen (a backend that does not become ready, or a site that does not answer, is still taken away), but the backend's check passes without checking, nothing is verified afterwards and nothing is rolled back; a warning says so |
 | `on` | not set | refused at once, before anything is touched, naming the secret |
 | `on` | set | the flow above |
 
@@ -132,42 +223,68 @@ need the new blueprint or the new backend, the canary session cannot start
 them: run the deploy with `session_canary: skip`. The canary after the
 apply still runs, and still rolls back.
 
-## The backend, the operators and the site
+## The backend and the site: Argo Rollouts
 
-| | Rollout | If the new one does not come up |
-|---|---|---|
-| site | `maxUnavailable: 0`: the new pod is ready before the old one goes | the old one keeps serving; the run fails at its rollout and rolls back |
-| OPA | rolling, two replicas, a disruption budget (unchanged) | the same |
-| backend | `Recreate` (unchanged) | **down** from the moment the old pod stops until the rollback has the old one back: the rollout's five minutes at worst, plus the rollback |
-| policy operator, billing operator | `Recreate` (unchanged) | policies keep being enforced from OPA's last bundle; usage is not sent (free time) |
+`deploy/gke/argo-rollouts/` is the controller (the release's manifest,
+vendored, applied before the rest). `deploy/gke/rollouts.yaml` is the two
+Rollouts, their extra Services, the two checks and the checks'
+NetworkPolicy. `deploy/gke/patch-rollouts.yaml` leaves the two Deployments
+without pods of their own and gives the backend its labels as a file. The
+base, `deploy/local` and the kind tests still run plain Deployments.
 
-**Why the backend is not rolled out with `maxUnavailable: 0`.** That needs
-two backends at once, and the backend must be exactly one: VNC tickets and
-idle tracking are in its memory, the per-user create lock and the warm
-pool's claim recovery assume a single process
-(`backend/cmd/server/main.go`). Two for a minute would hand out a ticket
-one of them cannot redeem and could adopt one warm pod twice. Making it
-safe means moving that state out of the process; until then a backend that
-fails to start costs minutes of downtime, bounded by the automatic
-rollback. What protects users from a backend that starts and is wrong is
-the canary after the apply.
+**Backend.** A change to the Deployment's template (an image, a variable, a
+ConfigMap's name, a `rollout restart`) makes the Rollout:
 
-**A traffic-split canary** (a second backend behind a canary host that only
-the canary token uses) was considered and not built: it is the same two
-backends at once, plus a route, a DNS name and a certificate name in
-`infra/main`. It becomes cheap once the backend can run twice.
+1. start one pod of the new template, labelled `browserjs.dev/role:
+   preview`, behind the Service `backend-preview`. No route of Pomerium's
+   leads there; the NetworkPolicy lets in only the check. The pod answers
+   requests and does nothing unasked;
+2. run `test/canary.py` in a Job against `backend-preview`, as the API host
+   (the `Host` header), with the token of the Secret `release-canary`: a
+   real session, created, driven, restricted, slept, woken and deleted
+   through the new backend;
+3. passed: switch the Service `backend` to the new pod and relabel it
+   `active` (it then starts its sweeps); the old pod goes 30 seconds later,
+   so calls in flight on it can finish. Viewers reconnect and tickets are
+   issued anew, as at any restart;
+4. failed, or the pod not ready within ten minutes: remove the new pod.
+   The Rollout is `Degraded`, `hack/release.sh rollout-status backend`
+   fails with the check's output, and users are where they were.
+
+The deploy workflow writes the script (ConfigMap `release-canary`, from
+`test/canary.py` of the commit being deployed) and the token (Secret
+`release-canary`, from `CANARY_API_TOKEN`) before the apply. Without the
+Secret the Job passes, saying that it checked nothing.
+
+**Site.** Four pods. A change makes the Rollout bring up one new pod (a
+quarter), run the check `site-answers` against the new pods through the
+Service `site-canary`, go to half, wait 30 seconds, and finish. A failed
+check takes the new pods away; never fewer than four serve.
+
+**The rest** is unchanged: OPA rolls with two replicas and a disruption
+budget; the two operators are `Recreate` (while one is away, policies keep
+being enforced from OPA's last bundle, and usage is not sent).
+
+To look: `cluster info`, section "Release" (the Rollouts' phase, the pods'
+roles, the analysis runs). By hand: `kubectl -n browserjs-sessions get
+rollouts,analysisruns`. To try a release's mechanics without a cluster that
+matters: `test/release/run.sh` on kind.
 
 ## Rolling back
 
-**Automatically**, when the canary is on and anything fails from the apply
-on: `hack/release.sh rollback <commit>` with the commit in the ConfigMap
-`release` (the last release the canary passed; `cluster info` shows it under
-"Release"). It takes `deploy/` as that commit has it (`git archive`, so
-nothing of the failed commit is used), checks its pins, applies
-`deploy/gke`, waits for every Deployment, checks that each runs that
-commit's digests, and runs the canary. The run fails either way; its
-summary says "rolled back, and the canary passes" or "rolled back, and the
-canary still fails: needs a person".
+**The backend and the site roll themselves back**, in the sense that a
+version that fails its check is never promoted: there is nothing to undo.
+
+**The rest, automatically**, when the canary is on and anything fails from
+the apply on (a failed rollout included): `hack/release.sh rollback
+<commit>` with the commit in the ConfigMap `release` (the last release the
+canary passed; `cluster info` shows it under "Release"). It takes `deploy/`
+as that commit has it (`git archive`, so nothing of the failed commit is
+used), checks its pins, applies `deploy/gke`, waits for every Deployment and
+Rollout (the backend's goes back through its check, on the old version),
+checks that each runs that commit's digests, and runs the canary. The run
+fails either way; its summary says "rolled back, and the canary passes" or
+"rolled back, and the canary still fails: needs a person".
 
 It is deterministic because a commit of `main` names every image by digest.
 What it does not undo:
@@ -213,6 +330,19 @@ system up on kind, with session policies at `enforcing`; then
 | sleep and wake as state changes; delete | the warm pool, and the canary create option (the local blueprint names images by tag) |
 | Pomerium's routes for the API host | the real certificate, DNS, the load balancer, the site |
 
+The script is run twice there: through Pomerium and the API host, and
+straight at the backend with `API_HOST`, which is how the backend's Rollout
+runs it on GKE.
+
+**`release kind`** (`test/release/run.sh`) is the other half: Argo Rollouts
+as `deploy/gke` installs it and `deploy/gke/rollouts.yaml` as it is, with
+stand-ins for the two programs and for the canary. It shows that a backend
+that fails its check is never switched to and is removed, that one that
+passes is promoted and told it is active without a restart, that without
+the token the check passes saying so, that the site goes out one pod in
+four first and comes back whole when its check fails, and that only the
+check's pod reaches the standby backend.
+
 So a pin of images that were built from a `main` this check passed on is
 covered twice (source here, digests in the deploy's canary); a pin of
 digests that are **not** the latest build of `main` is covered only by the
@@ -249,22 +379,42 @@ Does not catch:
 
 ## Not verified until its first real run
 
-The canary script and the kind gate have run (in CI, on kind). These have
-run nowhere, because nothing here may deploy to production:
+The canary script, the kind gate and the rollouts' mechanics have run (in
+CI, on kind). These have run nowhere, because nothing here may deploy to
+production:
 
-1. `test/canary.py` against production: the app's redirect status, sleep
+1. **The first deploy with the Rollouts.** The Deployments of the backend
+   and the site lose their pods and the Rollouts' first pods come up beside
+   that: a gap of the length of a backend restart, once. The first revision
+   of a Rollout is not checked (there is nothing to compare it with).
+2. **Room on the system node** for the controller, three more site pods
+   and, during a release, a second backend and the check's pod. If the
+   standby backend cannot be scheduled it is given up on after ten minutes
+   and the release fails, with users untouched.
+3. The backend's check **inside the GKE cluster**: the Job's pod reaching
+   `backend-preview` under Dataplane V2, pulling `python:3.13-alpine` from
+   Docker Hub, and a session created through a standby backend (its warm
+   pool claim, its policy) while the active one serves.
+4. `test/canary.py` against production: the app's redirect status, sleep
    with `stateSaved`, and the page's memory surviving a restore.
-2. The canary session on GKE: a cold start with other digests under gVisor
+5. The canary session on GKE: a cold start with other digests under gVisor
    and the admission policies, and **whether a session node has room** for
    one more pod beside the warm pool of 7 (if not, it stays pending and the
    check "it runs" fails after 5 minutes: the release stops with nothing
    changed, and the warm pool's size or the quota is what to look at).
-3. `hack/release.sh verify-deployments`, `verify-session` and
+6. `hack/release.sh verify-deployments`, `verify-session` and
    `wait-warm-pool` against real objects (the image IDs GKE reports; that
    the pool replaces its pods on a template change, as
    `updateStrategy: Recreate` says).
-4. The rollback, end to end.
-5. `hack/release.sh` with no arguments (the pin from the registry needs
+7. The rollback, end to end; and a rollback to a commit from **before** the
+   Rollouts (its Deployments would get pods again beside the Rollouts':
+   do that one by hand, deleting the two Rollouts first).
+8. `hack/release.sh` with no arguments (the pin from the registry needs
    `gcloud`; the rest needs a pull request it may merge).
-6. The time it all takes inside the job's 55 minutes; the worst case (a
-   canary session, a failed apply, a rollback, and a canary) is near it.
+9. The time it all takes inside the job's 58 minutes: a canary session, the
+   backend's check, the canary after, and at worst a rollback with the
+   backend's check again are close to it.
+10. `billing-apply.yml` restarts the backend with `kubectl rollout restart
+    deployment/backend` and waits on the Deployment, which now returns at
+    once: the restart still happens (through the Rollout, with its check),
+    but that workflow no longer waits for it. It is not this change's file.
