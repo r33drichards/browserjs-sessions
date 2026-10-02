@@ -486,7 +486,8 @@ fn parse_base_url(raw: &str) -> Result<Url, ComputerUseError> {
             "base_url must not carry credentials",
         ));
     }
-    if !url.path().trim_matches('/').is_empty() || url.query().is_some() || url.fragment().is_some() {
+    if !url.path().trim_matches('/').is_empty() || url.query().is_some() || url.fragment().is_some()
+    {
         return Err(ComputerUseError::configuration(
             "base_url is the API host alone, such as https://api.computeruse.site: \
              no path (not /v1), query or fragment",
