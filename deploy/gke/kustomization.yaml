@@ -34,13 +34,13 @@ images:
     digest: sha256:9112d8f9b774c499ef0c2d62fe0cb836d53ed76358411cc1c7f8c3282ce6af65
   - name: browserjs/backend
     newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/backend
-    digest: sha256:e9887294e3923c6a28a60efc1d9ece6e2a889378c8866e0e890af465f6b3f454
+    digest: sha256:c63705fa20eeb2225ca343c1f106f136526a4c6e3afb88a0f503f09254b79e8d
   - name: browserjs/browser
     newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/browser
-    digest: sha256:e5d7fc774911669a1921dc13d2b04bebec70a20b4817a8d13b205f8e431744fb
+    digest: sha256:c146635af8eeb427a187a6474cab9b8fef661ee84953c7e4befe5ed0a10f590f
   - name: browserjs/mcp-js
     newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/mcp-js
-    digest: sha256:c7f95389964e6b1e6d978d287925e9ffae04b79658e589c46354e86c05e7b365
+    digest: sha256:425553692f3879e26855424261f7c59a6035de609894221e81107011d37f17eb
   - name: browserjs/site
     newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/site
     digest: sha256:68c85ef7444b3a2e607487f8b193bb267c615241c1d1d54e3195f7cd4e533c34
