@@ -4138,10 +4138,10 @@ What was built; the commands are in `docs/local-development.md`.
   - `backend.yaml`: ServiceAccount; Role limited to `sandboxes` get/list/create/update/patch/delete (the store never watches, and needs nothing on PVCs: a session's PVC is deleted with its Sandbox); Deployment with one replica and `Recreate`; Service.
   - `blueprint.yaml` (a ConfigMap file): the session's Sandbox spec, a template over `.ID`, `.SessionURL`, `.PublicURL`. Both containers with HTTP probes, `fsGroup: 1000` for mcp-js, a memory-backed `/dev/shm`, 30 s termination grace, one volume claim mounted at `chrome`, `memory` and `mcp` sub-paths, no service account token.
   - `networkpolicy.yaml`: session pods accept only the backend (6080, 8080) and reach only DNS and the internet (private ranges, CGNAT and link-local excluded); the backend accepts only Pomerium.
-  - `pomerium.yaml`, `pomerium-config.yaml`: Pomerium Core v0.33.3 as a one-replica StatefulSet configured from a file, databroker on a PVC, `mcp_allowed_client_id_domains: [claude.ai]`. Core with a config file rather than the ingress controller, because the routes are static, wildcard hosts are supported there (only "unofficially" through Ingress), and route order is explicit.
+  - `pomerium.yaml`, `pomerium-config.yaml`: Pomerium Core v0.33.3 as a one-replica StatefulSet configured from a file, databroker on a PVC, `mcp_allowed_client_id_domains: [claude.ai]`. The app route and the sessions' MCP route admit only a list of email addresses (one policy, written in each overlay's config); the upload, VNC and discovery routes are public. Core with a config file rather than the ingress controller, because the routes are static, wildcard hosts are supported there (only "unofficially" through Ingress), and route order is explicit.
   - `dex.yaml`, `dex-config.yaml`: Dex v2.45.1, Google and GitHub connectors, state in Kubernetes custom resources.
   - `secrets.example.yaml`: the three Secrets the deployment expects (`dex-oauth`, `pomerium`, `pomerium-tls`), placeholders only, not part of the kustomization.
-- `deploy/local`: its own copy of the blueprint (see "What the local run found", item 2), local hostnames, NodePorts, the throwaway CA for the backend, three test users in Dex (`alice@`, `bob@`, `admin@example.com`, password `test`), and a sidecar that gives the Pomerium pod a `localhost:5556` leading to Dex.
+- `deploy/local`: its own copy of the blueprint (see "What the local run found", item 2), local hostnames, NodePorts, the throwaway CA for the backend, test users in Dex (`alice@`, `bob@`, `admin@example.com`, and `mallory@example.com` who is not on Pomerium's list; password `test`), the list of who may sign in, and a sidecar that gives the Pomerium pod a `localhost:5556` leading to Dex.
 - `deploy/local-test`: `deploy/local` with the backend trusting the integration test's own signing keys. Applied and removed by the test.
 
 ### Task 19: Local cluster
@@ -4153,17 +4153,18 @@ Agent Sandbox is **v1.0.4**: v1.0.5 was released on 2026-10-01 without its contr
 ### Task 20: End-to-end tests
 
 - `test/integration.py` (Python standard library): the backend and session pods without Pomerium, with assertions the test signs. 20 checks, all passing on 2026-10-01: identity, create, ownership, MCP (initialize, tools, `run_js`, the browser), refusals (403, never 401), the GET stream rule, upload, VNC (ticket, upgrade, RFB banner), stop, resume with tab, memory file and artifact intact, idle sleep and wake, delete with Sandbox, pod and PVC gone.
-- `test/browser-e2e.mjs`: the UI through Pomerium and Dex in a headless Chrome. 8 checks, all passing.
+- `test/browser-e2e.mjs`: the UI through Pomerium and Dex in a headless Chrome, a user who is not on the list (403 from Pomerium), the public routes, and `test/mcp-client.mjs` for the owner and for another user. 12 checks, all passing.
 - `test/mcp-client.mjs`: the MCP SDK's client, with its own OAuth support, against a session through Pomerium. Passes for the owner; a second user is refused with 404.
 - `test/mcp-oauth.mjs`: the same sign-in walked request by request, for looking at each step.
 
-Measured locally (kind on colima, 6 CPU / 12 GB): session start 6 to 9 s; wake from idle 3 to 4 s; resume after stop 2.6 s; stop 30 s (the full termination grace period: a container does not exit on SIGTERM, not yet tracked down); delete, until the PVC is gone, 34 s.
+Measured locally (kind on colima, 6 CPU / 12 GB): session start 6 to 9 s; wake from idle 3 to 4 s; resume after stop 3 s; stop 1 s; delete, until the PVC is gone, 3 s.
 
 ### What the local run found
 
 1. **Pomerium does not serve MCP discovery on wildcard hosts** (worked around in the backend). Pomerium v0.33.3 answers 401 with a `resource_metadata` pointer on `<id>.sessions…/mcp`, but serves `/.well-known/oauth-protected-resource` and `/.well-known/oauth-authorization-server` only on hosts that have an exact (non-wildcard) route: `config/envoyconfig/route_configurations.go` leaves hosts containing `*` out of the per-host virtual hosts. Everything the documents point to (`/.pomerium/mcp/authorize`, `/.pomerium/mcp/token`, MCP calls with the token) works on a wildcard host. So the backend serves the two documents on session hosts (`backend/internal/proxy/metadata.go`), with the content Pomerium serves on an exact-route host, behind a fourth, public wildcard route for `/.well-known/oauth-`. Verified with the MCP SDK's own client (`test/mcp-client.mjs`): discovery, authorization, token, `initialize`, `tools/list`, `run_js`; a second user gets a token and then 404. No upstream issue was found for this; the workaround should go when Pomerium serves the documents itself. The alternative, per-session exact-host routes, was also shown to work by hand but needs three routes per session created through Pomerium's config API, and was not built.
 2. **x11vnc never answered a viewer in the cluster** (fixed). Under kind's containerd a container's open-file limit is about a billion; x11vnc walks all of them when a viewer connects. `images/browser/browser/entrypoint.sh` now lowers the limit itself. The local `browserjs/browser:dev` image was built before that and was not rebuilt (a build takes about 14 GB of disk), so `deploy/local/blueprint.yaml` is a copy of the base blueprint that sets the limit in a `command`. Delete that file after the next image build.
-3. Verified facts about Pomerium that the research had left open: the assertion reaches the backend on normal and MCP routes; its `aud` is the bare hostname; an API `fetch` with `Accept: application/json` and no session gets 401 JSON, with `*/*` a 302 (the UI handles both); the public upload and VNC routes need no session, and a websocket works through the VNC route; a 15 MiB upload passes and a 20 MiB one gets the backend's 413; an MCP token is not bound to a host (the backend's owner check is what protects a session); cookies are per host.
+3. **Stopping a session took 30 s** (fixed). mcp-v8 has no SIGTERM handler and was PID 1 in its container, where an unhandled signal does nothing, so every stop and delete waited for the kill at the end of the grace period. `images/mcp-js/start.sh` now runs it as a child and passes the signal on. This exposed a small gap, not fixed: for up to 2 s after a stop the proxy still takes the pod to be there, and an MCP call in that window gets 502 instead of 409.
+4. Verified facts about Pomerium that the research had left open: the assertion reaches the backend on normal and MCP routes; its `aud` is the bare hostname; an API `fetch` with `Accept: application/json` and no session gets 401 JSON, with `*/*` a 302 (the UI handles both); the public upload and VNC routes need no session, and a websocket works through the VNC route; a 15 MiB upload passes and a 20 MiB one gets the backend's 413; an MCP token is not bound to a host (the backend's owner check is what protects a session); cookies are per host.
 
 ---
 
@@ -4186,7 +4187,7 @@ The cluster exists (project `browserjs-sessions`, cluster `browserjs` in us-west
 2. A certificate covering all four (the wildcard needs a DNS challenge), as the `pomerium-tls` Secret; the `pomerium` Service exposed by a load balancer that passes websockets and long-lived responses without a short timeout.
 3. `POMERIUM_JWKS_URL`: the base points it at the app's public hostname. Check the backend can reach that from inside the cluster, or serve the keys another way.
 4. Dex: a Google web client and a GitHub OAuth app with callback `https://dex.<domain>/callback`, in the `dex-oauth` Secret. Dex is reached through a public Pomerium route (already in the base config); Pomerium itself talks to that public URL.
-5. **Who may sign in.** The app route allows any signed-in user, and with Google and GitHub that is anyone. Add an allow-list (emails or domains) to the app and MCP routes before exposing it.
+5. **Who may sign in.** Put the real list of email addresses in the overlay's Pomerium config (the base has a placeholder). A GitHub user is known by their primary verified email.
 6. Add a session's MCP URL to Claude as a connector and run a `run_js` call. The research notes an open Pomerium issue (#6675) about connectors authorized this way showing no tools in Claude Code cloud sessions.
 7. Verify NetworkPolicy is enforced: from a session pod, the backend, the API server and `169.254.169.254` must be unreachable and `https://example.com` reachable.
 
@@ -4203,11 +4204,11 @@ Session node pool with a minimum of zero; the backend, Pomerium and Dex on a poo
 ## Open items for the user
 
 - **Claude as the MCP client is untested.** The MCP SDK's client signs in and works against a local session; Claude's hosted apps cannot reach a local cluster, and Claude Code was not tried.
-- **Who may sign in** (Task 22 step 5).
+- **Who may sign in** on GKE: the list of emails (Task 22 step 5). Changing it means editing the Pomerium config.
 - **Idle period.** 15 minutes (`IDLE_AFTER`), assumed, not confirmed.
 - **Hostnames** for the GKE deployment, and whether sessions get their own registrable domain.
 - **Root or non-root browser image** on GKE (Task 21 step 3).
-- **Stop takes 30 s.** A container in the session pod does not exit on SIGTERM and is killed at the end of the grace period. Tabs are still restored. Not yet tracked down.
+- **A 502 for 2 s after a stop.** The proxy remembers a running pod for 2 s; an MCP call just after a stop gets 502 rather than 409.
 - **Admins are a static list** read at startup; owners are emails, so an email change at the identity provider orphans a user's sessions.
 - **Events on the detail page.** The page shows the sandbox's status message, not cluster events.
 - Real Google and GitHub sign-in has only been checked as far as the redirect to each provider; nobody has completed one.

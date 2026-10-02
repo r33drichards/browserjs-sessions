@@ -40,17 +40,34 @@ To use `kubectl` yourself: `export KUBECONFIG=$PWD/.local/kubeconfig`.
 
 ## Sign in
 
-Open <https://app.localtest.me>. The certificate is signed by the throwaway
-CA, so the browser warns; accept it for `app.`, `authenticate.` and each
-session host you open, or trust `.local/tls/ca.crt`.
+First trust the throwaway CA, once (it asks for your password; undo it with
+`security remove-trusted-cert .local/tls/ca.crt`):
+
+```bash
+security add-trusted-cert -r trustRoot -k ~/Library/Keychains/login.keychain-db .local/tls/ca.crt
+```
+
+Clicking through the browser's warning instead is not enough: the session's
+screen is a websocket to another host (`<id>.sessions.localtest.me`), and a
+browser gives no way to accept an untrusted certificate for that, so the
+screen stays on "Connecting". Restart the browser after trusting the CA.
+
+Then open <https://app.localtest.me>.
 
 Dex offers three ways in:
 
 - **Log in with Email**: the test users `alice@example.com`, `bob@example.com`
   and `admin@example.com` (an admin), password `test`. Local only.
+  `mallory@example.com` can sign in at Dex but is not allowed into the app.
 - **Google**, **GitHub**: the real providers, if the Keychain had the
   credentials. The Google app is in testing mode and admits only its listed
   test user.
+
+Who gets in after signing in is the list of email addresses in
+`deploy/local/pomerium-config.yaml` (`policy:` on the MCP route, shared with
+the app route); everyone else gets Pomerium's 403 page. A GitHub account is
+known by its primary verified email, which has to be on the list. After
+editing the list, `kubectl apply -k deploy/local`.
 
 | What | Where |
 |---|---|
@@ -87,7 +104,8 @@ The UI through Pomerium and Dex, in a headless Chrome:
 nix develop -c node test/browser-e2e.mjs
 ```
 
-Screenshots and results go to `.local/` (`OUT_DIR` to change).
+Screenshots and results go to `.local/` (`OUT_DIR` to change). It also runs
+`test/mcp-client.mjs` (below) for the session's owner and for another user.
 
 An MCP client through Pomerium: the MCP SDK's client does the discovery, the
 OAuth flow and the calls; the script signs the user in at Dex. It needs an

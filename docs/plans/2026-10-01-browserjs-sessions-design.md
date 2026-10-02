@@ -93,7 +93,8 @@ Not decided: the idle period before a session sleeps. The design assumes
 Two kinds of host, both served by Pomerium and passed to the one backend
 Service with the caller's `Host`. The backend tells them apart by host.
 
-**The app host.** One Pomerium route: any signed-in user. Pomerium adds the
+**The app host.** One Pomerium route: signed-in users whose email is on the
+deployment's list. Pomerium adds the
 signed identity header.
 
 | Path | Purpose |
@@ -112,7 +113,7 @@ path does not exist.
 
 | Path | Pomerium route | Who checks what |
 |---|---|---|
-| `/mcp` | MCP server route: Pomerium is the OAuth server for MCP clients and passes the identity header | Backend: the caller owns the session or is an admin |
+| `/mcp` | MCP server route, same list of users: Pomerium is the OAuth server for MCP clients and passes the identity header | Backend: the caller owns the session or is an admin |
 | `GET /vnc?ticket=…` | Public, websockets allowed | Backend: the ticket is unused, unexpired and for this session |
 | `PUT /api/artifact-uploads/{token}` | Public | The session's mcp-js: the one-time token it issued. Backend: size cap, session already running |
 | `GET /.well-known/oauth-…` | Public | Nothing to check: the two OAuth discovery documents for the MCP endpoint |
@@ -167,8 +168,9 @@ Open:
 - **Claude as the MCP client is untested.** The MCP SDK's own client signs in
   and uses a session through Pomerium on the local cluster; Claude's clients
   have not been tried against it.
-- **Who may sign in** is everyone with a Google or GitHub account until an
-  allow-list is added to the routes.
+- **Who may use the app** is a list of email addresses in Pomerium's
+  configuration, so changing it is a configuration change. Anyone can sign in
+  at Dex; Pomerium refuses those not on the list (403).
 - Not verified: a completed Google or GitHub sign-in (only the redirect to
   each), Claude's own clients against this setup, anything on GKE.
 
