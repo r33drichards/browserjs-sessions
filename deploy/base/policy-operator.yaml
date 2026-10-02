@@ -105,6 +105,11 @@ spec:
             - -m
             - policy_operator
           env:
+            # kopf asks who it runs as, and uid 65532 has no entry in the
+            # image's /etc/passwd: without a name here it exits at start
+            # (KeyError: getpwuid(): uid not found).
+            - name: USER
+              value: policy-operator
             # What OPA presents when it fetches the bundle.
             - name: BUNDLE_TOKEN
               valueFrom:

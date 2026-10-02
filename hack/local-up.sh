@@ -135,6 +135,11 @@ if ! kubectl -n "$NS" get secret policy-tokens >/dev/null 2>&1; then
   } | secret_from_stdin policy-tokens
 fi
 
+# API tokens: the key their access tokens are signed with (docs/api-tokens.md).
+if ! kubectl -n "$NS" get secret api-tokens >/dev/null 2>&1; then
+  echo "signing-key=$(random_b64 | tr -d '\n')" | secret_from_stdin api-tokens
+fi
+
 # The Google and GitHub OAuth apps, from the Keychain. Without them Dex
 # still starts, and the test users still work; those two buttons do not.
 keychain() {

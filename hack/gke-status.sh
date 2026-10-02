@@ -98,12 +98,20 @@ policy-operator want 0 replicas. Serving: both are ready, and every
 SessionPolicy is Ready. Enforcing: the SandboxTemplate, and the Sandboxes
 made since, are listed below as asking OPA.
 TEXT
+# OPA's readiness probe is /health?bundles: a ready replica has the
+# operator's bundle active. Per policy, the Loaded column further down says
+# how many replicas serve it.
 show kubectl -n "$NS" get deployment opa policy-operator -o 'custom-columns=NAME:.metadata.name,READY:.status.readyReplicas,WANTED:.spec.replicas,IMAGE:.spec.template.spec.containers[0].image'
 show kubectl -n "$NS" get pods -l 'app in (opa,policy-operator)' -o wide
 show kubectl -n "$NS" get endpointslices -l 'kubernetes.io/service-name in (opa,policy-operator)' -o wide
 show kubectl -n "$NS" get poddisruptionbudget opa
 # Key names and sizes only; describe never prints a value.
 show kubectl -n "$NS" describe secret policy-tokens
+show kubectl -n "$NS" describe secret api-tokens
+echo "API tokens are on when the backend has both of these (docs/api-tokens.md):"
+show kubectl -n "$NS" get deployment backend -o 'jsonpath={range .spec.template.spec.containers[0].env[?(@.name=="API_URL")]}{.name}={.value}{"\n"}{end}{range .spec.template.spec.containers[0].env[?(@.name=="ALLOWED_EMAILS")]}{.name}={.value}{"\n"}{end}'
+# Names and expiry only: the owner is an email address, the hash stays put.
+show kubectl -n "$NS" get apitokens.browserjs.dev -o 'custom-columns=NAME:.metadata.name,SCOPES:.spec.scopes,EXPIRES:.spec.expiresAt,LAST-USED:.status.lastUsedTime'
 printf '```\n'
 kubectl get crd sessionpolicies.browserjs.dev apitokens.browserjs.dev -o json 2>&1 | jq -r '
   .items[] | "\(.metadata.name)  served=\([.spec.versions[] | select(.served) | .name] | join(","))  established=\([.status.conditions[]? | select(.type == "Established") | .status] | join(","))"' 2>&1

@@ -221,6 +221,15 @@ jobs:
             } | secret_from_stdin policy-tokens
           fi
 
+          # API tokens: the key that signs the access tokens they are
+          # exchanged for (docs/api-tokens.md). Made once: a new one ends
+          # every access token in use, an hour's worth at most.
+          if kubectl -n "$NS" get secret api-tokens >/dev/null 2>&1; then
+            echo "secret/api-tokens exists: left alone"
+          else
+            echo "signing-key=$(random_b64)" | secret_from_stdin api-tokens
+          fi
+
           # Dex and Pomerium share the secret of Dex's one client.
           client_secret="$(kubectl -n "$NS" get secret pomerium -o jsonpath='{.data.IDP_CLIENT_SECRET}' | base64 -d)"
           echo "::add-mask::$client_secret"
