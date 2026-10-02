@@ -246,6 +246,16 @@ spec:
                   name: session-blueprint
               - configMap:
                   name: billing-catalogue
+              # The IDs of what OpenTofu made in Stripe and Metronome
+              # (infra/billing), as billing-iac/ids.json: the "billing
+              # apply" workflow writes this ConfigMap, so it is absent
+              # until that has run. BILLING_IDS defaults to this path.
+              - configMap:
+                  name: billing-iac
+                  optional: true
+                  items:
+                    - key: ids.json
+                      path: billing-iac/ids.json
 ---
 apiVersion: v1
 kind: Service

@@ -341,6 +341,31 @@ for pod in backend billing-operator; do
 done
 is "without a restart: the same pods, no container restarted" "$before" "$(uids)"
 
+step "4. billing-iac"
+# The ConfigMap the "billing apply" workflow writes. The backend started
+# without it (above); once it is there the file appears, with no restart.
+is "without ConfigMap billing-iac the backend has no ids.json" "" \
+  "$(k exec deploy/backend -- sh -c 'ls /etc/browserjs/billing-iac 2>/dev/null')"
+before="$(uids)"
+printf '{"stripe_webhook_endpoint_id":"we_madeup","metronome_rate_card_id":"madeup"}\n' >"$work/ids.json"
+k create configmap billing-iac --from-file=ids.json="$work/ids.json" --dry-run=client -o yaml | k apply -f - >/dev/null
+seen=""
+for _ in $(seq 1 90); do
+  if k exec deploy/backend -- cat /etc/browserjs/billing-iac/ids.json 2>/dev/null | cmp -s - "$work/ids.json"; then
+    seen=1
+    break
+  fi
+  sleep 2
+done
+if [ -n "$seen" ]; then pass "ConfigMap billing-iac reaches the backend as /etc/browserjs/billing-iac/ids.json"; else
+  fail "ConfigMap billing-iac reaches the backend as /etc/browserjs/billing-iac/ids.json" "$(k exec deploy/backend -- sh -c 'ls -la /etc/browserjs /etc/browserjs/billing-iac' 2>&1 | tail -8)"
+fi
+is "without a restart" "$before" "$(uids)"
+is "the blueprint and the catalogue are still beside it" "billing-iac blueprint.yaml catalogue.yaml" \
+  "$(k exec deploy/backend -- sh -c 'cd /etc/browserjs && ls' | xargs)"
+# And a backend that starts with it there (the restart further down)
+# has it from the start: checked after that restart.
+
 step "4. hack/billing-secrets.sh"
 # Made up here, in the shape of the real ones. Never a real key or token.
 random() { head -c 18 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
@@ -440,6 +465,8 @@ is "the same again reports no change" "" "$(outputs)"
 k rollout restart deploy/backend deploy/billing-operator >/dev/null
 for deployment in backend billing-operator; do k rollout status "deploy/$deployment" --timeout=180s >/dev/null; done
 have() { k exec "deploy/$1" -- printenv "$2" 2>/dev/null; }
+is "a backend started with ConfigMap billing-iac there has ids.json" "we_madeup" \
+  "$(k exec deploy/backend -- cat /etc/browserjs/billing-iac/ids.json | jq -r .stripe_webhook_endpoint_id)"
 is "the backend's STRIPE_MODE is the ConfigMap's" "test" "$(have backend STRIPE_MODE)"
 is "the backend's STRIPE_API_KEY is the Secret's" "$fake_key" "$(have backend STRIPE_API_KEY)"
 is "the backend's STRIPE_WEBHOOK_SECRET is secret/stripe-webhook's" "$fake_secret" "$(have backend STRIPE_WEBHOOK_SECRET)"

@@ -32,6 +32,7 @@ Everything is in the namespace `browserjs-sessions`.
 | CronJob `billing-export`, its ServiceAccount, Role, RoleBinding, NetworkPolicy | `deploy/gke/billing-export.yaml` | **suspended** until the stage `enforce`; Accounts only |
 | Bucket `<project>-billing-export`, and the right of that ServiceAccount to add objects to it | `infra/main/billing.tf` | versioned, 90 days; see "The export" for why it is here already |
 | Secret `stripe` (`STRIPE_API_KEY`), ConfigMap `billing-mode` (`STRIPE_MODE`), Secret `metronome` (`METRONOME_API_TOKEN`, `METRONOME_WEBHOOK_SECRET`) | not in the repository | written by the deploy workflow (`hack/billing-secrets.sh`), or absent; placeholders in `secrets.example.yaml` |
+| ConfigMap `billing-iac` (`ids.json`: the IDs of what OpenTofu made) | not in the repository | written by the **billing apply** workflow; an optional source of the backend's `/etc/browserjs` volume, read as `/etc/browserjs/billing-iac/ids.json` (`BILLING_IDS`'s default). Absent, the backend starts without the file; written later, it appears with no restart |
 | Secret `stripe-webhook` (`STRIPE_WEBHOOK_SECRET`, label `browserjs.dev/stripe-mode`) | not in the repository | written by the **billing apply** workflow from OpenTofu's state ([billing-iac.md](billing-iac.md)); the deploy only checks it. Nobody enters this secret |
 
 The backend's `/etc/browserjs` is now one projected volume of two
