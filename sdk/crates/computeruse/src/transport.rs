@@ -117,6 +117,11 @@ impl Answer {
     pub(crate) fn json<T: DeserializeOwned>(&self) -> Result<T, ComputerUseError> {
         serde_json::from_slice(&self.body).map_err(ComputerUseError::decode)
     }
+
+    /// A list, which a server may write as `null` when it is empty.
+    pub(crate) fn json_list<T: DeserializeOwned>(&self) -> Result<Vec<T>, ComputerUseError> {
+        Ok(self.json::<Option<Vec<T>>>()?.unwrap_or_default())
+    }
 }
 
 struct AccessToken {
@@ -162,7 +167,10 @@ impl Transport {
             ));
         }
 
-        let base = parse_base_url(options.base_url.as_deref().unwrap_or(DEFAULT_BASE_URL))?;
+        let base = parse_base_url(
+            options.base_url.as_deref().unwrap_or(DEFAULT_BASE_URL),
+            options.allow_insecure_http.unwrap_or(false),
+        )?;
 
         let scopes = options.scopes.clone().unwrap_or_default();
         if scopes
@@ -463,7 +471,7 @@ fn millis(value: Option<u64>, default: u64, name: &str) -> Result<Duration, Comp
 
 /// The API host's URL: https, or http for a loopback address, and no path,
 /// query, fragment or credentials.
-fn parse_base_url(raw: &str) -> Result<Url, ComputerUseError> {
+fn parse_base_url(raw: &str, allow_insecure_http: bool) -> Result<Url, ComputerUseError> {
     let url = Url::parse(raw.trim()).map_err(|error| {
         ComputerUseError::configuration(format!("base_url is not a URL: {error}"))
     })?;
@@ -477,11 +485,11 @@ fn parse_base_url(raw: &str) -> Result<Url, ComputerUseError> {
     };
     match url.scheme() {
         "https" => {}
-        "http" if loopback => {}
+        "http" if loopback || allow_insecure_http => {}
         "http" => {
             return Err(ComputerUseError::configuration(
                 "base_url must be https: the token would cross the network in the clear \
-                 (http is accepted for localhost only)",
+                 (http is accepted for localhost only, unless allow_insecure_http is set)",
             ));
         }
         other => {
@@ -586,9 +594,9 @@ pub(crate) fn error_for(status: StatusCode, headers: &HeaderMap, body: &[u8]) ->
         billing_url: Option<String>,
         #[serde(default)]
         managed_url: Option<String>,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "crate::types::null_as_empty")]
         errors: Vec<Diagnostic>,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "crate::types::null_as_empty")]
         warnings: Vec<Diagnostic>,
     }
 
@@ -613,19 +621,26 @@ pub(crate) fn error_for(status: StatusCode, headers: &HeaderMap, body: &[u8]) ->
     let message = bounded(&message);
     let nonempty = |value: Option<String>| value.filter(|v| !v.is_empty());
 
+    let code = nonempty(parsed.code);
+    let billing_url = nonempty(parsed.billing_url);
     match status.as_u16() {
         401 => ComputerUseError::Unauthorized { message },
         402 => ComputerUseError::PaymentRequired {
             message,
-            code: nonempty(parsed.code),
-            billing_url: nonempty(parsed.billing_url),
+            code,
+            billing_url,
         },
-        403 => ComputerUseError::Forbidden { message },
+        403 => ComputerUseError::Forbidden {
+            message,
+            code,
+            billing_url,
+        },
         404 => ComputerUseError::NotFound { message },
         409 => ComputerUseError::Conflict {
             message,
-            code: nonempty(parsed.code),
+            code,
             managed_url: nonempty(parsed.managed_url),
+            billing_url,
         },
         422 => ComputerUseError::InvalidPolicy {
             message,
@@ -639,7 +654,7 @@ pub(crate) fn error_for(status: StatusCode, headers: &HeaderMap, body: &[u8]) ->
         status => ComputerUseError::Api {
             status,
             message,
-            code: nonempty(parsed.code),
+            code,
         },
     }
 }
@@ -667,11 +682,13 @@ mod tests {
 
     #[test]
     fn base_urls() {
-        assert!(parse_base_url("https://api.computeruse.site").is_ok());
-        assert!(parse_base_url("https://api.computeruse.site/").is_ok());
-        assert!(parse_base_url("http://127.0.0.1:8080").is_ok());
-        assert!(parse_base_url("http://localhost:8080").is_ok());
-        assert!(parse_base_url("http://[::1]:8080").is_ok());
+        assert!(parse_base_url("https://api.computeruse.site", false).is_ok());
+        assert!(parse_base_url("https://api.computeruse.site/", false).is_ok());
+        assert!(parse_base_url("http://127.0.0.1:8080", false).is_ok());
+        assert!(parse_base_url("http://localhost:8080", false).is_ok());
+        assert!(parse_base_url("http://[::1]:8080", false).is_ok());
+        assert!(parse_base_url("http://api.internal.test", true).is_ok());
+        assert!(parse_base_url("ftp://api.internal.test", true).is_err());
         for bad in [
             "http://api.computeruse.site",
             "https://api.computeruse.site/v1",
@@ -682,7 +699,7 @@ mod tests {
         ] {
             assert!(
                 matches!(
-                    parse_base_url(bad),
+                    parse_base_url(bad, false),
                     Err(ComputerUseError::Configuration { .. })
                 ),
                 "{bad}"
@@ -713,7 +730,8 @@ mod tests {
             ComputerUseError::Conflict {
                 message: "session is stopped".into(),
                 code: None,
-                managed_url: None
+                managed_url: None,
+                billing_url: None
             }
         );
         // The MCP endpoint's billing refusal.

@@ -116,7 +116,13 @@ export type ClientOptions = {
     /**
      * Added in front of the SDK's own `User-Agent`.
      */
-    userAgent?: string
+    userAgent?: string,
+    /**
+     * Accept an `http` base URL that is not a loopback address. The token
+     * then crosses the network in the clear: for a private network or a
+     * test only. Default false.
+     */
+    allowInsecureHttp?: boolean
 }
 
 /**
@@ -132,7 +138,8 @@ export const ClientOptions = (() => {
         maxRetries: undefined,
         retryBaseDelayMs: undefined,
         wakeTimeoutMs: undefined,
-        userAgent: undefined
+        userAgent: undefined,
+        allowInsecureHttp: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<ClientOptions, ReturnType<typeof defaults>>(defaults);
@@ -158,7 +165,8 @@ const FfiConverterTypeClientOptions = (() => {
                 maxRetries: FfiConverterOptionalUInt32.readFromCursor(c), 
                 retryBaseDelayMs: FfiConverterOptionalUInt64.readFromCursor(c), 
                 wakeTimeoutMs: FfiConverterOptionalUInt64.readFromCursor(c), 
-                userAgent: FfiConverterOptionalString.readFromCursor(c)
+                userAgent: FfiConverterOptionalString.readFromCursor(c), 
+                allowInsecureHttp: FfiConverterOptionalBoolean.readFromCursor(c)
             };
         }
         writeIntoCursor(value: TypeName, c: Cursor): void {
@@ -172,6 +180,7 @@ const FfiConverterTypeClientOptions = (() => {
             FfiConverterOptionalUInt64.writeIntoCursor(value.retryBaseDelayMs, c);
             FfiConverterOptionalUInt64.writeIntoCursor(value.wakeTimeoutMs, c);
             FfiConverterOptionalString.writeIntoCursor(value.userAgent, c);
+            FfiConverterOptionalBoolean.writeIntoCursor(value.allowInsecureHttp, c);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.apiToken) +
@@ -183,7 +192,8 @@ const FfiConverterTypeClientOptions = (() => {
              FfiConverterOptionalUInt32.allocationSize(value.maxRetries) +
              FfiConverterOptionalUInt64.allocationSize(value.retryBaseDelayMs) +
              FfiConverterOptionalUInt64.allocationSize(value.wakeTimeoutMs) +
-             FfiConverterOptionalString.allocationSize(value.userAgent);
+             FfiConverterOptionalString.allocationSize(value.userAgent) +
+             FfiConverterOptionalBoolean.allocationSize(value.allowInsecureHttp);
             
         }
     };
@@ -1789,11 +1799,12 @@ Readonly<{message: string; code?: string; billingUrl?: string}> {
     type Forbidden__interface = {
         tag: ComputerUseError_Tags.Forbidden;
         inner: 
-Readonly<{message: string}>
+Readonly<{message: string; code?: string; billingUrl?: string}>
     };
     /**
      * 403: the token lacks the scope the route needs, or is bound to
-     * another session.
+     * another session; or billing has blocked the account (`code` and
+     * `billing_url` are then set).
      */
     class Forbidden_ extends UniffiError implements Forbidden__interface {
         /**
@@ -1803,15 +1814,15 @@ Readonly<{message: string}>
         readonly [uniffiTypeNameSymbol] = "ComputerUseError";
         readonly tag = ComputerUseError_Tags.Forbidden;
         readonly inner: 
-Readonly<{message: string}>;
+Readonly<{message: string; code?: string; billingUrl?: string}>;
         constructor(
-inner: {message: string }) {
+inner: {message: string; code?: string; billingUrl?: string }) {
             super("ComputerUseError", "Forbidden");
 
             this.inner = Object.freeze(inner);
         }
         static new(
-inner: {message: string }): Forbidden_ {
+inner: {message: string; code?: string; billingUrl?: string }): Forbidden_ {
             return new Forbidden_(inner);
         }
 
@@ -1823,7 +1834,7 @@ inner: {message: string }): Forbidden_ {
         }
 
         static getInner(obj: Forbidden_): 
-Readonly<{message: string}> {
+Readonly<{message: string; code?: string; billingUrl?: string}> {
             return obj.inner;
         }
 
@@ -1875,11 +1886,12 @@ Readonly<{message: string}> {
     type Conflict__interface = {
         tag: ComputerUseError_Tags.Conflict;
         inner: 
-Readonly<{message: string; code?: string; managedUrl?: string}>
+Readonly<{message: string; code?: string; managedUrl?: string; billingUrl?: string}>
     };
     /**
      * 409: the session limit is reached, the session is stopped, or the
-     * policy is managed elsewhere (`managed_url` then says where).
+     * policy is managed elsewhere (`managed_url` then says where). A limit
+     * of the account's plan carries `code` and `billing_url`.
      */
     class Conflict_ extends UniffiError implements Conflict__interface {
         /**
@@ -1889,15 +1901,15 @@ Readonly<{message: string; code?: string; managedUrl?: string}>
         readonly [uniffiTypeNameSymbol] = "ComputerUseError";
         readonly tag = ComputerUseError_Tags.Conflict;
         readonly inner: 
-Readonly<{message: string; code?: string; managedUrl?: string}>;
+Readonly<{message: string; code?: string; managedUrl?: string; billingUrl?: string}>;
         constructor(
-inner: {message: string; code?: string; managedUrl?: string }) {
+inner: {message: string; code?: string; managedUrl?: string; billingUrl?: string }) {
             super("ComputerUseError", "Conflict");
 
             this.inner = Object.freeze(inner);
         }
         static new(
-inner: {message: string; code?: string; managedUrl?: string }): Conflict_ {
+inner: {message: string; code?: string; managedUrl?: string; billingUrl?: string }): Conflict_ {
             return new Conflict_(inner);
         }
 
@@ -1909,7 +1921,7 @@ inner: {message: string; code?: string; managedUrl?: string }): Conflict_ {
         }
 
         static getInner(obj: Conflict_): 
-Readonly<{message: string; code?: string; managedUrl?: string}> {
+Readonly<{message: string; code?: string; managedUrl?: string; billingUrl?: string}> {
             return obj.inner;
         }
 
@@ -2254,9 +2266,9 @@ const FfiConverterTypeComputerUseError = (() => {
                 case 3: return new ComputerUseError.Timeout({operation: FfiConverterString.readFromCursor(c) });
                 case 4: return new ComputerUseError.Unauthorized({message: FfiConverterString.readFromCursor(c) });
                 case 5: return new ComputerUseError.PaymentRequired({message: FfiConverterString.readFromCursor(c), code: FfiConverterOptionalString.readFromCursor(c), billingUrl: FfiConverterOptionalString.readFromCursor(c) });
-                case 6: return new ComputerUseError.Forbidden({message: FfiConverterString.readFromCursor(c) });
+                case 6: return new ComputerUseError.Forbidden({message: FfiConverterString.readFromCursor(c), code: FfiConverterOptionalString.readFromCursor(c), billingUrl: FfiConverterOptionalString.readFromCursor(c) });
                 case 7: return new ComputerUseError.NotFound({message: FfiConverterString.readFromCursor(c) });
-                case 8: return new ComputerUseError.Conflict({message: FfiConverterString.readFromCursor(c), code: FfiConverterOptionalString.readFromCursor(c), managedUrl: FfiConverterOptionalString.readFromCursor(c) });
+                case 8: return new ComputerUseError.Conflict({message: FfiConverterString.readFromCursor(c), code: FfiConverterOptionalString.readFromCursor(c), managedUrl: FfiConverterOptionalString.readFromCursor(c), billingUrl: FfiConverterOptionalString.readFromCursor(c) });
                 case 9: return new ComputerUseError.InvalidPolicy({message: FfiConverterString.readFromCursor(c), errors: FfiConverterSequenceTypeDiagnostic.readFromCursor(c), warnings: FfiConverterSequenceTypeDiagnostic.readFromCursor(c) });
                 case 10: return new ComputerUseError.RateLimited({message: FfiConverterString.readFromCursor(c), retryAfterSecs: FfiConverterOptionalUInt64.readFromCursor(c) });
                 case 11: return new ComputerUseError.Api({status: FfiConverterUInt16.readFromCursor(c), message: FfiConverterString.readFromCursor(c), code: FfiConverterOptionalString.readFromCursor(c) });
@@ -2305,6 +2317,8 @@ const FfiConverterTypeComputerUseError = (() => {
                     c.writeI32(6);
                     const inner = value.inner;
                     FfiConverterString.writeIntoCursor(inner.message, c);
+                    FfiConverterOptionalString.writeIntoCursor(inner.code, c);
+                    FfiConverterOptionalString.writeIntoCursor(inner.billingUrl, c);
                     return;
                 }
                 case ComputerUseError_Tags.NotFound: {
@@ -2319,6 +2333,7 @@ const FfiConverterTypeComputerUseError = (() => {
                     FfiConverterString.writeIntoCursor(inner.message, c);
                     FfiConverterOptionalString.writeIntoCursor(inner.code, c);
                     FfiConverterOptionalString.writeIntoCursor(inner.managedUrl, c);
+                    FfiConverterOptionalString.writeIntoCursor(inner.billingUrl, c);
                     return;
                 }
                 case ComputerUseError_Tags.InvalidPolicy: {
@@ -2413,6 +2428,8 @@ const FfiConverterTypeComputerUseError = (() => {
                     const inner = value.inner;
                     let size = 4;
                     size += FfiConverterString.allocationSize(inner.message);
+                    size += FfiConverterOptionalString.allocationSize(inner.code);
+                    size += FfiConverterOptionalString.allocationSize(inner.billingUrl);
                     return size;
                 }
                 case ComputerUseError_Tags.NotFound: {
@@ -2427,6 +2444,7 @@ const FfiConverterTypeComputerUseError = (() => {
                     size += FfiConverterString.allocationSize(inner.message);
                     size += FfiConverterOptionalString.allocationSize(inner.code);
                     size += FfiConverterOptionalString.allocationSize(inner.managedUrl);
+                    size += FfiConverterOptionalString.allocationSize(inner.billingUrl);
                     return size;
                 }
                 case ComputerUseError_Tags.InvalidPolicy: {
@@ -4150,6 +4168,12 @@ const FfiConverterTypeClient = new FfiConverterObject(uniffiTypeClientObjectFact
 export interface ClientOptionsBuilderLike {
     
 /**
+ * Accept an `http` base URL that is not a loopback address. The token
+ * then crosses the network in the clear: for a private network or a
+ * test only. Default false.
+ */
+    allowInsecureHttp(value: boolean): ClientOptionsBuilderLike;
+/**
  * An API token (`bjs_<id>_<secret>`), or an access token made from one.
  */
     apiToken(value: string): ClientOptionsBuilderLike;
@@ -4235,6 +4259,23 @@ export class ClientOptionsBuilder extends UniffiAbstractObject implements Client
 
     
 
+    
+/**
+ * Accept an `http` base URL that is not a loopback address. The token
+ * then crosses the network in the clear: for a private network or a
+ * test only. Default false.
+ */
+    allowInsecureHttp(value: boolean): ClientOptionsBuilderLike {
+    return FfiConverterTypeClientOptionsBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_computeruse_fn_method_clientoptionsbuilder_allow_insecure_http(
+                uniffiTypeClientOptionsBuilderObjectFactory.clonePointer(this),
+        FfiConverterBool.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
     
 /**
  * An API token (`bjs_<id>_<secret>`), or an access token made from one.
@@ -5395,6 +5436,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_computeruse_checksum_constructor_clientoptionsbuilder_new() !== 3601) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_computeruse_checksum_constructor_clientoptionsbuilder_new");
+    }
+    if (nativeModule().uniffi_computeruse_checksum_method_clientoptionsbuilder_allow_insecure_http() !== 14757) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_computeruse_checksum_method_clientoptionsbuilder_allow_insecure_http");
     }
     if (nativeModule().uniffi_computeruse_checksum_method_clientoptionsbuilder_api_token() !== 29878) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_computeruse_checksum_method_clientoptionsbuilder_api_token");

@@ -1,5 +1,9 @@
 # Terraform provider
 
+> The provider calls the API through the SDK's Go package (`sdk/go`), which
+> needs cgo and the SDK's library: see "It is built on the SDK" in the
+> provider's README for what that does to building and releasing it.
+
 `terraform-provider-browserjs/` is a provider for Terraform and OpenTofu that
 creates sessions and manages their policies as code. It is built in this
 repository and installed locally; it is in no registry yet.

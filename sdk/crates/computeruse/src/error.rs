@@ -38,9 +38,14 @@ pub enum ComputerUseError {
     },
 
     /// 403: the token lacks the scope the route needs, or is bound to
-    /// another session.
+    /// another session; or billing has blocked the account (`code` and
+    /// `billing_url` are then set).
     #[error("forbidden (403): {message}")]
-    Forbidden { message: String },
+    Forbidden {
+        message: String,
+        code: Option<String>,
+        billing_url: Option<String>,
+    },
 
     /// 404: no such session, or not the caller's. The API answers both
     /// alike.
@@ -48,12 +53,14 @@ pub enum ComputerUseError {
     NotFound { message: String },
 
     /// 409: the session limit is reached, the session is stopped, or the
-    /// policy is managed elsewhere (`managed_url` then says where).
+    /// policy is managed elsewhere (`managed_url` then says where). A limit
+    /// of the account's plan carries `code` and `billing_url`.
     #[error("conflict (409): {message}")]
     Conflict {
         message: String,
         code: Option<String>,
         managed_url: Option<String>,
+        billing_url: Option<String>,
     },
 
     /// 422: the policy does not validate. Nothing was saved.
@@ -116,8 +123,20 @@ impl ComputerUseError {
     pub fn code(&self) -> Option<&str> {
         match self {
             Self::PaymentRequired { code, .. }
+            | Self::Forbidden { code, .. }
             | Self::Conflict { code, .. }
             | Self::Api { code, .. } => code.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Where the account's owner puts a billing refusal right, when the API
+    /// said.
+    pub fn billing_url(&self) -> Option<&str> {
+        match self {
+            Self::PaymentRequired { billing_url, .. }
+            | Self::Forbidden { billing_url, .. }
+            | Self::Conflict { billing_url, .. } => billing_url.as_deref(),
             _ => None,
         }
     }

@@ -126,6 +126,7 @@ Only the token is required.
 | `retry_base_delay_ms` | 500 | The first pause between tries. It doubles each time. `Retry-After` is used instead when the API sends it |
 | `wake_timeout_ms` | 600 000 | How long an MCP call keeps trying while the session wakes |
 | `user_agent` | | Put in front of the SDK's own `User-Agent` |
+| `allow_insecure_http` | `false` | Accept an `http` base URL that is not `localhost`. The token is then sent unencrypted |
 
 In Rust, `Client::builder()` takes these with `Duration` values. In the
 other languages, build a `ClientOptions` with `ClientOptionsBuilder`, or use
@@ -195,9 +196,9 @@ Each documented answer of the API is its own error.
 | --- | --- |
 | `Unauthorized` | `401`. The token is wrong, revoked or expired |
 | `PaymentRequired` | `402`. Billing refused. Carries `code` and `billing_url` |
-| `Forbidden` | `403`. The token lacks the scope, or is for another session |
+| `Forbidden` | `403`. The token lacks the scope, or is for another session, or billing blocked the account (`code`, `billing_url`) |
 | `NotFound` | `404`. No such session, or not yours |
-| `Conflict` | `409`. The session limit, a stopped session, a session that cannot sleep, or a policy managed elsewhere (`managed_url`) |
+| `Conflict` | `409`. The session limit, a stopped session, a session that cannot sleep, a policy managed elsewhere (`managed_url`), or a plan's limit (`code`, `billing_url`) |
 | `InvalidPolicy` | `422`. The policy does not validate. Carries the diagnostics. Nothing was saved |
 | `RateLimited` | `429`, after the retries |
 | `Api` | Any other status, with `status` and `message` |

@@ -295,6 +295,13 @@ mod sessions {
     }
 
     #[tokio::test]
+    async fn an_empty_list_written_as_null_is_empty() {
+        let fake = Fake::api(|_| Reply::json(200, json!(null))).await;
+        assert!(client(&fake).list_sessions().await.unwrap().is_empty());
+        assert!(client(&fake).policy_presets().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn a_state_from_the_future_is_unknown_not_an_error() {
         let fake = Fake::api(|_| {
             let mut session = session_json(ID, "a", "hibernating");
@@ -788,7 +795,8 @@ mod policies {
             ComputerUseError::Conflict {
                 message: "this policy is managed in the editor".into(),
                 code: None,
-                managed_url: Some("https://git.example/p.rego".into())
+                managed_url: Some("https://git.example/p.rego".into()),
+                billing_url: None,
             }
         );
     }
@@ -851,6 +859,11 @@ mod policies {
         })
         .await;
         let client = client(&fake);
+
+        // A list the server wrote as null is an empty list.
+        let nulls: computeruse::Validation =
+            serde_json::from_str(r#"{"ok": true, "errors": null, "warnings": null}"#).unwrap();
+        assert!(nulls.errors.is_empty() && nulls.warnings.is_empty());
 
         // An invalid policy is a verdict, not an error.
         let verdict = client.validate_policy("package p }".into()).await.unwrap();
@@ -1195,7 +1208,8 @@ mod mcp {
             ComputerUseError::Conflict {
                 message: "session is stopped; resume it first".into(),
                 code: None,
-                managed_url: None
+                managed_url: None,
+                billing_url: None
             }
         );
         assert_eq!(fake.calls().len(), 1, "not tried again");
@@ -1376,6 +1390,8 @@ mod retries_and_errors {
                 ),
                 ComputerUseError::Forbidden {
                     message: "this token lacks the scope sessions:write".into(),
+                    code: None,
+                    billing_url: None,
                 },
             ),
             (
@@ -1393,6 +1409,7 @@ mod retries_and_errors {
                     message: "session limit reached; delete one first".into(),
                     code: None,
                     managed_url: None,
+                    billing_url: None,
                 },
             ),
             (
@@ -1432,6 +1449,36 @@ mod retries_and_errors {
             billing_url: None,
         };
         assert_eq!(payment.code(), Some("out_of_credit"));
+    }
+
+    #[tokio::test]
+    async fn billing_refusals_that_are_not_402_keep_their_code_and_link() {
+        let fake = Fake::api(|request| {
+            if request.method == "POST" {
+                return Reply::json(409, json!({"error": "Your plan allows 2 sessions awake.", "code": "awake_limit", "billingUrl": "https://app.example/billing", "limit": 2}));
+            }
+            Reply::json(403, json!({"error": "This account is blocked.", "code": "account_blocked", "billingUrl": "https://app.example/billing"}))
+        })
+        .await;
+        let client = client(&fake);
+        let error = client.sessions().create().send().await.unwrap_err();
+        assert_eq!(
+            (error.status(), error.code(), error.billing_url()),
+            (
+                Some(409),
+                Some("awake_limit"),
+                Some("https://app.example/billing")
+            )
+        );
+        let error = client.list_sessions().await.unwrap_err();
+        assert_eq!(
+            (error.status(), error.code(), error.billing_url()),
+            (
+                Some(403),
+                Some("account_blocked"),
+                Some("https://app.example/billing")
+            )
+        );
     }
 
     #[tokio::test]

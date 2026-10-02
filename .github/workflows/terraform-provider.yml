@@ -1,13 +1,25 @@
 name: terraform provider
 
 # Builds and tests terraform-provider-browserjs. Contacts nothing but the Go
-# module proxy: every test runs against the fake API in the provider's own
-# tree, never against a deployment.
+# module proxy and crates.io: every test runs against the fake API in the
+# provider's own tree, never against a deployment.
+#
+# The provider calls the API through the SDK (sdk/), whose Go package is
+# bindings to a Rust library. So the job first builds that library from this
+# tree (`make lib`), and every go command links it with cgo. All of it runs
+# in the flake's `sdk` dev shell, which has Go, a C compiler and cargo.
 
 on:
   pull_request:
     paths:
       - "terraform-provider-browserjs/**"
+      # The provider links the SDK's library and imports its Go package.
+      - "sdk/crates/**"
+      - "sdk/Cargo.toml"
+      - "sdk/Cargo.lock"
+      - "sdk/go/**"
+      - "flake.nix"
+      - "flake.lock"
       # The tests read the example policies of the contract.
       - "docs/contracts/policy/examples/**"
       - ".github/workflows/terraform-provider.yml"
@@ -22,6 +34,14 @@ concurrency:
 
 env:
   TOFU_VERSION: "1.10.7"
+  # A test build of the SDK's library: a third of the time of a release one.
+  SDK_PROFILE: debug
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CGO_ENABLED: "1"
+  # Where `make lib` puts the library; make sets this itself, bare go
+  # commands here need it said.
+  CGO_LDFLAGS: -L${{ github.workspace }}/terraform-provider-browserjs/.lib
 
 jobs:
   test:
@@ -37,10 +57,20 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+
+      # Cargo's downloads and the SDK's build, and Go's modules and build.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          go-version-file: terraform-provider-browserjs/go.mod
-          cache-dependency-path: terraform-provider-browserjs/go.sum
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            sdk/target
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: terraform-provider-${{ hashFiles('sdk/Cargo.lock', 'flake.lock', 'terraform-provider-browserjs/go.sum') }}
+          restore-keys: |
+            terraform-provider-
 
       - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
         with:
@@ -49,32 +79,43 @@ jobs:
 
       - name: Format
         run: |
-          test -z "$(gofmt -l . | tee /dev/stderr)"
+          nix develop ..#sdk -c bash -c 'test -z "$(gofmt -l . | tee /dev/stderr)"'
           tofu fmt -check -recursive -diff examples
+
+      # libcomputeruse.a, from sdk/ at this commit, into .lib/.
+      - name: Build the SDK's library
+        run: nix develop ..#sdk -c make lib
 
       - name: Modules are tidy
         run: |
-          go mod tidy
+          nix develop ..#sdk -c go mod tidy
           git diff --exit-code -- go.mod go.sum
 
       - name: Build
-        run: go build -o terraform-provider-browserjs .
+        run: nix develop ..#sdk -c make build
+
+      # Nothing may be needed beside the binary: the SDK is linked into it.
+      - name: The provider does not need the SDK as a shared library
+        run: |
+          if ldd terraform-provider-browserjs | grep computeruse; then
+            echo "::error::the provider is linked to libcomputeruse.so"; exit 1
+          fi
 
       - name: Vet and unit tests
         run: |
-          go vet ./...
-          go test -race ./...
+          nix develop ..#sdk -c go vet ./...
+          nix develop ..#sdk -c go test -race ./...
 
       # Real plans, applies and imports with OpenTofu, against the fake API.
       - name: Acceptance tests
-        run: make testacc
+        run: nix develop ..#sdk -c make testacc
 
       # The example configuration through plan, apply, edit and destroy, with
       # the provider installed by dev_overrides.
       - name: End to end
-        run: make e2e
+        run: nix develop ..#sdk -c make e2e
 
       - name: Generated docs are current
         run: |
-          make docs
+          nix develop ..#sdk -c make docs
           git diff --exit-code -- docs

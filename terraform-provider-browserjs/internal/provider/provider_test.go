@@ -82,7 +82,8 @@ func TestEveryRequestCarriesTheTokenAndUserAgent(t *testing.T) {
 		if !r.Authorized {
 			t.Errorf("%s %s without the bearer token", r.Method, r.Path)
 		}
-		if r.UserAgent != "terraform-provider-browserjs/test" {
+		// The provider's, then the SDK's that makes the request.
+		if !strings.HasPrefix(r.UserAgent, "terraform-provider-browserjs/test computeruse-sdk/") {
 			t.Errorf("%s %s: User-Agent %q", r.Method, r.Path, r.UserAgent)
 		}
 		if !strings.HasPrefix(r.Path, "/v1/") {
