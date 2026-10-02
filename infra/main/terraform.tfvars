@@ -47,6 +47,13 @@ session_spot         = false
 # the region. A session stays in the zone its disk was created in.
 session_node_zones = ["us-west1-a", "us-west1-b", "us-west1-c"]
 
+# The same again on other machine series, tried when N2 has no capacity. Each
+# pool scales 0..session_max_nodes, so the ceiling is three pools' worth.
+session_fallback_machine_types = {
+  "n2d-standard-4" = "AMD Milan"
+  "c3-standard-4"  = null
+}
+
 # Must match the Sandbox template and PodSnapshotStorageConfig in deploy/.
 sessions_namespace      = "browserjs-sessions"
 session_service_account = "session"

@@ -277,6 +277,25 @@ variable "session_node_zones" {
   }
 }
 
+variable "session_fallback_machine_types" {
+  description = <<-EOT
+    More gVisor session pools, one per entry, for when Compute Engine has no
+    capacity for session_machine_type: machine type => minimum CPU platform
+    (null for a series with a single platform). Each pool scales from zero up
+    to session_max_nodes, so they cost nothing unused but each one raises the
+    ceiling. Not E2 (no whole-pod Pod Snapshots). A Pod Snapshot only restores
+    on the machine series it was taken on, so a snapshotted session must be
+    steered back to the same pool (node label browserjs.com/pool).
+  EOT
+  type        = map(string)
+  default     = {}
+
+  validation {
+    condition     = alltrue([for type, _ in var.session_fallback_machine_types : !startswith(type, "e2-")])
+    error_message = "E2 machine types cannot take whole-pod Pod Snapshots."
+  }
+}
+
 variable "session_min_cpu_platform" {
   description = <<-EOT
     Minimum CPU platform of session nodes. A snapshot only restores on a CPU
