@@ -13,6 +13,7 @@ import { useBilling } from "../billing/BillingProvider"
 import { SessionState } from "../billing/SessionBilling"
 import { wakeBlock } from "../billingApi"
 import { LifecycleActions } from "../components/SessionLifecycle"
+import { sizeLine } from "../components/SessionSize"
 import type { PolicySession } from "../policyApi"
 import { isManagedAsCode, policySummaryLine } from "../policyApi"
 import { Shell, api } from "../shell"
@@ -115,6 +116,10 @@ export function SessionsList() {
                     ),
                 },
               ]
+            : []),
+          // Only where some session is not the one size every session used to be.
+          ...(sessions?.some(s => (s.size && s.size !== "small") || s.pendingSize)
+            ? [{ id: "size", header: "Size", cell: (s: Session) => sizeLine(s) }]
             : []),
           { id: "created", header: "Created", cell: s => new Date(s.created).toLocaleString() },
           {
