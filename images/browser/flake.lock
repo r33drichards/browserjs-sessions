@@ -1,5 +1,22 @@
 {
   "nodes": {
+    "mcp-exec": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1790959000,
+        "narHash": "sha256-uNXkzpQ3OBppZyiThqJsDUPv6jOjb2qGFho/DyVNlgo=",
+        "owner": "r33drichards",
+        "repo": "mcp-exec",
+        "rev": "38bb517fc037cd2d9a82ab3cd1e28b2d1d2be0ad",
+        "type": "github"
+      },
+      "original": {
+        "owner": "r33drichards",
+        "repo": "mcp-exec",
+        "rev": "38bb517fc037cd2d9a82ab3cd1e28b2d1d2be0ad",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1790578696,
@@ -18,6 +35,7 @@
     },
     "root": {
       "inputs": {
+        "mcp-exec": "mcp-exec",
         "nixpkgs": "nixpkgs"
       }
     }

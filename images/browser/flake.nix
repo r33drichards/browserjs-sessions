@@ -2,9 +2,16 @@
   description = "Persistent, VNC-viewable Chromium exposed as MCP behind mcp-js";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  # Shell commands for run_js. Pinned to the commit of
+  # https://github.com/r33drichards/mcp-exec/pull/6 (--reject-browser-requests,
+  # which browser/exec-server.sh depends on); move to master once it is merged.
+  inputs.mcp-exec = {
+    url = "github:r33drichards/mcp-exec/38bb517fc037cd2d9a82ab3cd1e28b2d1d2be0ad";
+    flake = false;
+  };
 
   outputs =
-    { self, nixpkgs }:
+    { self, nixpkgs, mcp-exec }:
     let
       linuxSystems = [
         "x86_64-linux"
@@ -51,6 +58,9 @@
             '';
           };
 
+          # Built from its own package expression and Cargo.lock.
+          mcp-exec-pkg = pkgs.callPackage "${mcp-exec}/nix/package.nix" { };
+
           # Only the Xvnc server out of TigerVNC: the package also carries the
           # viewer and its toolkit, which the image has no use for.
           xvnc = pkgs.runCommand "xvnc-${pkgs.tigervnc.version}" { } ''
@@ -66,6 +76,9 @@
               pkgs.caddy
               pkgs.chromium
               pkgs.coreutils
+              # exec-server.sh: mcp-exec, and find to prune its old logs.
+              mcp-exec-pkg
+              pkgs.findutils
               pkgs.gnused
               pkgs.openbox
               pkgs.procps
@@ -81,6 +94,7 @@
               export NOVNC_WEB=${pkgs.novnc}/share/webapps/novnc
               export CADDYFILE=${./browser/Caddyfile}
               export OPENBOX_RC=${./browser/openbox-rc.xml}
+              export EXEC_SERVER=${./browser/exec-server.sh}
               export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
               export FONTCONFIG_FILE=${pkgs.makeFontsConf {
                 fontDirectories = [
@@ -127,9 +141,47 @@
                   node ${./test/desktop-smoke.mjs}
                 touch $out
               '';
+
+          # The same for shell commands: mcp-exec as packaged, started by
+          # exec-server.sh as the entrypoint starts it, called over HTTP as
+          # mcp-js calls it (test/exec-smoke.mjs): a command end to end, a
+          # window opened on the image's Xvnc, and requests that look like a
+          # web page's refused. The Dockerfile builds it before the image.
+          exec-smoke =
+            pkgs.runCommand "exec-smoke"
+              {
+                nativeBuildInputs = [
+                  mcp-exec-pkg
+                  pkgs.bash
+                  pkgs.findutils
+                  pkgs.nodejs_22
+                  pkgs.openbox
+                  pkgs.xdpyinfo
+                  pkgs.xterm
+                  pkgs.xwininfo
+                  xvnc
+                ];
+              }
+              ''
+                export HOME=$TMPDIR/home DISPLAY=:97
+                export FONTCONFIG_FILE=${pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; }}
+                mkdir -p "$HOME" /tmp/.X11-unix
+                Xvnc :97 -geometry 1280x800 -depth 24 -nolisten tcp -ac \
+                  -rfbport 5997 -localhost -UseIPv6=0 -SecurityTypes None &
+                trap 'kill $(jobs -p) 2>/dev/null || true' EXIT
+                for _ in $(seq 1 100); do
+                  xdpyinfo >/dev/null 2>&1 && break
+                  sleep 0.1
+                done
+                xdpyinfo >/dev/null
+                openbox --sm-disable --config-file ${./browser/openbox-rc.xml} &
+                EXEC_SERVER=${./browser/exec-server.sh} node ${./test/exec-smoke.mjs}
+                touch $out
+              '';
         in
         {
-          inherit browser-mcp runtime xvnc;
+          inherit browser-mcp runtime xvnc exec-smoke;
+          mcp-exec = mcp-exec-pkg;
           default = runtime;
         }
         // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isx86_64 { inherit desktop-smoke; }

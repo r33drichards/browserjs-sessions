@@ -450,6 +450,22 @@ class Run:
         expect("Example Domain" in out and "https://example.com/" in out, "output: %s" % out[:500])
         return "tab default navigated to https://example.com/, document.title 'Example Domain'"
 
+    def mcp_exec(self):
+        out = self.mcp.run_js("""
+            const call = async (tool, args) => JSON.parse((await mcp.callTool("exec", tool, args)).content[0].text);
+            const { id } = await call("exec", { cmd: "id -u; echo $DISPLAY; echo $((6 * 7)) | tr 2 3; exit 3", timeout: 20 });
+            let r;
+            for (let i = 0; i < 100; i++) {
+              r = await call("stream_logs", { id, offset: 0 });
+              if (r.status !== "running") break;
+              await new Promise((resolve) => setTimeout(resolve, 100));
+            }
+            const found = await call("search_logs", { id, pattern: "^4" });
+            console.log("exec", JSON.stringify(r.logs), r.status, "search", JSON.stringify(found.matches.map((m) => m.line)));
+        """)
+        expect('exec "1000\\n:99\\n43\\n" completed:3 search ["43"]' in out, "output: %s" % out[:500])
+        return out.strip()[:120]
+
     def mcp_desktop(self):
         out = self.mcp.run_js("""
             const r = await mcp.callTool("browser", "desktop_execute", { operations: [
@@ -753,6 +769,7 @@ class Run:
             check("mcp: run_js", self.mcp_run_js)
             check("mcp: run_js drives the browser", self.mcp_browser)
             check("mcp: run_js drives the desktop (nut.js)", self.mcp_desktop)
+            check("mcp: run_js runs shell commands on the desktop (mcp-exec)", self.mcp_exec)
             check("mcp: GET /mcp on a running session streams", self.mcp_stream_running)
             check("upload: one-time URL under the session's prefix", self.upload)
             check("memory: write a file", self.remember)

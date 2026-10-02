@@ -34,6 +34,12 @@ the policy sees it: every field can be missing or of any type.
 `input-sample.json` is a sample; the `examples/*.cases.json` files hold many
 more, hostile ones included.
 
+A session has a second upstream server, `"exec"` (mcp-exec: shell commands on
+the desktop), with the tools `exec`, `stream_logs` and `search_logs`; and the
+`"browser"` server has a second tool, `desktop_execute`. `server` and `tool`
+name the one called. `exec-input.md` gives the `arguments` of the exec
+server's tools and worked policies.
+
 There is nothing in the input that identifies the session, the user or the
 MCP client.
 

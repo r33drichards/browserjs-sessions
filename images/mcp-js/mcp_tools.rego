@@ -15,3 +15,26 @@ allow if {
 	input.server == "browser"
 	input.tool == "desktop_execute"
 }
+
+# Shell commands on the desktop (mcp-exec, the "exec" server): `exec` starts
+# one, `stream_logs` and `search_logs` read its output. A command runs as the
+# desktop's user and can reach the browser's own control ports on loopback,
+# so, like desktop_execute, it can do what a rule on browser_execute's
+# arguments would have refused: a policy that restricts browser_execute must
+# deny `exec`. Allowed here because this file is only the platform's floor;
+# once a session's policies are enforcing, the session's own policy decides,
+# from the command string (docs/contracts/policy/exec-input.md).
+allow if {
+	input.server == "exec"
+	input.tool == "exec"
+}
+
+allow if {
+	input.server == "exec"
+	input.tool == "stream_logs"
+}
+
+allow if {
+	input.server == "exec"
+	input.tool == "search_logs"
+}

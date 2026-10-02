@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://computeruse.site/contracts/policy/tools/exec.schema.json",
+  "title": "exec arguments (server \"exec\", tool \"exec\")",
+  "description": "The arguments of mcp-exec's exec tool (ExecRequest in src/service.rs of github.com/r33drichards/mcp-exec, at the commit images/browser/flake.lock pins), which is input.arguments of the mcp_tools policy input when input.server is \"exec\" and input.tool is \"exec\". A policy is asked BEFORE the server parses anything: in a policy every field can be missing or of any type, and other fields can be present (the server ignores fields it does not know). images/browser/test/exec-smoke.mjs checks these properties against the packaged server.",
+  "type": "object",
+  "required": ["cmd", "timeout"],
+  "properties": {
+    "cmd": {
+      "type": "string",
+      "description": "A shell command line, run as sh -c <cmd> in the desktop's home directory with the desktop's environment. There is no separate program, argument list, working directory or environment: everything is in this string."
+    },
+    "timeout": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Seconds (not milliseconds) after which the shell is killed and the status becomes \"timeout\". No default and no maximum in the server."
+    }
+  }
+}
