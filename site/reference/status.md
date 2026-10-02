@@ -13,8 +13,7 @@ date.
 | Stateful | Persistent disk per session | Live |
 | Stateful | Sleep to a snapshot; wake with the screen and processes as they were | Live |
 | Stateful | **Sleep** and **Wake** buttons, and `POST /sessions/{id}/sleep` and `/wake` | Live |
-| Stateful | Minimal desktop: X display, window manager, Chromium | Live |
-| Stateful | XFCE desktop with a terminal and a file manager | Planned |
+| Stateful | XFCE desktop with Chromium, a terminal and a file manager; the browser starts on first use | Live |
 | Scale to zero | Sleep after 15 minutes idle; wake on the next MCP call | Live |
 | Scale to zero | New sessions ready in seconds, from desktops kept warm | Live |
 | Scale to zero | Metering and paid plans | Planned |

@@ -108,6 +108,14 @@ browser_ok() {
   [ -n "$id" ] && maximised "$id" && fills_workarea "$id"
 }
 cdp() { curl -fsS --max-time 2 http://127.0.0.1:9222/json/version; }
+# One browser_execute call, as mcp-js makes it, that must succeed.
+browser_execute_ok() {
+  curl -fsS --max-time 90 -X POST http://127.0.0.1:8081/mcp \
+    -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
+    -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"browser_execute","arguments":{"operations":[{"type":"url"}]}}}' \
+    >/tmp/smoke-browser-execute.json 2>&1 &&
+    grep -q 'Pipeline completed' /tmp/smoke-browser-execute.json
+}
 pages() { curl -fsS --max-time 2 http://127.0.0.1:9222/json/list | grep -c '"type": "page"'; }
 main_browser() {
   local pid
@@ -187,10 +195,21 @@ if [ "$work_h" -lt "$screen_h" ]; then
 else
   bad "the panel reserves nothing: work area $(workarea), screen $(screen_size)"
 fi
-check "Chromium answers on the remote debugging port" wait_for 60 cdp
-check "Chromium has a window" wait_for 60 has_window chromium
+# A session starts with the desktop only: no Chromium until it is wanted.
+sleep 3
+[ -z "$(main_browser)" ] && ! has_window chromium && ! cdp >/dev/null 2>&1 &&
+  ok "no Chromium yet: no process, no window, nothing on the debugging port" ||
+  bad "Chromium is running before anything asked for it: $(pgrep -fl chromium | head -n 3 | cut -c1-200)"
+memory_table "idle: the desktop only, Chromium not started"
+screenshot "$phase-empty"
+# The first browser_execute call starts it.
+check "browser_execute starts Chromium and runs its pipeline" browser_execute_ok
+check "Chromium answers on the remote debugging port" cdp
+check "Chromium has a window" wait_for 20 has_window chromium
 check "Chromium's window is maximised and ends above the panel" wait_for 30 browser_ok
 [ "$(main_browser | wc -l)" = 1 ] && ok "one Chromium" || bad "main Chromium processes: $(main_browser | tr '\n' ' ')"
+loopback_only() { tr '\0' ' ' <"/proc/$(main_browser)/cmdline" | grep -q -- '--remote-debugging-address=127.0.0.1 '; }
+check "it was started with remote debugging on loopback and the session's profile" loopback_only
 check "HOME is on the volume" test "$HOME" = /data/chrome/home -a -w "$HOME"
 check "Downloads in HOME is the folder of the session's files" test "$HOME/Downloads" -ef "$FILES_DIR"
 check "/tmp is writable" touch /tmp/desktop-smoke-touch
@@ -312,16 +331,30 @@ for size in 1024x768 1920x1080 1280x800 1280x1024 800x600 1280x800; do
   fi
 done
 
-# Closing Chromium brings it back, maximised.
+# Closing Chromium closes it: nothing brings it back until it is wanted.
 old="$(main_browser)"
-kill -TERM $old
-new_browser() {
-  local pid
-  pid="$(main_browser)"
-  [ -n "$pid" ] && [ "$pid" != "$old" ] && cdp
-}
-check "Chromium comes back after it is closed" wait_for 40 new_browser
-check "and is maximised again" wait_for 40 browser_ok
+kill -TERM "$old"
+gone() { [ -z "$(main_browser)" ] && ! cdp; }
+check "Chromium exits when it is closed" wait_for 20 gone
+sleep 5
+gone && ok "and stays closed" || bad "Chromium came back by itself: $(pgrep -fl chromium | head -n 2 | cut -c1-200)"
+# The desktop's command starts it, with the session's profile and flags.
+chromium >/tmp/smoke-chromium-start.log 2>&1
+check "the chromium command starts it again, answering on the debugging port" cdp
+check "maximised" wait_for 30 browser_ok
+kill -TERM "$(main_browser)"
+wait_for 20 gone
+# And so does the next browser_execute call, which finds its tab again.
+check "browser_execute starts it again after it was closed" browser_execute_ok
+check "maximised again" wait_for 30 browser_ok
+# Two at once start one browser.
+kill -TERM "$(main_browser)"
+wait_for 20 gone
+chromium >/dev/null 2>&1 &
+chromium >/dev/null 2>&1 &
+browser_execute_ok
+wait
+[ "$(main_browser | wc -l)" = 1 ] && ok "three starters at once start one Chromium" || bad "main Chromium processes after starting three at once: $(main_browser | tr '\n' ' ')"
 
 # Nothing that could lock, blank or end the session.
 lockers="$(pgrep -fl 'screensaver|xflock|light-locker|xscreensaver|xfce4-session|xfce4-power' || true)"
@@ -356,10 +389,9 @@ echo "== first start =="
 start
 seconds_until "the environment file exists" '[ -s /tmp/runtime/session-env ]'
 seconds_until "the MCP server answers /healthz" '. /tmp/runtime/session-env; curl -fsS --max-time 1 http://127.0.0.1:8081/healthz'
-seconds_until "Chromium answers on the remote debugging port" '. /tmp/runtime/session-env; curl -fsS --max-time 1 http://127.0.0.1:9222/json/version'
 seconds_until "the panel has a window" '. /tmp/runtime/session-env; wmctrl -lx | grep -qi xfce4-panel'
 inside first || status=1
-copy_out desktop.png applications.png final.png desktop-execute.png
+copy_out first-empty.png desktop.png applications.png final.png desktop-execute.png
 docker logs "$name" >"$out/container-first.log" 2>&1 || true
 echo "== stop =="
 docker stop -t 30 "$name" >/dev/null
@@ -370,7 +402,7 @@ start
 seconds_until "the MCP server answers /healthz" '. /tmp/runtime/session-env; curl -fsS --max-time 1 http://127.0.0.1:8081/healthz'
 seconds_until "the panel has a window" '. /tmp/runtime/session-env; wmctrl -lx | grep -qi xfce4-panel'
 inside restarted || status=1
-copy_out restarted.png
+copy_out restarted-empty.png restarted.png
 
 if [ "$status" != 0 ]; then
   echo "== container log =="

@@ -29,7 +29,7 @@ const r = await mcp.callTool("browser", "browser_execute", {
 console.log(r.content[0].text)
 ```
 
-Chromium opens the page. The program prints the result of each step, as
+Chromium opens (the first call starts it) and loads the page. The program prints the result of each step, as
 JSON; the heading is in the second. Two steps took one tool call.
 
 ## 3. Decide in code
