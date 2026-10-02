@@ -1,11 +1,11 @@
 ---
 layout: home
 title: Computer Use
-titleTemplate: A Node REPL for cloud computer use
+titleTemplate: A JavaScript REPL for cloud computer use
 
 hero:
   name: Computer Use
-  text: A Node REPL for cloud computer use.
+  text: A JavaScript REPL for cloud computer use.
   tagline: Simple. Stateful. Scale to zero. Serverless, resumable desktop containers with a code-mode MCP tool, a light admin interface, and policy to contain what agents do.
   actions:
     - theme: brand
