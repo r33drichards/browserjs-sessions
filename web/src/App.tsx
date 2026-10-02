@@ -1,5 +1,7 @@
 import { Suspense, lazy } from "react"
-import { Route, Routes, useParams } from "react-router-dom"
+import { Navigate, Route, Routes, useParams } from "react-router-dom"
+import { BillingGate } from "./billing/BillingGate"
+import { BillingProvider } from "./billing/BillingProvider"
 import { SessionDetail } from "./pages/SessionDetail"
 import { SessionsList } from "./pages/SessionsList"
 
@@ -8,6 +10,7 @@ import { SessionsList } from "./pages/SessionsList"
 const CreateSession = lazy(() => import("./pages/CreateSession").then(m => ({ default: m.CreateSession })))
 const CreateToken = lazy(() => import("./pages/CreateToken").then(m => ({ default: m.CreateToken })))
 const EditPolicy = lazy(() => import("./pages/EditPolicy").then(m => ({ default: m.EditPolicy })))
+const Billing = lazy(() => import("./pages/Billing").then(m => ({ default: m.Billing })))
 const Tokens = lazy(() => import("./pages/Tokens").then(m => ({ default: m.Tokens })))
 
 // Keyed on the id so moving between two sessions starts from clean page state.
@@ -23,6 +26,9 @@ function EditPolicyRoute() {
 
 export function App() {
   return (
+    // Billing wraps the pages: where the backend has it off, both are transparent.
+    <BillingProvider>
+    <BillingGate>
     <Suspense fallback={null}>
     <Routes>
       <Route path="/" element={<SessionsList />} />
@@ -32,7 +38,12 @@ export function App() {
       <Route path="/sessions/:id/policy/edit" element={<EditPolicyRoute />} />
       <Route path="/tokens" element={<Tokens />} />
       <Route path="/tokens/create" element={<CreateToken />} />
+      {/* Redirects to / where billing is off. */}
+      <Route path="/billing" element={<Billing />} />
+      <Route path="/welcome" element={<Navigate to="/" replace />} />
     </Routes>
     </Suspense>
+    </BillingGate>
+    </BillingProvider>
   )
 }

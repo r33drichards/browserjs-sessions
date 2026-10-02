@@ -8,7 +8,13 @@ export interface Session {
   message?: string
   created: string
   mcp_url: string
+  // Only where the backend has billing on (docs/contracts/billing/backend-api.yaml).
+  stoppedBy?: StoppedBy // why it is asleep or stopped
+  draining?: StoppedBy // finishing calls before such a sleep
+  deleteAfter?: string // due for deletion at this time
 }
+
+export type StoppedBy = "user" | "idle" | "credit" | "payment-method" | "blocked"
 
 export interface Me {
   email: string
@@ -41,6 +47,19 @@ export class ApiError extends Error {
   ) {
     super(message)
   }
+  // The `Error` of the billing contract, when the backend refused for billing.
+  code?: string
+  billingUrl?: string
+  limit?: number
+}
+
+// Copies the billing contract's fields of an error answer onto the error.
+export function withRefusal<E extends ApiError>(error: E, body: unknown): E {
+  const b = (body ?? {}) as { code?: unknown; billingUrl?: unknown; limit?: unknown }
+  if (typeof b.code === "string") error.code = b.code
+  if (typeof b.billingUrl === "string") error.billingUrl = b.billingUrl
+  if (typeof b.limit === "number") error.limit = b.limit
+  return error
 }
 
 // The identity proxy in front of the app no longer accepts our session cookie.
@@ -80,10 +99,12 @@ export function createApi(fetchImpl: Fetch = fetch) {
     if (res.type === "opaqueredirect" || res.status === 401) throw new SignedOutError()
     if (!res.ok) {
       let message = `${res.status} ${res.statusText}`
+      let detail: unknown
       try {
-        message = (await res.json()).error ?? message
+        detail = await res.json()
+        message = (detail as { error?: string }).error ?? message
       } catch {}
-      throw new ApiError(res.status, message)
+      throw withRefusal(new ApiError(res.status, message), detail)
     }
     if (res.status === 204) return undefined as T
     if (!isJson(res)) throw new SignedOutError()

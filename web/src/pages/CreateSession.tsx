@@ -18,6 +18,7 @@ import { useEffect, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { ApiError } from "../api"
 import { signedOutHandled } from "../auth/signedOut"
+import { useCreateGate } from "../billing/SessionBilling"
 import { PanelShell } from "../components/PanelShell"
 import type { Problems } from "../components/PolicyWorkbench"
 import { JSON_TEMPLATE, PolicyWorkbench } from "../components/PolicyWorkbench"
@@ -79,6 +80,7 @@ export function CreateSession() {
   const [formError, setFormError] = useState("")
   const [refused, setRefused] = useState<Problems | null>(null) // the 422 of a create
   const [busy, setBusy] = useState(false)
+  const gate = useCreateGate() // billing: why a session cannot be created, and what one costs
 
   useEffect(() => {
     let cancelled = false
@@ -153,8 +155,9 @@ export function CreateSession() {
   }
 
   async function create(withUnappliedPanel = false) {
-    if (busy) return
+    if (busy || gate.disabled) return
     setFormError("")
+    gate.clear()
     setRefused(null)
     const errors: typeof fieldErrors = {}
     if (choice === COPY && !copyFrom) errors.copy = "Choose the session to copy the policy from."
@@ -186,7 +189,7 @@ export function CreateSession() {
       const flash: Flash = { type: "success", content: `Session ${session.name} created` }
       navigate(`/sessions/${session.id}`, { state: { flash } })
     } catch (e) {
-      if (signedOutHandled(e)) return
+      if (signedOutHandled(e) || gate.refused(e)) return
       if (e instanceof PolicyApiError && e.status === 422) setRefused({ errors: e.errors, warnings: e.warnings })
       setFormError(String(e instanceof Error ? e.message : e))
     } finally {
@@ -215,13 +218,14 @@ export function CreateSession() {
             <Button variant="link" formAction="none" onClick={() => navigate("/")}>
               Cancel
             </Button>
-            <Button variant="primary" loading={busy} formAction="submit">
+            <Button variant="primary" loading={busy} disabled={gate.disabled} formAction="submit">
               Create session
             </Button>
           </SpaceBetween>
         }
       >
         <SpaceBetween size="l">
+          {gate.alert}
           <Container header={<Header variant="h2">Session</Header>}>
             <FormField
               label={
@@ -326,6 +330,7 @@ export function CreateSession() {
               </SpaceBetween>
             </Container>
           )}
+          {gate.note}
         </SpaceBetween>
       </Form>
     </form>
