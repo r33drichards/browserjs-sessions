@@ -107,6 +107,24 @@ async def test_a_session_that_falls_asleep_mid_window_is_sent_at_once(make):
     assert (await observer.run_once(T0 + 240)).disk_gb_seconds == 300 and len(sink.events) == 1
 
 
+async def test_stopping_and_resuming_inside_a_window_is_neither_free_nor_counted_twice(make):
+    """The loophole a single key per window would leave: stop, resume within
+    the same five minutes, and the rest of the window is ignored by
+    Metronome as a repeat."""
+    observer, kube, sink = make(sandbox("s-aaaaa"))
+    await ticks(observer, T0, T0 + 60, T0 + 120)
+    kube.put(asleep("s-aaaaa"))
+    await observer.run_once(T0 + 180)                                    # the first part: 120 s
+    kube.put(sandbox("s-aaaaa", ready_since="2026-10-02T10:03:40Z"))     # resumed at once
+    results = await ticks(observer, T0 + 240, T0 + 300, T0 + 360)
+    assert [(e.transaction_id, e.properties["seconds"]) for e in sink.events.values()] == [
+        (f"awake/s-aaaaa/{T0}", "120"),
+        (f"awake/s-aaaaa/{T0}/{T0 + 240}", "80")]                         # 20 s since Ready, and a minute
+    counted = 120 + sum(r.awake_seconds for r in results[:2])
+    assert sink.total(AWAKE, "seconds") == counted == 200                 # everything observed, once
+    assert len(sink.requests) == 2
+
+
 async def test_a_session_deleted_mid_window_is_sent_at_its_last_sight(make):
     observer, kube, sink = make(sandbox("s-aaaaa"))
     await ticks(observer, T0, T0 + 60, T0 + 120)

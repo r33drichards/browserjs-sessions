@@ -245,3 +245,30 @@ async def test_the_sender_over_http_retries_a_5xx_with_the_same_keys(ingest):
         await m.close()
     assert [len(keys) for _, keys in ingest.requests] == [100, 100, 1] and ingest.requests[0][1] == ingest.requests[1][1]
     assert len(ingest.events) == 101
+
+
+# --- parts: a window sent early that goes on ---------------------------------------------
+
+def test_a_session_that_wakes_again_in_the_same_window_sends_a_part_with_its_own_key():
+    w = Windows(300, awake_event)
+    w.tick(T0 + 60, {"s-aaaaa": 60}, C, {"s-aaaaa"})
+    first = w.tick(T0 + 120, {}, C, set())                       # asleep: sent at once
+    assert w.tick(T0 + 180, {"s-aaaaa": 20}, C, {"s-aaaaa"}) == []   # awake again, 20 s since Ready
+    assert w.tick(T0 + 240, {"s-aaaaa": 60}, C, {"s-aaaaa"}) == []
+    second = w.tick(T0 + 300, {"s-aaaaa": 60}, C, {"s-aaaaa"})
+    assert [(e.transaction_id, e.timestamp, e.properties["seconds"]) for e in first + second] == [
+        (f"awake/s-aaaaa/{T0}", "2026-10-02T10:01:00Z", "60"),
+        (f"awake/s-aaaaa/{T0}/{T0 + 180}", "2026-10-02T10:05:00Z", "140")]
+    # The next window is a whole one again, under the plain key.
+    for i in range(6, 11):
+        nxt = w.tick(T0 + 60 * i, {"s-aaaaa": 60}, C, {"s-aaaaa"})
+    assert [e.transaction_id for e in nxt] == [f"awake/s-aaaaa/{T0 + 300}"] and w._early == {}
+
+
+def test_stopping_and_resuming_again_and_again_makes_a_part_each_time():
+    w, sent = Windows(300, awake_event), []
+    for i, awake in enumerate([True, False, True, False, True], start=1):
+        sent += w.tick(T0 + 60 * i, {"s-aaaaa": 30} if awake else {}, C, {"s-aaaaa"} if awake else set())
+    assert [e.transaction_id for e in sent] == [f"awake/s-aaaaa/{T0}", f"awake/s-aaaaa/{T0}/{T0 + 180}",
+                                                f"awake/s-aaaaa/{T0}/{T0 + 300}"]
+    assert len(set(e.transaction_id for e in sent)) == 3 and sum(int(e.properties["seconds"]) for e in sent) == 90
