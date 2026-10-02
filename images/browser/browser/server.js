@@ -21,6 +21,7 @@ import puppeteer from 'puppeteer-core';
 import { createClipboard } from './clipboard.js';
 import { createFiles, setDownloadDir } from './files.js';
 import { mcpCallerRefusal } from './callers.js';
+import { DESKTOP_TOOL, createDesktop } from './desktop.js';
 
 // `browser-mcp download-dir <profile> <folder>`: what the entrypoint runs
 // before each start of Chromium, instead of the server.
@@ -41,6 +42,9 @@ const MAX_HEIGHT = 2160;
 const files = process.env.FILES_DIR
   ? createFiles({ dir: process.env.FILES_DIR, maxBytes: Number(process.env.FILES_MAX_BYTES) || undefined, clipboard: createClipboard() })
   : null;
+
+// The desktop_execute tool: nut.js on the X display, in a child process.
+const desktop = createDesktop();
 
 const MAX_WAIT_MS = 30000;
 const NAV_TIMEOUT_MS = 45000;
@@ -330,6 +334,7 @@ const TOOLS = [
       required: ['operations'],
     },
   },
+  DESKTOP_TOOL,
 ];
 
 function text(t, isError = false) {
@@ -337,6 +342,7 @@ function text(t, isError = false) {
 }
 
 async function callTool(name, args = {}) {
+  if (name === DESKTOP_TOOL.name) return desktop(args);
   if (name !== 'browser_execute') return text(`Unknown tool: ${name}`, true);
   if (!Array.isArray(args.operations)) return text('Error: operations array is required', true);
 

@@ -25,7 +25,27 @@
             dontNpmBuild = true;
             # puppeteer-core never downloads a browser; skip any install hooks.
             npmFlags = [ "--ignore-scripts" ];
-            nativeBuildInputs = [ pkgs.makeWrapper ];
+            nativeBuildInputs = [
+              pkgs.makeWrapper
+              pkgs.patchelf
+            ];
+            # nut.js (the desktop_execute tool) drives X through libnut, a
+            # native addon that npm delivers already built, for x86_64 only,
+            # against the system's libX11 and libXtst: point it at Nix's. On
+            # another architecture it cannot load, and the tool says so. The
+            # builds for other systems and clipboardy's own copy of xsel
+            # (the image has a working one on PATH) are dropped.
+            postInstall = ''
+              modules=$out/lib/node_modules/browser-mcp/node_modules
+              rm -rf "$modules"/@nut-tree-fork/libnut-{darwin,win32}/build "$modules"/clipboardy/fallbacks
+              patchelf --set-rpath ${
+                pkgs.lib.makeLibraryPath [
+                  pkgs.libx11
+                  pkgs.libxtst
+                  pkgs.stdenv.cc.cc.lib
+                ]
+              } "$modules"/@nut-tree-fork/libnut-linux/build/Release/libnut.node
+            '';
             postFixup = ''
               wrapProgram "$out/bin/browser-mcp" --prefix PATH : ${pkgs.nodejs_22}/bin
             '';
@@ -53,6 +73,8 @@
               # Owns the clipboard for files put on it (browser/clipboard.js).
               pkgs.xclip
               pkgs.xorg.xdpyinfo
+              # The clipboard operations of desktop_execute (nut.js runs it).
+              pkgs.xsel
               xvnc
             ];
             text = ''
@@ -70,11 +92,47 @@
               exec ${pkgs.bash}/bin/bash ${./browser/entrypoint.sh} "$@"
             '';
           };
+
+          # Proof, at build time, that desktop_execute works for real: the
+          # packaged server's nut.js against the image's own Xvnc and openbox
+          # (test/desktop-smoke.mjs). The Dockerfile builds it before the
+          # image. x86_64 only, like the addon.
+          desktop-smoke =
+            pkgs.runCommand "desktop-smoke"
+              {
+                nativeBuildInputs = [
+                  pkgs.nodejs_22
+                  pkgs.openbox
+                  pkgs.xdpyinfo
+                  pkgs.xrandr
+                  pkgs.xsel
+                  pkgs.xterm
+                  xvnc
+                ];
+              }
+              ''
+                export HOME=$TMPDIR/home DISPLAY=:98
+                export FONTCONFIG_FILE=${pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; }}
+                mkdir -p "$HOME" /tmp/.X11-unix
+                Xvnc :98 -geometry 1280x800 -depth 24 -nolisten tcp -ac \
+                  -rfbport 5998 -localhost -UseIPv6=0 -SecurityTypes None -AcceptSetDesktopSize &
+                trap 'kill $(jobs -p) 2>/dev/null || true' EXIT
+                for _ in $(seq 1 100); do
+                  xdpyinfo >/dev/null 2>&1 && break
+                  sleep 0.1
+                done
+                xdpyinfo >/dev/null
+                openbox --sm-disable --config-file ${./browser/openbox-rc.xml} &
+                DESKTOP_JS=${browser-mcp}/lib/node_modules/browser-mcp/desktop.js \
+                  node ${./test/desktop-smoke.mjs}
+                touch $out
+              '';
         in
         {
           inherit browser-mcp runtime xvnc;
           default = runtime;
         }
+        // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isx86_64 { inherit desktop-smoke; }
       );
     };
 }
