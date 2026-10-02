@@ -197,3 +197,14 @@ a {
   border: 2px solid var(--ink);
   border-radius: var(--wobble);
 }
+
+/* State, age and owner on the title row, after the name. */
+.wf-title-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: 16px;
+  font-size: 14px;
+  font-weight: normal;
+  vertical-align: middle;
+}

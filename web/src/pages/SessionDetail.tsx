@@ -1,7 +1,5 @@
 import Box from "@cloudscape-design/components/box"
 import Button from "@cloudscape-design/components/button"
-import ColumnLayout from "@cloudscape-design/components/column-layout"
-import Container from "@cloudscape-design/components/container"
 import Header from "@cloudscape-design/components/header"
 import Input from "@cloudscape-design/components/input"
 import SpaceBetween from "@cloudscape-design/components/space-between"
@@ -9,6 +7,7 @@ import { useCallback, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import type { Session } from "../api"
 import { ApiError, isSessionId } from "../api"
+import { useMe } from "../auth/MeProvider"
 import { signedOutHandled } from "../auth/signedOut"
 import { VncPane } from "../components/VncPane"
 import { Shell, StateTag, api } from "../shell"
@@ -25,6 +24,7 @@ const PLACEHOLDER: Record<string, string> = {
 // Mounted with key={id}, so every piece of state below starts fresh per session.
 export function SessionDetail({ id }: { id: string }) {
   const navigate = useNavigate()
+  const me = useMe()
   const [session, setSession] = useState<Session | null>(null)
   // An id the backend could never have issued is "missing" without asking it.
   const [missing, setMissing] = useState(() => !isSessionId(id))
@@ -112,6 +112,12 @@ export function SessionDetail({ id }: { id: string }) {
           variant="h1"
           actions={
             <SpaceBetween direction="horizontal" size="xs">
+              {/* The address an MCP client connects to: add it to Claude as a connector. */}
+              <Button onClick={() => copyMcpUrl(session.mcp_url)} ariaLabel={`Copy the MCP URL ${session.mcp_url}`}>
+                <span title={session.mcp_url}>
+                  {copied === "copied" ? "Copied" : copied === "failed" ? "Couldn't copy" : "Copy MCP URL"}
+                </span>
+              </Button>
               {/* The viewer puts its Full screen button here. */}
               <span ref={setViewerControls} />
               {awake ? (
@@ -133,6 +139,12 @@ export function SessionDetail({ id }: { id: string }) {
               <Button variant="inline-link" onClick={() => setName(session.name)}>
                 rename
               </Button>
+              <span className="wf-title-meta">
+                <StateTag state={session.state} />
+                <span>created {new Date(session.created).toLocaleString()}</span>
+                {/* Only an admin looking at someone else's session needs telling whose it is. */}
+                {session.owner !== me.email && <span className="wf-mono">{session.owner}</span>}
+              </span>
             </>
           ) : (
             <SpaceBetween direction="horizontal" size="xs">
@@ -161,32 +173,6 @@ export function SessionDetail({ id }: { id: string }) {
             </div>
           </div>
         )}
-
-        <Container header={<Header variant="h2">Details</Header>}>
-          <ColumnLayout columns={3} variant="text-grid">
-            <div>
-              <Box variant="awsui-key-label">State</Box>
-              <StateTag state={session.state} />
-            </div>
-            <div>
-              <Box variant="awsui-key-label">Created</Box>
-              {new Date(session.created).toLocaleString()}
-            </div>
-            <div>
-              <Box variant="awsui-key-label">Owner</Box>
-              <span className="wf-mono">{session.owner}</span>
-            </div>
-          </ColumnLayout>
-          <Box margin={{ top: "m" }}>
-            <Box variant="awsui-key-label">MCP URL — add this to Claude as a connector</Box>
-            <SpaceBetween direction="horizontal" size="xs" alignItems="center">
-              <span className="wf-mono">{session.mcp_url}</span>
-              <Button onClick={() => copyMcpUrl(session.mcp_url)}>
-                {copied === "copied" ? "Copied" : copied === "failed" ? "Couldn't copy" : "Copy"}
-              </Button>
-            </SpaceBetween>
-          </Box>
-        </Container>
       </SpaceBetween>
     </Shell>
   )
