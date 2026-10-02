@@ -179,13 +179,14 @@ run "additional_domain" {
 
   assert {
     condition = toset([for record in google_dns_record_set.domains : record.name]) == toset([
+      "api.computeruse.site.",
       "app.computeruse.site.",
       "authenticate.computeruse.site.",
       "dex.computeruse.site.",
       "sessions.computeruse.site.",
       "*.sessions.computeruse.site.",
     ])
-    error_message = "Expected the five public names again under the additional domain."
+    error_message = "Expected the six public names again under the additional domain."
   }
 
   assert {
@@ -197,12 +198,12 @@ run "additional_domain" {
   }
 
   assert {
-    condition     = google_dns_managed_zone.this[0].dns_name == "browserjs.com." && length(google_dns_record_set.public) == 5 && output.hostnames.app == "app.browserjs.com"
+    condition     = google_dns_managed_zone.this[0].dns_name == "browserjs.com." && length(google_dns_record_set.public) == 6 && output.hostnames.app == "app.browserjs.com"
     error_message = "An additional domain changes nothing about the domain itself."
   }
 
   assert {
-    condition     = length(output.additional_dns_records) == 5 && keys(output.additional_dns_name_servers) == ["computeruse.site"]
+    condition     = length(output.additional_dns_records) == 6 && keys(output.additional_dns_name_servers) == ["computeruse.site"]
     error_message = "The additional domain's nameservers and records must be outputs."
   }
 }

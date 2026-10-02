@@ -7,6 +7,7 @@ changes:
 | --- | --- | --- |
 | App | `https://app.browserjs.com` | `https://app.computeruse.site` |
 | Pomerium's sign-in host | `https://authenticate.browserjs.com` | `https://authenticate.computeruse.site` |
+| The API (API tokens; off today) | `https://api.browserjs.com` | `https://api.computeruse.site` |
 | Dex (and its issuer) | `https://dex.browserjs.com/dex` | `https://dex.computeruse.site/dex` |
 | A session | `https://sessions.browserjs.com/<id>/mcp` | `https://sessions.computeruse.site/<id>/mcp` |
 | A session, the deprecated form | `https://<id>.sessions.browserjs.com/mcp` | `https://<id>.sessions.computeruse.site/mcp` |
@@ -20,7 +21,7 @@ Three changes, each a pull request. The first is safe at any time, the
 second is the switch, the third is optional and deletes things.
 
 1. **A second zone** (`infra/main`, `additional_domains`). Cloud DNS gets a
-   zone for `computeruse.site` with the same five records as `browserjs.com`,
+   zone for `computeruse.site` with the same six records as `browserjs.com`,
    to the same address. Nothing is served under it. Additions only.
 2. **The switch** (`deploy/gke`, `deploy.yml`, `infra/main`, tests, docs).
    Every host moves at once. `browserjs.com` stops being served: its zone
@@ -87,13 +88,13 @@ spelled out and Phase 2 edits it; nothing in `deploy/gke` is templated.
 
 | Where | What | How |
 | --- | --- | --- |
-| `infra/main/terraform.tfvars`, `variables.tf` | `domain` (and its default) | variable; `edge.tf` builds the five names, the zone and the outputs `hostnames`, `certificate_dns_names`, `dns_*` from it |
+| `infra/main/terraform.tfvars`, `variables.tf` | `domain` (and its default) | variable; `edge.tf` builds the six names, the zone and the outputs `hostnames`, `certificate_dns_names`, `dns_*` from it |
 | `infra/main/tests/offline.tftest.hcl` | expected names | literal |
-| `deploy/gke/certificate.yaml` | `dnsNames`, five | literal |
+| `deploy/gke/certificate.yaml` | `dnsNames`, six | literal |
 | `deploy/gke/issuers.yaml` | `hostedZoneName: browserjs-com`, both issuers | literal (the zone's name, not the domain) |
-| `deploy/gke/pomerium-config.yaml` | `authenticate_service_url`, `idp_provider_url`, `from:` of nine routes | literal |
+| `deploy/gke/pomerium-config.yaml` | `authenticate_service_url`, `idp_provider_url`, `from:` of twelve routes | literal |
 | `deploy/gke/dex-config.yaml` | `issuer`, the client's `redirectURIs`, both connectors' `redirectURI` | literal |
-| `deploy/gke/patch-backend.yaml` | `PUBLIC_URL`, `SESSION_URL_TEMPLATE`, `LEGACY_SESSION_URL_TEMPLATE`, `POMERIUM_JWKS_URL` | literal. `SIGN_OUT_URL` is not set: its default is a path, `/.pomerium/sign_out` |
+| `deploy/gke/patch-backend.yaml` | `PUBLIC_URL`, `SESSION_URL_TEMPLATE`, `LEGACY_SESSION_URL_TEMPLATE`, `POMERIUM_JWKS_URL`, `API_URL` | literal. `SIGN_OUT_URL` is not set: its default is a path, `/.pomerium/sign_out` |
 | `deploy/gke/blueprint.yaml` | `MCP_V8_PUBLIC_URL` | parameterised: `{{ .SessionURL }}`, which the backend renders from `SESSION_URL_TEMPLATE` when it creates a session |
 | `deploy/gke/warmpool.yaml` | `MCP_V8_PUBLIC_URL` | literal: `https://sessions.<domain>/$(SESSION_ID)` |
 | `deploy/gke/kustomization.yaml`, `deploy/gke-staging-issuer/kustomization.yaml` | comments | literal |
@@ -105,7 +106,7 @@ spelled out and Phase 2 edits it; nothing in `deploy/gke` is templated.
 | `backend/internal/sessions/deploy_test.go` | the URLs the blueprint is rendered with for the comparison with `warmpool.yaml` | literal |
 | `backend/` otherwise | nothing: every URL comes from the environment | parameterised |
 | `web/` | nothing: the UI shows what the API returns | parameterised |
-| `terraform-provider-browserjs/` | default `endpoint`, `https://api.browserjs.com`, in code, tests, docs and examples | literal. That host does not exist yet (#43) |
+| `terraform-provider-browserjs/` | default `endpoint`, `https://api.browserjs.com`, in code, tests, docs and examples | literal |
 | `docs/*.md`, `infra/README.md` | prose and commands | literal. `docs/plans/` is history and is left alone |
 
 ## Runbook
@@ -119,8 +120,8 @@ outage, and the order inside it matters.
 
 ### 1. Merge Phase 1 (you)
 
-Before merging, read the pull request's `infra plan` run: **6 to add, 0 to
-change, 0 to destroy** (one `google_dns_managed_zone.domains`, five
+Before merging, read the pull request's `infra plan` run: **7 to add, 0 to
+change, 0 to destroy** (one `google_dns_managed_zone.domains`, six
 `google_dns_record_set.domains`). Anything else: stop.
 
 Merge. `infra apply` runs. Its summary has
@@ -135,7 +136,7 @@ Verify, with one of those names in place of `$NS`:
 
 ```sh
 NS=ns-cloud-?1.googledomains.com          # from the output
-for h in app authenticate dex sessions x.sessions; do
+for h in api app authenticate dex sessions x.sessions; do
   dig +short "$h.computeruse.site" "@$NS"  # each prints 8.231.155.139
 done
 dig +short app.browserjs.com               # unchanged: 8.231.155.139
@@ -211,7 +212,7 @@ Verify: nothing to verify until step 7. Rollback: remove the URI.
 ### 4. Bring Phase 2 up to date (whoever maintains the pull request)
 
 Rebase it on `main`. If other changes have added public names since
-(`api.` from #43, the apex from #31), Phase 2 must move them too: after the
+(the apex from #31), Phase 2 must move them too: after the
 rebase
 
 ```sh
@@ -294,7 +295,7 @@ kubectl -n browserjs-sessions get certificate pomerium-tls   # READY True
 
 echo | openssl s_client -connect app.computeruse.site:443 -servername app.computeruse.site 2>/dev/null \
   | openssl x509 -noout -issuer -ext subjectAltName
-# Let's Encrypt; app., authenticate., dex., sessions., *.sessions. of computeruse.site
+# Let's Encrypt; api., app., authenticate., dex., sessions., *.sessions. of computeruse.site
 
 test/smoke.sh                              # the default is computeruse.site now
 curl -sS https://dex.computeruse.site/dex/.well-known/openid-configuration | grep issuer
@@ -333,8 +334,8 @@ Then, in a browser:
 ### 9. Phase 3, optional: DESTRUCTIVE (a pull request of its own)
 
 Remove `previous_domain = "browserjs.com"` from
-`infra/main/terraform.tfvars`. The plan: **6 to destroy** (the zone
-`browserjs-com` and its five records), nothing else. After it, browserjs.com
+`infra/main/terraform.tfvars`. The plan: **7 to destroy** (the zone
+`browserjs-com` and its six records), nothing else. After it, browserjs.com
 resolves to nothing, and going back means making the zone again and setting
 its new nameservers at Namecheap. In the same pull request or a later one,
 delete the resources `google_dns_managed_zone.this` and
@@ -350,7 +351,7 @@ the zone for a redirect).
 **Kept.** The Sandboxes, their IDs, names, owners, disks (the browser's
 profile, logged-in sites, artifacts), sleep and wake, snapshots.
 
-**Signed out.** Everyone. Dex's issuer changes, Pomerium's sessions are
+**Signed out.** Everyone who signs in. Dex's issuer changes, Pomerium's sessions are
 cookies on hosts that are no longer served, and Pomerium's MCP client
 registrations and refresh tokens were issued for resources under the old
 host.
@@ -401,12 +402,12 @@ Whichever lands second rebases. After the switch the rule is: no
 `browserjs.com` in `deploy/`, `.github/`, `test/`, `site/` (the check in
 step 4).
 
-- **#43, API tokens** (`api.browserjs.com`): the routes' `from:`, `API_URL`
-  and the certificate's name become `api.computeruse.site`. In `edge.tf`,
-  add the name to `local.public_names` as before: it then gets a record in
-  both zones without further change. The Terraform provider's default
-  endpoint is already `https://api.computeruse.site` after Phase 2. If #43
-  merges before the switch instead, Phase 2 picks its names up in step 4.
+- **API tokens** (#43, merged; off in production): the API host moves with
+  the rest, to `https://api.computeruse.site`, and the Terraform provider's
+  default endpoint with it. A token is not tied to a host, but whatever
+  holds the endpoint is: `BROWSERJS_ENDPOINT` or `endpoint =` set to the old
+  host has to change. Before turning tokens on (`ALLOWED_EMAILS`), nothing
+  else to do.
 - **#31, the site on the apex**, and **#32**, its deploy: the certificate's
   name and Pomerium's route become `computeruse.site`. Its
   `google_dns_record_set.site` uses `google_dns_managed_zone.this[0]` and
