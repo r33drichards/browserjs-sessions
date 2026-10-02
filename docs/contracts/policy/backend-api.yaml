@@ -83,6 +83,30 @@ paths:
       responses:
         "200": {description: The session., content: {application/json: {schema: {$ref: "#/components/schemas/Session"}}}}
         "404": {$ref: "#/components/responses/NotFound"}
+    patch:
+      summary: Rename, stop or resume a session (as today; unchanged by policies).
+      description: |
+        One write, validated as a whole. Listed here because the Terraform
+        provider uses it; a token needs `sessions:write`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: {type: string, description: "1 to 63 characters, no control characters."}
+                action: {type: string, enum: [stop, resume]}
+      responses:
+        "200": {description: The session after the change., content: {application/json: {schema: {$ref: "#/components/schemas/Session"}}}}
+        "400": {description: The body is not JSON, or the name or the action is not valid., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "404": {$ref: "#/components/responses/NotFound"}
+    delete:
+      summary: Delete a session (as today). Its policy goes with it.
+      description: A token needs `sessions:write`.
+      responses:
+        "204": {description: Deleted, or there was none.}
+        "404": {description: Not the caller's., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
   /sessions/{id}/policy:
     parameters: [{$ref: "#/components/parameters/id"}]
     get:
