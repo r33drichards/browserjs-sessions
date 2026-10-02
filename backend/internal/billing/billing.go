@@ -68,8 +68,9 @@ type Ledger interface {
 	// is that credit if it is this account's (a replay), and has an empty
 	// Account if it is another's.
 	EnsureGrant(ctx context.Context, g Grant) (created bool, existing Grant, err error)
-	// Revoke archives the credits sel finds, then runs EnsureCredit. A
-	// credit is one account's: sel.Account is required.
+	// Revoke archives the credits sel finds, then runs EnsureCredit. With no
+	// sel.Account (a refund names a payment, not an account) every account
+	// that has a Stripe customer is looked in.
 	Revoke(ctx context.Context, sel GrantSelector, reason string) error
 	// EnsureCredit reads Balance and writes Account.spec.credit (exhausted,
 	// exhaustedAt, balanceMicros, nextExpiryAt, checkedAt). The only writer

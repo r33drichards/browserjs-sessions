@@ -190,8 +190,56 @@ func TestBalanceIsInTheOrderItIsUsed(t *testing.T) {
 	if c, _ := b.ledger.EnsureCredit(ctx, u.Name); !c.ExhaustedAt.Equal(b.clock.Now().Add(-time.Hour)) {
 		t.Fatalf("exhaustedAt moved: %v", c.ExhaustedAt)
 	}
-	if err := b.ledger.Revoke(ctx, billing.GrantSelector{PaymentIntent: "pi_1"}, "refund"); err == nil {
-		t.Error("revoked with no account to look in")
+}
+
+// A refund names a payment or a Grant, not an account: the three shapes
+// the Stripe component revokes with.
+func TestRevokeByWhatAStripeEventNames(t *testing.T) {
+	b := newBooks()
+	ctx := t.Context()
+	u, v := b.account(t, "u@example.com"), b.account(t, "v@example.com")
+	for _, acc := range []billing.Account{u, v} {
+		if _, err := b.accounts.Update(ctx, acc.Name, func(s *billing.AccountSpec) error { s.StripeCustomerID = "cus_" + acc.Spec.OwnerHash[:6]; return nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := b.clock.Now()
+	pack := grant(u.Name, billing.SourcePurchase, "purchase/cs_1", 20_000_000, now, 365)
+	pack.Ref = &billing.GrantRef{PaymentIntent: "pi_1"}
+	old := grant(u.Name, billing.SourcePlan, "plan/sub_1/100", 10_000_000, now, 30)
+	newer := grant(u.Name, billing.SourcePlan, "plan/sub_1/200", 44_000_000, now, 30)
+	theirs := grant(v.Name, billing.SourcePlan, "plan/sub_2/100", 10_000_000, now, 30)
+	for _, g := range []billing.Grant{pack, old, newer, theirs} {
+		if created, _, err := b.ledger.EnsureGrant(ctx, g); err != nil || !created {
+			t.Fatal(created, err)
+		}
+	}
+	balance := func(acc billing.Account) int64 { return b.credit(t, acc.Name).BalanceMicros }
+
+	// A refund or dispute of a pack: by its payment intent alone.
+	if err := b.ledger.Revoke(ctx, billing.GrantSelector{PaymentIntent: "pi_1"}, "refund"); err != nil {
+		t.Fatal(err)
+	}
+	if balance(u) != 54_000_000 || balance(v) != 10_000_000 {
+		t.Fatalf("after the pack's refund: %d and %d", balance(u), balance(v))
+	}
+	// An upgrade supersedes the old period's plan credit.
+	if err := b.ledger.Revoke(ctx, billing.GrantSelector{Account: u.Name, Source: billing.SourcePlan, ExpiresAfter: &now, Except: billing.GrantName("plan/sub_1/200")}, "superseded"); err != nil {
+		t.Fatal(err)
+	}
+	if balance(u) != 44_000_000 || balance(v) != 10_000_000 {
+		t.Fatalf("after the upgrade: %d and %d", balance(u), balance(v))
+	}
+	// A refund of a subscription's charge: by the Grant's name alone.
+	if err := b.ledger.Revoke(ctx, billing.GrantSelector{Name: billing.GrantName("plan/sub_2/100")}, "refund"); err != nil {
+		t.Fatal(err)
+	}
+	if balance(u) != 44_000_000 || balance(v) != 0 || !b.credit(t, v.Name).Exhausted {
+		t.Fatalf("after the plan's refund: %d and %d", balance(u), balance(v))
+	}
+	// Nothing found is not an error.
+	if err := b.ledger.Revoke(ctx, billing.GrantSelector{PaymentIntent: "pi_none"}, "refund"); err != nil {
+		t.Fatal(err)
 	}
 }
 

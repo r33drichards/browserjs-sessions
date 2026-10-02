@@ -2,7 +2,6 @@ package billing
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -245,10 +244,30 @@ func (l *ledger) EnsureGrant(ctx context.Context, g Grant) (bool, Grant, error) 
 }
 
 func (l *ledger) Revoke(ctx context.Context, sel GrantSelector, reason string) error {
-	if sel.Account == "" {
-		return errors.New("billing: revoking credit needs the account it is on")
+	if sel.Account != "" {
+		return l.revoke(ctx, sel.Account, sel)
 	}
-	id, err := l.EnsureCustomer(ctx, sel.Account)
+	// A refund names a payment or a Grant, not an account, and a credit is
+	// one Metronome customer's: look in every account that has paid.
+	accounts, err := l.accounts.WithCustomer(ctx)
+	if err != nil {
+		return err
+	}
+	for _, acc := range accounts {
+		if acc.Spec.MetronomeCustomerID == "" {
+			continue
+		}
+		if err := l.revoke(ctx, acc.Name, sel); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// revoke archives the credits of one account that sel finds. An account
+// that had none is not written to.
+func (l *ledger) revoke(ctx context.Context, account string, sel GrantSelector) error {
+	id, err := l.EnsureCustomer(ctx, account)
 	if err != nil {
 		return err
 	}
@@ -256,15 +275,20 @@ func (l *ledger) Revoke(ctx context.Context, sel GrantSelector, reason string) e
 	if err != nil {
 		return err
 	}
+	found := false
 	for _, c := range credits {
-		if !sel.Matches(grantOf(sel.Account, c)) {
+		if !sel.Matches(grantOf(account, c)) {
 			continue
 		}
 		if err := l.metronome.ArchiveCredit(ctx, id, c.ID); err != nil {
 			return err
 		}
+		found = true
 	}
-	_, err = l.EnsureCredit(ctx, sel.Account)
+	if !found && sel.Account == "" {
+		return nil
+	}
+	_, err = l.EnsureCredit(ctx, account)
 	return err
 }
 
