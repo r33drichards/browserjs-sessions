@@ -1,0 +1,78 @@
+# What test/policy/run.sh applies to a kind cluster: deploy/base with session
+# policies on, and stand-ins (stub.py) for what the test does not need for
+# real. OPA, its configuration, the Secret's use, the Services, the Roles and
+# the NetworkPolicies are deploy/base's own, unchanged.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: browserjs-sessions
+
+resources:
+  - ../../deploy/base
+
+images:
+  - name: browserjs/backend
+    newName: python
+    digest: sha256:2dd78ad5cf13a0b68f5134dc49aa9950203a8cf4b7463431b9f3b398287c5059 # 3.13-alpine
+  - name: browserjs/policy-operator
+    newName: python
+    digest: sha256:2dd78ad5cf13a0b68f5134dc49aa9950203a8cf4b7463431b9f3b398287c5059
+
+configMapGenerator:
+  - name: policy-test-stub
+    files:
+      - stub.py
+
+patches:
+  # The edge is not part of this test, and would need its Secrets.
+  - patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: pomerium
+      $patch: delete
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: dex
+      $patch: delete
+  # The operator: a bundle server that publishes what the test gives it.
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: policy-operator
+      spec:
+        template:
+          spec:
+            containers:
+              - name: policy-operator
+                command: ["python3", "/stub/stub.py", "operator"]
+                volumeMounts:
+                  - name: stub
+                    mountPath: /stub
+            volumes:
+              - name: stub
+                configMap:
+                  name: policy-test-stub
+  # The backend: only its place in the network.
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: backend
+      spec:
+        template:
+          spec:
+            securityContext:
+              runAsUser: 65532
+            containers:
+              - name: backend
+                command: ["python3", "/stub/stub.py", "backend"]
+                volumeMounts:
+                  - name: stub
+                    mountPath: /stub
+            volumes:
+              - name: stub
+                configMap:
+                  name: policy-test-stub

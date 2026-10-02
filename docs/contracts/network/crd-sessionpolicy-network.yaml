@@ -1,0 +1,110 @@
+# Additions to deploy/base/crd-sessionpolicy.yaml (version v1alpha1). Not a
+# manifest: the two fragments below go under the paths named. Nothing
+# existing changes, and an object without spec.network stays valid.
+
+# --- under spec.versions[0].schema.openAPIV3Schema.properties.spec.properties
+network:
+  description: What the session's pod may connect to (docs/contracts/network/network-policy.schema.json). Absent means mode internet. Reconciled by the policy operator into the NetworkPolicy <session>-egress.
+  type: object
+  required: ["version", "mode"]
+  x-kubernetes-validations:
+    - rule: "self.mode != 'none' || ((!has(self.dns) || !self.dns) && !has(self.allow) && !has(self.deny))"
+      message: mode none takes no dns, allow or deny
+    - rule: "self.mode != 'internet' || !has(self.allow)"
+      message: allow is for mode allowlist
+    - rule: "self.mode != 'allowlist' || !has(self.deny)"
+      message: deny is for mode internet
+  properties:
+    version:
+      type: integer
+      enum: [1]
+    description:
+      type: string
+      maxLength: 1024
+    mode:
+      type: string
+      enum: ["none", "internet", "allowlist"]
+    dns:
+      type: boolean
+    allow:
+      type: array
+      maxItems: 50
+      items:
+        type: object
+        required: ["cidr"]
+        properties:
+          cidr: {type: string, maxLength: 18}
+          description: {type: string, maxLength: 256}
+          ports:
+            type: array
+            maxItems: 20
+            items:
+              type: object
+              required: ["port"]
+              properties:
+                port: {type: integer, minimum: 1, maximum: 65535}
+                endPort: {type: integer, minimum: 1, maximum: 65535}
+                protocol: {type: string, enum: ["TCP", "UDP"], default: TCP}
+    deny:
+      type: array
+      maxItems: 50
+      items:
+        type: object
+        required: ["cidr"]
+        properties:
+          cidr: {type: string, maxLength: 18}
+          description: {type: string, maxLength: 256}
+
+# --- under ...properties.status.properties
+network:
+  description: Written only by the policy operator.
+  type: object
+  properties:
+    observedGeneration:
+      description: The metadata.generation these fields describe.
+      type: integer
+      format: int64
+    mode:
+      description: The mode in force, which is the last one applied.
+      type: string
+    policy:
+      description: The NetworkPolicy that carries the rules.
+      type: string
+    hostnames:
+      description: Whether this cluster can enforce host entries. Always "unavailable" in version 1.
+      type: string
+      enum: ["unavailable", "available"]
+    errors:
+      description: Why the current rules are not applied. Empty when they are.
+      type: array
+      maxItems: 50
+      items:
+        type: object
+        required: ["code", "message"]
+        properties:
+          path: {description: 'JSON pointer into spec.network, for example "/allow/2/cidr".', type: string}
+          code: {type: string}
+          message: {type: string}
+    warnings:
+      type: array
+      maxItems: 50
+      items:
+        type: object
+        required: ["code", "message"]
+        properties:
+          path: {type: string}
+          code: {type: string}
+          message: {type: string}
+    lastAppliedTime:
+      type: string
+      format: date-time
+
+# --- status.conditions[].type gains one value
+#   enum: ["Compiled", "Loaded", "NetworkApplied", "Ready"]
+# NetworkApplied: the NetworkPolicy for observedGeneration is written.
+# Ready: Compiled, Loaded and NetworkApplied, for observedGeneration.
+#
+# --- additionalPrinterColumns gains
+#   - name: Network
+#     type: string
+#     jsonPath: .status.network.mode

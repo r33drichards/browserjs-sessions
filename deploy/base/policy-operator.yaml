@@ -1,0 +1,178 @@
+# The policy operator (images/policy-operator): turns every SessionPolicy
+# into Rego, builds the one bundle the shared OPA polls, and answers the
+# backend's validate and evaluate calls (docs/contracts/policy/operator-api.yaml).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: policy-operator
+---
+# Pomerium's and Dex's ConfigMaps and every Secret are in this namespace
+# too. The operator reads none of them: its rights name the policy resource,
+# events, and the EndpointSlices it finds OPA's replicas with.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: policy-operator
+rules:
+  - apiGroups: ["browserjs.dev"]
+    resources: ["sessionpolicies"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["browserjs.dev"]
+    resources: ["sessionpolicies/status"]
+    verbs: ["get", "patch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: policy-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: policy-operator
+subjects:
+  - kind: ServiceAccount
+    name: policy-operator
+---
+# The contract's rule for kopf, which watches the definitions of the
+# resources it handles. The operator runs with that scanning off, so today
+# nothing uses it.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: browserjs-policy-operator
+rules:
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: browserjs-policy-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: browserjs-policy-operator
+subjects:
+  - kind: ServiceAccount
+    name: policy-operator
+    namespace: browserjs-sessions
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: policy-operator
+  labels:
+    app: policy-operator
+spec:
+  # Exactly one, and never two at once: kopf runs standalone. While it is
+  # away OPA keeps the last bundle, so enforcement continues; changes wait.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: policy-operator
+  template:
+    metadata:
+      # The NetworkPolicies select on this label: nothing else may carry it.
+      labels:
+        app: policy-operator
+    spec:
+      serviceAccountName: policy-operator
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: policy-operator
+          image: browserjs/policy-operator
+          command:
+            - kopf
+            - run
+            - --standalone
+            - --namespace=browserjs-sessions
+            - --liveness=http://0.0.0.0:8081/healthz
+            - -m
+            - policy_operator
+          env:
+            # kopf asks who it runs as, and uid 65532 has no entry in the
+            # image's /etc/passwd: without a name here it exits at start
+            # (KeyError: getpwuid(): uid not found).
+            - name: USER
+              value: policy-operator
+            # What OPA presents when it fetches the bundle.
+            - name: BUNDLE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: policy-tokens
+                  key: bundle-token
+            # Presented to each OPA replica to read what it has loaded.
+            - name: OPA_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: policy-tokens
+                  key: opa-token
+            # What the backend presents on validate and evaluate.
+            - name: OPERATOR_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: policy-tokens
+                  key: operator-api-token
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: liveness
+              containerPort: 8081
+          # Ready once every existing SessionPolicy has been reconciled and a
+          # bundle is published.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: liveness
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        # The root filesystem is read-only, and every run of `opa` works in a
+        # temporary directory.
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: policy-operator
+spec:
+  selector:
+    app: policy-operator
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
