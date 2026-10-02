@@ -66,6 +66,30 @@ jobs:
       - name: Init
         run: tofu init -backend-config="bucket=${TOFU_STATE_BUCKET}"
 
+      # What bootstrap.sh made by hand and no state records: which GitHub
+      # tokens the provider accepts, and who may act as each service account.
+      # Read-only; it is here so that a change to either shows up in review.
+      - name: GitHub trust (not in state)
+        working-directory: .
+        env:
+          WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+          ACCOUNTS: ${{ vars.TOFU_PLAN_SA }} ${{ vars.TOFU_APPLY_SA }} ${{ vars.IMAGE_PUSH_SA }} ${{ vars.DEPLOY_SA }}
+          CLOUDSDK_CORE_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+        run: |
+          {
+            echo "## GitHub trust"
+            echo
+            echo '```'
+            gcloud iam workload-identity-pools providers describe "$WIF_PROVIDER" \
+              --format='yaml(name,state,attributeCondition,attributeMapping)' 2>&1 || true
+            for account in $ACCOUNTS; do
+              echo
+              echo "# $account"
+              gcloud iam service-accounts get-iam-policy "$account" --format='yaml(bindings)' 2>&1 || true
+            done
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Validate
         run: tofu validate -no-color
 

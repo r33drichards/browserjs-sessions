@@ -62,6 +62,16 @@ resource "google_service_account_iam_member" "images_push_github" {
   member             = "principalSet://iam.googleapis.com/projects/${local.project_number}/locations/global/workloadIdentityPools/${var.github_wif_pool_id}/attribute.repo_ref/${var.github_repository}@${var.images_push_ref}"
 }
 
+# The same grant by the repository's numeric ID, which a rename or a transfer
+# does not change: the provider maps attribute.repository_id_ref to
+# "<repository id>@<ref>". Both grants exist while the repository is renamed;
+# the one by name above is removed afterwards.
+resource "google_service_account_iam_member" "images_push_github_id" {
+  service_account_id = google_service_account.images_push.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/projects/${local.project_number}/locations/global/workloadIdentityPools/${var.github_wif_pool_id}/attribute.repository_id_ref/${var.github_repository_id}@${var.images_push_ref}"
+}
+
 # --- Deploys from GitHub Actions -----------------------------------------------------
 
 # The identity .github/workflows/deploy.yml and cluster-info.yml reach the
@@ -89,4 +99,11 @@ resource "google_service_account_iam_member" "deployer_github" {
   service_account_id = google_service_account.deployer.name
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/projects/${local.project_number}/locations/global/workloadIdentityPools/${var.github_wif_pool_id}/attribute.repo_ref/${var.github_repository}@${var.deploy_ref}"
+}
+
+# By the repository's numeric ID as well, as for images-push above.
+resource "google_service_account_iam_member" "deployer_github_id" {
+  service_account_id = google_service_account.deployer.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/projects/${local.project_number}/locations/global/workloadIdentityPools/${var.github_wif_pool_id}/attribute.repository_id_ref/${var.github_repository_id}@${var.deploy_ref}"
 }
