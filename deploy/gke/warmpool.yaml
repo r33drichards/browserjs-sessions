@@ -91,7 +91,7 @@ spec:
         # the system call filter), and the policies do not ask for one.
       containers:
         - name: browser
-          image: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/browser@sha256:63145f8083996b55793f6d7b91a819e72ac70c4f8925689a4ec70e4cdad47367
+          image: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/browser@sha256:86340ed9a2531e364e53d30a0c70a9d68fad120631bb0956e60b238315579bb4
           env:
             - name: SESSION_MODE
               value: "1"
@@ -147,7 +147,7 @@ spec:
             - name: shm
               mountPath: /dev/shm
         - name: mcp-js
-          image: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/mcp-js@sha256:de903a1b46c19e9130292317b75487f524a78cb3cd373597cde203f8d6be9e9e
+          image: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/mcp-js@sha256:067a7822501da8ed78b5afaeded49227f982b4300e937c9c773f3e9129f119f1
           env:
             # One-time upload URLs are made from this (mcp-js appends
             # /api/artifact-uploads/<token>), so they come back under the
