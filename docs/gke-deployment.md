@@ -36,7 +36,8 @@ collected at the end.
     serving the static build of `site/`, a Service, and a NetworkPolicy that
     lets only Pomerium in. Pomerium's `site` route needs no sign-in and
     passes no identity. The name is on the certificate, and its A record is
-    in `infra/main/edge.tf`. `www.computeruse.site` is not set up.
+    in `infra/main/edge.tf`. `www.computeruse.site` redirects to it (301, same path and
+    query): Pomerium's `www` route, its own A record and certificate name.
   - Pomerium's Service as a regional external passthrough Network Load
     Balancer on the reserved address: `type: LoadBalancer`,
     `loadBalancerClass: networking.gke.io/l4-regional-external`, annotation

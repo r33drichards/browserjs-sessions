@@ -17,6 +17,10 @@ DOMAIN="${DOMAIN:-computeruse.site}"
 APP="app.$DOMAIN"
 AUTHENTICATE="authenticate.$DOMAIN"
 DEX="dex.$DOMAIN"
+# The public site is on the domain itself; www redirects to it. SITE=0 skips
+# both (a deployment without the site).
+SITE="${SITE:-1}"
+WWW="www.$DOMAIN"
 # Every session is under this host, by its ID.
 SESSIONS="sessions.$DOMAIN"
 # A well-formed session ID that (almost certainly) names no session, new each
@@ -62,6 +66,7 @@ echo
 # is the proof; the old session host shows that the wildcard is on it.
 hosts=("$APP" "$AUTHENTICATE" "$DEX" "$SESSIONS")
 [ "$LEGACY" = 0 ] || hosts+=("$LEGACY_SESSION")
+[ "$SITE" = 0 ] || hosts+=("$DOMAIN" "$WWW")
 for host in "${hosts[@]}"; do
   if error="$(curl -sS --max-time 20 -o /dev/null "https://$host/" 2>&1)"; then
     pass "certificate is valid for $host"
@@ -73,6 +78,14 @@ done
 issuer="$(curl -s --max-time 20 -k -o /dev/null -w '%{certs}' "https://$APP/" 2>/dev/null | grep -i -m1 '^issuer:' || true)"
 [ -z "$issuer" ] || echo "      $issuer"
 case "$issuer" in *STAGING*) echo "      this is a Let's Encrypt STAGING certificate: run the deploy with issuer=production" ;; esac
+
+# --- the public site ---------------------------------------------------------
+if [ "$SITE" != 0 ]; then
+  is "the site answers without sign-in" 200 "$(status "https://$DOMAIN/")"
+  is "$WWW answers with a permanent redirect" 301 "$(status "https://$WWW/guides/files?x=1")"
+  is "$WWW redirects to the site, keeping path and query" "https://$DOMAIN/guides/files?x=1" \
+    "$(location "https://$WWW/guides/files?x=1")"
+fi
 
 # --- the app -----------------------------------------------------------------
 is "the app answers with a redirect" 302 "$(status "https://$APP/")"
