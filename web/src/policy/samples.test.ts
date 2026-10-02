@@ -55,6 +55,9 @@ describe("sample calls", () => {
   it("are, for the desktop and the shell, calls the contract's examples have cases for", () => {
     const known = new Set(cases.map(c => JSON.stringify(c.input)))
     const outside = SAMPLES.filter(s => s.tool !== "browser_execute" && !known.has(JSON.stringify(s.input))).map(s => s.label)
-    expect(outside).toEqual(["Read the clipboard"])
+    // The contract's "a shell" case also sets env (PATH=/tmp), so the plain
+    // `sh -c id` sample is not one of its cases: the mock answers it, like the
+    // clipboard read, from its placeholder.
+    expect(outside).toEqual(["Read the clipboard", "Run a shell"])
   })
 })
