@@ -391,3 +391,88 @@ func TestRunningIsRememberedBriefly(t *testing.T) {
 		t.Errorf("Running on a missing session: %v, want ErrNotFound", err)
 	}
 }
+
+// restoreNeverWorks plays a cluster on which a session's snapshot cannot be
+// restored: while the session is pinned to its snapshot's pool its pod gets
+// the status stuck; once the snapshot is given up (no pin), it starts.
+func restoreNeverWorks(ctx context.Context, client dynamic.Interface, id string, stuck map[string]any, podIP string) {
+	res := client.Resource(sessions.SandboxGVR).Namespace(sessionstest.Namespace)
+	last := ""
+	for ctx.Err() == nil {
+		time.Sleep(2 * time.Millisecond)
+		obj, err := res.Get(ctx, id, metav1.GetOptions{})
+		if err != nil {
+			return
+		}
+		mode, _, _ := unstructured.NestedString(obj.Object, "spec", "operatingMode")
+		pin, _, _ := unstructured.NestedString(obj.Object, "spec", "podTemplate", "spec", "nodeSelector", sessions.LabelPool)
+		phase, status := "ready", sessionstest.Ready(podIP)
+		switch {
+		case mode == "Suspended":
+			phase, status = "suspended", sessionstest.Suspended()
+		case pin != "":
+			phase, status = "stuck", stuck
+		}
+		if phase != last && sessionstest.TrySetStatus(client, id, status) == nil {
+			last = phase
+		}
+	}
+}
+
+func TestEnsureAwakeStartsColdWhenTheRestoreDoesNotWork(t *testing.T) {
+	for name, stuck := range map[string]map[string]any{
+		// The pod is on a node and never gets ready.
+		"hangs": {"nodeName": sessionstest.Node},
+		// No node of the snapshot's pool can be had.
+		"is never scheduled": {},
+		"fails": {"nodeName": sessionstest.Node, "conditions": []any{
+			map[string]any{"type": "Finished", "status": "True", "reason": "PodFailed", "message": "restore failed"},
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			store, client, _ := sessionstest.NewWithSnapshots(t, sessions.SnapshotOptions{Timeout: 2 * time.Second})
+			w := &Waker{Store: store, Timeout: 5 * time.Second, Poll: 5 * time.Millisecond, RestoreTimeout: 50 * time.Millisecond}
+			s, _ := store.Create(ctx, "a", "user-1")
+			sessionstest.SetStatus(t, client, s.ID, sessionstest.Ready("10.0.0.7"))
+			if err := store.Sleep(ctx, s.ID, nil); err != nil {
+				t.Fatal(err)
+			}
+			sessionstest.SetStatus(t, client, s.ID, sessionstest.Suspended())
+			go restoreNeverWorks(ctx, client, s.ID, stuck, "10.0.0.9")
+
+			got, err := w.EnsureAwake(ctx, s.ID)
+			if err != nil || got.PodIP != "10.0.0.9" {
+				t.Fatalf("EnsureAwake = %+v, %v", got, err)
+			}
+			if left := sessionstest.Snapshots(t, client); len(left) != 0 {
+				t.Errorf("the snapshot that would not restore is still there: %v", left)
+			}
+		})
+	}
+}
+
+// A restore that works is left alone, however the timeout is set.
+func TestEnsureAwakeKeepsASnapshotThatRestores(t *testing.T) {
+	ctx := t.Context()
+	store, client, _ := sessionstest.NewWithSnapshots(t, sessions.SnapshotOptions{Timeout: 2 * time.Second})
+	w := &Waker{Store: store, Timeout: 5 * time.Second, Poll: 5 * time.Millisecond, RestoreTimeout: time.Second}
+	s, _ := store.Create(ctx, "a", "user-1")
+	sessionstest.SetStatus(t, client, s.ID, sessionstest.Ready("10.0.0.7"))
+	if err := store.Sleep(ctx, s.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	sessionstest.SetStatus(t, client, s.ID, sessionstest.Suspended())
+	controller := readyOnceResumed(ctx, store, client, s.ID, "10.0.0.8")
+
+	if got, err := w.EnsureAwake(ctx, s.ID); err != nil || got.PodIP != "10.0.0.8" {
+		t.Fatalf("EnsureAwake = %+v, %v", got, err)
+	}
+	if err := <-controller; err != nil {
+		t.Fatal(err)
+	}
+	if left := sessionstest.Snapshots(t, client); len(left) != 1 {
+		t.Errorf("snapshots = %v, want the one it woke from", left)
+	}
+}

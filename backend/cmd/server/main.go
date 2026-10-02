@@ -84,6 +84,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	if cfg.Snapshots {
+		store.EnableSnapshots(dyn, cfg.Namespace, sessions.SnapshotOptions{Timeout: cfg.SnapshotTimeout})
+		slog.Info("idle sessions sleep to Pod Snapshots", "timeout", cfg.SnapshotTimeout, "restoreTimeout", cfg.RestoreTimeout)
+	}
 	verifier, err := auth.NewJWKSVerifier(ctx, cfg.PomeriumJWKSURL, cfg.AdminEmails)
 	if err != nil {
 		return err
@@ -145,9 +149,10 @@ func newHandler(cfg config.Config, verifier auth.Verifier, store *sessions.Store
 	px := &proxy.Proxy{
 		Verifier: verifier,
 		Authz:    owners,
-		Waker:    &proxy.Waker{Store: store, Timeout: cfg.ReadyTimeout, Poll: time.Second, RunningTTL: 2 * time.Second},
-		Idle:     tracker,
-		URLs:     cfg.SessionURLs,
+		Waker: &proxy.Waker{Store: store, Timeout: cfg.ReadyTimeout, RestoreTimeout: cfg.RestoreTimeout,
+			Poll: time.Second, RunningTTL: 2 * time.Second},
+		Idle: tracker,
+		URLs: cfg.SessionURLs,
 	}
 
 	apiMux := http.NewServeMux()

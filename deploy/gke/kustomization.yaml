@@ -13,6 +13,7 @@ namespace: browserjs-sessions
 resources:
   - ../base
   - session.yaml
+  - snapshots.yaml
   - certificate.yaml
 
 # THE ONE PLACE the deployed images are chosen. Each digest is what the
