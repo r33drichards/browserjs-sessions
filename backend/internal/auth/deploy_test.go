@@ -19,7 +19,7 @@ func TestAllowedEmailsMirrorPomeriumsPolicy(t *testing.T) {
 	}{
 		{"base", "../../../deploy/base/pomerium-config.yaml", "../../../deploy/base/backend.yaml", false},
 		{"local", "../../../deploy/local/pomerium-config.yaml", "../../../deploy/local/patch-backend.yaml", true},
-		{"gke", "../../../deploy/gke/pomerium-config.yaml", "../../../deploy/gke/patch-backend.yaml", false},
+		{"gke", "../../../deploy/gke/pomerium-config.yaml", "../../../deploy/gke/patch-backend.yaml", true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			routes := pomeriumRoutes(t, c.pomerium)

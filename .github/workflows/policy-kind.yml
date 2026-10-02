@@ -67,7 +67,7 @@ jobs:
           done
           # An unpinned operator is refused once policies are not off. With
           # the operator pinned (any stage past off), unpin it to see that.
-          sed -i '/name: browserjs\/policy-operator/,/digest:/ s|digest: sha256:[0-9a-f]\{64\}|digest: REPLACE_WITH_POLICY_OPERATOR_DIGEST|' deploy/gke/kustomization.yaml
+          sed -i '/name: browserjs\/policy-operator/,/digest:/ s|digest: sha256:[0-9a-f]\{64\}|digest: REPLACE_WITH_DIGEST|' deploy/gke/kustomization.yaml
           if hack/pin-images.sh --check; then
             echo "::error::pin-images accepted an unpinned policy-operator with session policies on"
             exit 1
