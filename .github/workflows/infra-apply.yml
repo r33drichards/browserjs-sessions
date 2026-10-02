@@ -1,15 +1,13 @@
 name: infra apply
 
-# Applies infra/main to Google Cloud. Started by hand only, never by a push.
+# Applies infra/main to Google Cloud when a change to infra/main lands on main,
+# and by hand (type "apply") to apply again without a change.
 #
-# The human gate is the procedure, not a GitHub feature (this repository's
-# plan has no environment protection rules):
-#   1. read the plan in the pull request's "infra plan" run,
-#   2. merge to main,
-#   3. start this workflow on main and type "apply".
-# The job plans again, prints that plan to the summary, and applies exactly
-# it. There is no pause between the two: what protects you is that main holds
-# only what was reviewed, and that nothing else changes the project.
+# The gate is the pull request: read the plan in its "infra plan" run, then
+# merge. The merge is the approval; this workflow plans again, prints that
+# plan to the summary, and applies exactly it. Nothing else changes the
+# project, so the plan it applies is the plan that was reviewed unless main
+# moved in between.
 #
 # Authentication is keyless: GitHub's OIDC token is exchanged through Workload
 # Identity Federation for the tofu-apply service account (project Owner),
@@ -17,6 +15,10 @@ name: infra apply
 # repository. No key or token is stored anywhere.
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "infra/main/**"
   workflow_dispatch:
     inputs:
       confirm:
@@ -56,13 +58,15 @@ jobs:
         working-directory: .
         env:
           CONFIRM: ${{ inputs.confirm }}
+          EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
         run: |
           if [ "$REF" != "refs/heads/main" ]; then
             echo "::error::infra apply runs only on refs/heads/main, not $REF"
             exit 1
           fi
-          if [ "$CONFIRM" != "apply" ]; then
+          # A push to main was reviewed as a pull request; a run by hand must say so.
+          if [ "$EVENT" != "push" ] && [ "$CONFIRM" != "apply" ]; then
             echo "::error::confirm must be exactly: apply"
             exit 1
           fi
