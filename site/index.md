@@ -1,10 +1,10 @@
 ---
 layout: home
-title: computeruse
+title: Computer Use
 titleTemplate: A Linux desktop for computer-use agents
 
 hero:
-  name: computeruse
+  name: Computer Use
   text: A Linux desktop for your agent.
   tagline: Each session is a small Linux desktop in the cloud with Chromium open on it. An AI agent operates it over MCP. You watch it in the page and take over when you want.
   actions:
