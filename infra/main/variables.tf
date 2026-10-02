@@ -473,3 +473,38 @@ variable "cert_manager_service_account" {
   type        = string
   default     = "cert-manager"
 }
+
+# --- GitHub Actions ------------------------------------------------------------------------
+
+variable "github_repository" {
+  description = "The GitHub repository whose workflows may push images, as owner/name. It must be the repository bootstrap.sh restricted the Workload Identity provider to."
+  type        = string
+  default     = "r33drichards/browserjs-sessions"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", var.github_repository))
+    error_message = "Expected owner/name."
+  }
+}
+
+variable "github_wif_pool_id" {
+  description = "ID of the Workload Identity pool bootstrap.sh created for GitHub Actions. It is referenced, never managed, here."
+  type        = string
+  default     = "github"
+
+  validation {
+    condition     = can(regex("^[a-z0-9-]{4,32}$", var.github_wif_pool_id))
+    error_message = "A pool ID is 4-32 lowercase letters, digits and hyphens."
+  }
+}
+
+variable "images_push_ref" {
+  description = "The one git ref whose workflows may push images."
+  type        = string
+  default     = "refs/heads/main"
+
+  validation {
+    condition     = startswith(var.images_push_ref, "refs/heads/") || startswith(var.images_push_ref, "refs/tags/")
+    error_message = "A full ref: refs/heads/<branch> or refs/tags/<tag>. Never a refs/pull/ ref."
+  }
+}

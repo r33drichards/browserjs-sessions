@@ -55,7 +55,7 @@ output "session_node_selector" {
 # --- Images ---
 
 output "registry_url" {
-  description = "Image name prefix: <registry_url>/backend, /browser, /mcp-js."
+  description = "Image name prefix: <registry_url>/backend, /browser, /mcp-js. Set it as the repository variable IMAGE_REGISTRY."
   value       = local.registry_url
 }
 
@@ -65,6 +65,11 @@ output "docker_login_command" {
 }
 
 # --- Service accounts ---
+
+output "images_push_service_account_email" {
+  description = "Google service account GitHub Actions pushes images with. Set it as the repository variable IMAGE_PUSH_SA (and registry_url as IMAGE_REGISTRY)."
+  value       = google_service_account.images_push.email
+}
 
 output "node_service_account_email" {
   description = "Google service account of every node. It can pull from the registry."

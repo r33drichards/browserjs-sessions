@@ -115,6 +115,16 @@ run "defaults_pomerium_nlb" {
   }
 
   assert {
+    condition     = google_service_account_iam_member.images_push_github.member == "principalSet://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/github/attribute.repo_ref/r33drichards/browserjs-sessions@refs/heads/main"
+    error_message = "Image pushes must be limited to the main branch of the repository, through the bootstrap's pool."
+  }
+
+  assert {
+    condition     = google_service_account_iam_member.images_push_github.role == "roles/iam.workloadIdentityUser" && google_artifact_registry_repository_iam_member.images_push.role == "roles/artifactregistry.writer"
+    error_message = "images-push may be impersonated and may write to the image repository; nothing else."
+  }
+
+  assert {
     condition     = output.certificate_map_name == null && output.cert_manager_service_account_email != null
     error_message = "Outputs must follow the edge mode."
   }
@@ -212,6 +222,16 @@ run "rejects_e2_session_nodes" {
   }
 
   expect_failures = [var.session_machine_type]
+}
+
+run "rejects_pull_request_push_ref" {
+  command = plan
+
+  variables {
+    images_push_ref = "refs/pull/1/merge"
+  }
+
+  expect_failures = [var.images_push_ref]
 }
 
 run "rejects_unknown_edge_mode" {
