@@ -196,6 +196,19 @@ call that creates it. OpenTofu makes that call, so the secret is:
 Nothing else holds it. `tofu output` and the plan print it as
 `(sensitive value)`.
 
+**The IDs, for the backend and the observer.** The same steps write the
+ConfigMap **`billing-iac`**, key `ids.json`: every output of
+`infra/billing` that is not sensitive (Stripe product, price, portal
+configuration and endpoint IDs; Metronome metric, product, rate card and
+alert IDs, by the names of the contracts). The contracts have both
+services' objects found by name, alias or lookup key, so nothing has to
+read it; it is there for what cannot be found that way. One thing cannot:
+**the portal configuration is not the account's default** (a configuration
+made through the API never is; only the Dashboard's own is), so the
+backend passes `configuration` when it opens a portal session, taking the
+ID from `stripe_portal_configuration_id` here or from the configuration
+whose `metadata.managed_by` is `stripe-setup`.
+
 **Who can read the state.** The bucket is private (uniform access, no
 public access). It is readable by: the project's owners; the `tofu-apply`
 service account (workflows on `main`); and the `tofu-plan` service account,
