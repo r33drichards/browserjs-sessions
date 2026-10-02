@@ -21,6 +21,10 @@ infra/
   infra-apply.yml          started by hand on main: plans, then applies
 ```
 
+`infra/billing` is a separate configuration with its own states and
+workflows: what is sold in Stripe and what is metered in Metronome. It is
+described in [`docs/billing-iac.md`](../docs/billing-iac.md), not here.
+
 Kubernetes objects (Pomerium, Dex, the backend, the Sandbox template, the
 snapshot policy, cert-manager) are not managed here. They live in `deploy/`
 and consume this configuration's outputs.

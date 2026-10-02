@@ -63,14 +63,14 @@ product or the rate card would stop rating for every customer.
 
 | Object | Name | Definition |
 |---|---|---|
-| Billable metric | `cu_awake_seconds_v1` | `aggregation_type: sum`, `aggregation_key: seconds`, `event_type_filter: session.awake`, `group_keys: [["session_id"]]` |
+| Billable metric | `cu_awake_seconds_v1` | `aggregation_type: sum`, `aggregation_key: seconds`, `event_type_filter: session.awake`, `property_filters: [{name: seconds, exists: true}]` (the aggregated property must be named by a filter), `group_keys: [["session_id"]]` |
 | Billable metric | `cu_disk_gb_seconds_v1` | sum of `gb_seconds`, event type `session.kept`, `group_keys: [["session_id"]]` |
 | Product (usage) | `Awake time` | on `cu_awake_seconds_v1`; `quantity_conversion`: divide by 3600 (hours) |
 | Product (usage) | `Disk` | on `cu_disk_gb_seconds_v1`; `quantity_conversion`: divide by 2628000 (GB-months of 730 hours) |
 | Product (fixed) | `Credit` | what every credit is attached to |
 | Rate card | alias `cu-standard-v1` | below |
 | Alert | `cu-zero-balance`, `uniqueness_key: cu-zero-balance` | `alert_type: low_remaining_contract_credit_and_commit_balance_reached`, `threshold: 0`, no `customer_id` (every customer), `evaluate_on_create: false` |
-| Custom field keys | `grant_key`, `source`, `payment_intent` on credits | |
+| Custom field keys | `grant_key`, `source`, `payment_intent` on credits | entity `contract_credit`, `enforce_uniqueness: false` (that this is the entity of a customer-level credit is **UNVERIFIED**) |
 
 Rates on `cu-standard-v1`, both `rate_type: FLAT`, in US cents, from
 `catalogue.yaml` (`rates`):

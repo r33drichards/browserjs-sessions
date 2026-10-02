@@ -1,0 +1,264 @@
+name: billing apply
+
+# Applies infra/billing to Stripe and Metronome for one mode. Started by
+# hand, on main only:
+#
+#   mode test   confirm: apply        Stripe sandbox, Metronome sandbox
+#   mode live   confirm: apply live   Stripe live mode, Metronome production
+#
+# It plans, prints that plan to the summary, and applies exactly it. Read
+# the plan of the pull request's "billing plan" run first; apply soon after
+# merging.
+#
+# Keys: STRIPE_TEST_SETUP_KEY and METRONOME_SANDBOX_API_TOKEN for test,
+# STRIPE_LIVE_SETUP_KEY and METRONOME_PRODUCTION_API_TOKEN for live. They
+# are repository secrets entered by the product owner, read from the
+# environment by the providers, and never a variable, an argument or an
+# output.
+#
+# The state (bucket of infra/main, prefix billing/<mode>) is written with
+# the tofu-plan service account: its one write permission is that bucket,
+# which is all an apply here needs of Google Cloud. Nothing in Google Cloud
+# is changed by this workflow.
+#
+# Stripe shows a webhook endpoint's signing secret once, when the endpoint
+# is created. It is in the state and nowhere else. The last steps copy it
+# into the cluster's Secret "stripe-webhook", as the deployer service
+# account, when the cluster runs this mode (the repository variable
+# STRIPE_MODE). No person sees it and it is in no log.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Which accounts
+        required: true
+        type: choice
+        default: test
+        options:
+          - test
+          - live
+      confirm:
+        description: Type "apply" for test, "apply live" for live
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+# One at a time for each mode, in order; a queued run is never cancelled
+# half way.
+concurrency:
+  group: billing-apply-${{ inputs.mode }}
+  cancel-in-progress: false
+
+env:
+  TOFU_VERSION: "1.10.7"
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  TOFU_STATE_BUCKET: ${{ vars.TOFU_STATE_BUCKET }}
+  MODE: ${{ inputs.mode }}
+  CLUSTER: browserjs
+  CLUSTER_LOCATION: us-west1-a
+  NS: browserjs-sessions
+  KUBECTL_VERSION: v1.36.5
+
+jobs:
+  apply:
+    name: apply (${{ inputs.mode }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+        working-directory: infra/billing
+    steps:
+      - name: Refuse unless confirmed and on main
+        working-directory: .
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "::error::billing apply runs only on refs/heads/main, not $REF"
+            exit 1
+          fi
+          want="apply"
+          [ "$MODE" != live ] || want="apply live"
+          if [ "$CONFIRM" != "$want" ]; then
+            echo "::error::for mode $MODE, confirm must be exactly: $want"
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Keys of the mode
+        env:
+          STRIPE_API_KEY: ${{ secrets[inputs.mode == 'live' && 'STRIPE_LIVE_SETUP_KEY' || 'STRIPE_TEST_SETUP_KEY'] }}
+          METRONOME_BEARER_TOKEN: ${{ secrets[inputs.mode == 'live' && 'METRONOME_PRODUCTION_API_TOKEN' || 'METRONOME_SANDBOX_API_TOKEN'] }}
+        run: |
+          code=0
+          ./keys.sh "$MODE" > "${RUNNER_TEMP}/keys.txt" || code=$?
+          cat "${RUNNER_TEMP}/keys.txt"
+          if [ "$code" != 0 ]; then
+            grep 'is not set' "${RUNNER_TEMP}/keys.txt" | sed 's/^/::error::/' || true
+            exit 1
+          fi
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: terraform-provider-metronome/go.mod
+          cache-dependency-path: terraform-provider-metronome/go.sum
+
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+          tofu_wrapper: false
+
+      - name: Format
+        run: tofu fmt -check -recursive -diff
+
+      - name: Build the Metronome provider
+        run: echo "TF_CLI_CONFIG_FILE=$(./provider.sh)" >> "$GITHUB_ENV"
+
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        id: state
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.TOFU_PLAN_SA }}
+
+      - name: Init
+        run: tofu init -backend-config="bucket=${TOFU_STATE_BUCKET}" -backend-config="prefix=billing/${MODE}"
+
+      - name: Validate
+        run: tofu validate -no-color
+
+      - name: Plan
+        env:
+          STRIPE_API_KEY: ${{ secrets[inputs.mode == 'live' && 'STRIPE_LIVE_SETUP_KEY' || 'STRIPE_TEST_SETUP_KEY'] }}
+          METRONOME_BEARER_TOKEN: ${{ secrets[inputs.mode == 'live' && 'METRONOME_PRODUCTION_API_TOKEN' || 'METRONOME_SANDBOX_API_TOKEN'] || 'not-used' }}
+        run: |
+          set -o pipefail
+          tofu plan -var-file="${MODE}.tfvars" -lock-timeout=5m -no-color -out=tfplan 2>&1 | tee "${RUNNER_TEMP}/plan.txt"
+
+      - name: Plan to job summary
+        if: ${{ !cancelled() }}
+        run: |
+          plan="${RUNNER_TEMP}/plan.txt"
+          {
+            echo "## billing plan ($MODE; applied by this run)"
+            echo
+            if [ -s "$plan" ]; then
+              echo '```'
+              # A job summary holds at most 1 MiB.
+              head -c 900000 "$plan"
+              echo
+              echo '```'
+              if [ "$(wc -c < "$plan")" -gt 900000 ]; then
+                echo "_Truncated; the full plan is in the job log._"
+              fi
+            else
+              echo "_No plan was produced; see the job log._"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Apply
+        env:
+          STRIPE_API_KEY: ${{ secrets[inputs.mode == 'live' && 'STRIPE_LIVE_SETUP_KEY' || 'STRIPE_TEST_SETUP_KEY'] }}
+          METRONOME_BEARER_TOKEN: ${{ secrets[inputs.mode == 'live' && 'METRONOME_PRODUCTION_API_TOKEN' || 'METRONOME_SANDBOX_API_TOKEN'] || 'not-used' }}
+        run: tofu apply -lock-timeout=5m -no-color tfplan
+
+      # `tofu output` prints a sensitive output as <sensitive>: the signing
+      # secret is not here.
+      - name: Outputs to job summary
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo "## billing outputs ($MODE)"
+            echo
+            echo '```'
+            tofu output -no-color || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # --- The endpoint's signing secret, from the state to the cluster ---
+      #
+      # From here on no step has a Stripe or Metronome key. The deployer's
+      # credentials replace tofu-plan's as the default; the path of
+      # tofu-plan's is kept for the one read of the state below.
+
+      - name: Does the cluster run this mode
+        id: target
+        env:
+          STRIPE_MODE: ${{ vars.STRIPE_MODE }}
+        run: |
+          if [ "$STRIPE_MODE" = "$MODE" ]; then
+            echo "sync=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "sync=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::the cluster's mode (repository variable STRIPE_MODE) is '${STRIPE_MODE:-unset}', not '$MODE': the signing secret stays in the state. Run this workflow again once STRIPE_MODE is $MODE."
+          fi
+
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        if: steps.target.outputs.sync == 'true'
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOY_SA }}
+
+      - uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
+        if: steps.target.outputs.sync == 'true'
+        with:
+          version: ${{ env.KUBECTL_VERSION }}
+
+      - uses: google-github-actions/get-gke-credentials@3da1e46a907576cefaa90c484278bb5b259dd395 # v3.0.0
+        if: steps.target.outputs.sync == 'true'
+        with:
+          cluster_name: ${{ env.CLUSTER }}
+          location: ${{ env.CLUSTER_LOCATION }}
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          use_dns_based_endpoint: "true"
+
+      - name: Secret stripe-webhook
+        if: steps.target.outputs.sync == 'true'
+        env:
+          STATE_CREDENTIALS: ${{ steps.state.outputs.credentials_file_path }}
+        run: |
+          if ! kubectl get namespace "$NS" >/dev/null 2>&1; then
+            echo "::error::namespace $NS does not exist yet: run the deploy workflow, then this one again"
+            exit 1
+          fi
+          # To a file only this user can read, on the runner's temporary
+          # disk, removed when the step ends. Never to the log, a command
+          # line or a variable.
+          umask 077
+          secret="${RUNNER_TEMP}/whsec"
+          trap 'rm -f "$secret"' EXIT
+          GOOGLE_APPLICATION_CREDENTIALS="$STATE_CREDENTIALS" tofu output -raw stripe_webhook_secret > "$secret"
+          if ! grep -q '^whsec_' "$secret"; then
+            echo "::error::the state has no signing secret for the endpoint (was it imported instead of created?). Replace the endpoint: docs/billing-iac.md, \"The webhook's signing secret\"."
+            exit 1
+          fi
+
+          version() { kubectl -n "$NS" get secret stripe-webhook -o jsonpath='{.metadata.resourceVersion}' 2>/dev/null || true; }
+          before="$(version)"
+          # kubectl's own output is discarded: a dry run prints the value.
+          kubectl -n "$NS" create secret generic stripe-webhook \
+            --from-file=STRIPE_WEBHOOK_SECRET="$secret" --dry-run=client -o yaml |
+            kubectl label --local -f - "browserjs.dev/stripe-mode=$MODE" -o yaml |
+            kubectl apply -f - >/dev/null
+          after="$(version)"
+          if [ "$before" = "$after" ]; then
+            echo "secret/stripe-webhook is unchanged"
+            exit 0
+          fi
+          echo "secret/stripe-webhook applied (mode $MODE)"
+          # Restart the backend only if it takes the secret (deploy.md).
+          if kubectl -n "$NS" get deployment backend -o json 2>/dev/null | grep -q '"stripe-webhook"'; then
+            kubectl -n "$NS" rollout restart deployment/backend
+            kubectl -n "$NS" rollout status deployment/backend --timeout=300s
+          else
+            echo "::notice::deployment/backend does not take secret/stripe-webhook yet: nothing was restarted"
+          fi
