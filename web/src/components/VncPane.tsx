@@ -1,11 +1,12 @@
 import Button from "@cloudscape-design/components/button"
 import SpaceBetween from "@cloudscape-design/components/space-between"
 import Textarea from "@cloudscape-design/components/textarea"
-import RFB from "@novnc/novnc"
+import type RFB from "@novnc/novnc"
 import { useEffect, useRef, useState } from "react"
 import { api } from "../api"
 import { signedOutHandled } from "../auth/signedOut"
 import { reconnectDelay } from "./backoff"
+import { ResizingRFB } from "./ResizingRFB"
 
 type Status = "connecting" | "connected" | "reconnecting" | "paused"
 
@@ -21,6 +22,9 @@ const STATUS_TEXT: Record<Exclude<Status, "connected">, string> = {
 
 export function VncPane({ sessionId }: { sessionId: string }) {
   const screenRef = useRef<HTMLDivElement>(null)
+  // The toolbar and the screen: what goes full screen.
+  const viewerRef = useRef<HTMLDivElement>(null)
+  const [fullscreen, setFullscreen] = useState(false)
   const [status, setStatus] = useState<Status>("connecting")
   // The live connection, for the clipboard box below the screen.
   const rfbRef = useRef<RFB | null>(null)
@@ -51,11 +55,14 @@ export function VncPane({ sessionId }: { sessionId: string }) {
         const { url } = await api.vncTicket(sessionId)
         const target = live()
         if (!target) return
-        const conn = new RFB(target, url, {})
+        const conn = new ResizingRFB(target, url)
         rfb = conn
+        // The remote desktop takes the size of the screen box. Where the
+        // server cannot do that, or the box is over the size limit, the
+        // picture is scaled to fit instead.
+        conn.resizeSession = true
         conn.scaleViewport = true
         conn.background = "#fff" // noVNC's own is a dark grey slab
-        conn.resizeSession = false
         conn.addEventListener("connect", () => {
           if (rfb !== conn) return
           attempt = 0
@@ -120,6 +127,25 @@ export function VncPane({ sessionId }: { sessionId: string }) {
     }
   }, [sessionId])
 
+  useEffect(() => {
+    function onChange() {
+      setFullscreen(document.fullscreenElement !== null && document.fullscreenElement === viewerRef.current)
+      // The button took the focus; typing goes to the remote browser again.
+      rfbRef.current?.focus({ preventScroll: true })
+    }
+    document.addEventListener("fullscreenchange", onChange)
+    return () => document.removeEventListener("fullscreenchange", onChange)
+  }, [])
+
+  async function toggleFullscreen() {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen()
+      else await viewerRef.current?.requestFullscreen()
+    } catch {
+      // Refused by the browser (an embedding page's policy, say): stay as we are.
+    }
+  }
+
   function send(text: string) {
     const conn = rfbRef.current
     if (!conn) return
@@ -151,14 +177,24 @@ export function VncPane({ sessionId }: { sessionId: string }) {
 
   return (
     <div>
-      <div className="wf-screen-wrap">
-        <div ref={screenRef} className="wf-screen" />
-        {!connected && (
-          <div className="wf-screen-overlay" role="status">
-            {status !== "paused" && <span className="wf-spinner" aria-hidden="true" />}
-            <p>{STATUS_TEXT[status]}</p>
+      <div ref={viewerRef} className="wf-viewer">
+        {/* Not every browser can do it (an iPhone cannot). */}
+        {document.fullscreenEnabled && (
+          <div className="wf-screen-bar">
+            <Button onClick={toggleFullscreen} ariaLabel={fullscreen ? "Leave full screen" : "Show the browser full screen"}>
+              {fullscreen ? "Exit full screen (Esc)" : "Full screen"}
+            </Button>
           </div>
         )}
+        <div className="wf-screen-wrap">
+          <div ref={screenRef} className="wf-screen" />
+          {!connected && (
+            <div className="wf-screen-overlay" role="status">
+              {status !== "paused" && <span className="wf-spinner" aria-hidden="true" />}
+              <p>{STATUS_TEXT[status]}</p>
+            </div>
+          )}
+        </div>
       </div>
       <div className="wf-box wf-clipboard">
         <SpaceBetween size="xs">

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One headed Chromium on Xvfb, viewable over noVNC (behind Caddy basic auth on
+# One headed Chromium on Xvnc, viewable over noVNC (behind Caddy basic auth on
 # $PORT) and drivable over CDP by the browser MCP server (private port 8081).
 #
 # SESSION_MODE=1 (a browserjs session pod): no Caddy and no VNC password, the
@@ -12,10 +12,15 @@ PORT="${PORT:-8080}"
 DATA_DIR="${DATA_DIR:-/data}"
 PROFILE_DIR="$DATA_DIR/chrome"
 SCREEN="${SCREEN_GEOMETRY:-1280x800x24}"
-# WxHxDepth; Chromium wants its window size as "W,H".
+# WxHxDepth, the size before any viewer asks for another; Chromium wants its
+# window size as "W,H".
 SCREEN_W="${SCREEN%%x*}"
 SCREEN_H="${SCREEN#*x}"
 SCREEN_H="${SCREEN_H%%x*}"
+SCREEN_D=24
+case "$SCREEN" in
+  *x*x*) SCREEN_D="${SCREEN##*x}" ;;
+esac
 
 SESSION_MODE="${SESSION_MODE:-0}"
 if [ "$SESSION_MODE" != 1 ]; then
@@ -28,11 +33,11 @@ if [ "$SESSION_MODE" = 1 ]; then
   RESTORE_FLAG="--restore-last-session"
 fi
 
-# x11vnc walks every possible file descriptor when a viewer connects. Under
-# containerd the limit can be a billion (Docker's default is far lower), and
-# it then spins without ever answering: the screen stays blank. Not fatal if
-# the limit cannot be changed.
-ulimit -n 65536 2>/dev/null || echo "warning: could not lower the open-file limit ($(ulimit -n)); VNC may hang" >&2
+# Under containerd the open-file limit can be a billion (Docker's default is
+# far lower). x11vnc, which this image used to run, walked every possible
+# descriptor when a viewer connected and never answered; keep the limit sane
+# for whatever else sizes itself by it. Not fatal if it cannot be changed.
+ulimit -n 65536 2>/dev/null || echo "warning: could not lower the open-file limit ($(ulimit -n))" >&2
 
 # Who this runs as. A session pod runs it as the image's unprivileged user
 # (uid 1000, "browser", home /home/browser) with no capabilities; the
@@ -114,7 +119,18 @@ trap cleanup EXIT
 # carry on starting processes.
 trap 'cleanup; exit 143' TERM INT
 
-Xvfb :99 -screen 0 "$SCREEN" -nolisten tcp -ac &
+# Xvnc is the X server and the VNC server in one. Unlike x11vnc on Xvfb it
+# honours a viewer's request to resize the desktop (SetDesktopSize), which is
+# how the screen follows the viewer's window; openbox then refits the
+# maximised Chromium window. The size only changes when a viewer asks, so it
+# stays put while nobody is connected (and across a snapshot and restore).
+#
+# No VNC password, as before: it listens on loopback only and websockify is
+# the way in. SendPrimary=0: only text that was copied goes to the viewer's
+# clipboard, not every selection.
+Xvnc :99 -geometry "${SCREEN_W}x${SCREEN_H}" -depth "$SCREEN_D" -nolisten tcp -ac \
+  -rfbport 5900 -localhost -UseIPv6=0 -SecurityTypes None -AlwaysShared \
+  -AcceptSetDesktopSize -SendPrimary=0 &
 pids+=($!)
 for _ in $(seq 1 50); do
   xdpyinfo -display :99 >/dev/null 2>&1 && break
@@ -165,9 +181,6 @@ pids+=($!)
   done
 ) &
 chromium_loop=$!
-pids+=($!)
-
-x11vnc -display :99 -localhost -rfbport 5900 -forever -shared -nopw -quiet -noxdamage &
 pids+=($!)
 
 websockify --web "$NOVNC_WEB" "$WEBSOCKIFY_BIND:6080" 127.0.0.1:5900 &

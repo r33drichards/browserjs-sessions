@@ -80,9 +80,12 @@ try {
     const c = document.querySelector("canvas"); const ctx = c.getContext("2d")
     const d = ctx.getImageData(0, 0, c.width, c.height).data
     const seen = new Set(); for (let i = 0; i < d.length; i += 4 * 997) seen.add((d[i] << 16) | (d[i + 1] << 8) | d[i + 2])
-    return { width: c.width, height: c.height, colours: seen.size }
+    const box = document.querySelector(".wf-screen")
+    return { width: c.width, height: c.height, colours: seen.size, box: [box.clientWidth, box.clientHeight] }
   })
-  record("session page shows the live VNC view", canvas.width === 1280 && canvas.colours > 3, JSON.stringify(canvas) + " body: " + (await text(page)).replace(/\s+/g, " ").slice(0, 200))
+  // The remote desktop takes the size of the screen box; a session image from
+  // before that stays 1280 wide and is scaled.
+  record("session page shows the live VNC view", (canvas.width === canvas.box[0] || canvas.width === 1280) && canvas.colours > 3, JSON.stringify(canvas) + " body: " + (await text(page)).replace(/\s+/g, " ").slice(0, 200))
   } catch (e) { record("session page shows the live VNC view", false, String(e).slice(0, 200)) }
   await page.screenshot({ path: OUT + "/deploy-local-detail.png" })
 
