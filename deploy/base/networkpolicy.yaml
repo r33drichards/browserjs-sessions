@@ -27,6 +27,19 @@ spec:
           podSelector:
             matchLabels:
               k8s-app: kube-dns
+        # GKE with NodeLocal DNSCache on Dataplane V2: queries to the kube-dns
+        # Service are redirected to the node's node-local-dns pod, and the
+        # policy is checked against that pod, not kube-dns. Without this,
+        # names do not resolve in a session (Chromium:
+        # DNS_PROBE_FINISHED_BAD_CONFIG). The address is the cache's own.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: node-local-dns
+        - ipBlock:
+            cidr: 169.254.20.10/32
       ports:
         - port: 53
           protocol: UDP
