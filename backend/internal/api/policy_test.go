@@ -123,13 +123,6 @@ func (o *operator) serve(w http.ResponseWriter, r *http.Request) {
 		default:
 			reply(http.StatusOK, map[string]any{"ok": true, "allow": !strings.Contains(req.Source, "DENY")})
 		}
-	case "GET /v1/schema":
-		schema, err := os.ReadFile("../../../docs/contracts/policy/json-policy.schema.json")
-		if err != nil {
-			o.t.Error(err)
-		}
-		w.Header().Set("Content-Type", "application/schema+json")
-		_, _ = w.Write(schema)
 	default:
 		http.NotFound(w, r)
 	}
@@ -276,8 +269,8 @@ func strict[T any](t *testing.T, rec *httptest.ResponseRecorder) T {
 
 const (
 	unrestrictedSource = `{"version": 1, "allow": {"operations": ["*"]}}`
-	noScripting        = `{"version": 1, "allow": {"operations": ["*"]}, "deny": {"operations": ["evaluate"]}}`
-	observeOnly        = `{"version": 1, "allow": {"operations": ["screenshot"]}}`
+	noScripting        = "package browserjs.policy\n\nimport rego.v1\n\nallow_tool_call if input.tool == \"browser_execute\"\n"
+	observeOnly        = "package browserjs.policy\n\nimport rego.v1\n\nallow_tool_call if input.arguments.operations == [{\"type\": \"screenshot\"}]\n"
 	regoSource         = "package browserjs.policy\n\nallow_tool_call := false\n"
 	managedURL         = "https://git.example.com/infra/policies"
 )
@@ -397,7 +390,6 @@ func TestPoliciesAreOffByDefault(t *testing.T) {
 		{"PUT", "/api/sessions/" + id + "/policy/management"},
 		{"POST", "/api/policies/validate"},
 		{"POST", "/api/policies/evaluate"},
-		{"GET", "/api/policy-schema.json"},
 		{"GET", "/api/policy-presets"},
 	} {
 		if rec := f.do(alice, c.method, c.path, `{}`); rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
@@ -405,7 +397,7 @@ func TestPoliciesAreOffByDefault(t *testing.T) {
 		}
 	}
 	// A policy that is asked for is not dropped in silence.
-	rec = f.do(alice, "POST", "/api/sessions", `{"name":"two","policy":`+policyBody(t, "json", noScripting, nil)+`}`)
+	rec = f.do(alice, "POST", "/api/sessions", `{"name":"two","policy":`+policyBody(t, "rego", noScripting, nil)+`}`)
 	if rec.Code != http.StatusConflict {
 		t.Errorf("create with a policy: %d %s, want 409", rec.Code, rec.Body)
 	}
@@ -421,15 +413,15 @@ func TestCreateWithoutAPolicyIsUnrestricted(t *testing.T) {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body)
 	}
 	s := strict[sessionWithPolicy](t, rec)
-	want := policySummary{Kind: "json", Version: 1, State: "loading", Management: &management{Mode: "editor"}}
+	want := policySummary{Kind: "rego", Version: 1, State: "loading", Management: &management{Mode: "editor"}}
 	if s.Policy == nil || *s.Policy.Management != *want.Management || s.Policy.Kind != want.Kind || s.Policy.Version != 1 || s.Policy.State != "loading" || s.Policy.Hash != "" {
 		t.Errorf("policy = %+v, want %+v", s.Policy, want)
 	}
-	contract, err := os.ReadFile("../../../docs/contracts/policy/examples/unrestricted.policy.json")
+	contract, err := os.ReadFile("../../../docs/contracts/policy/examples/unrestricted.rego")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if kind, source, mode, _, by := f.spec(s.ID); kind != "json" || source != string(contract) || mode != "editor" || by != "ui" {
+	if kind, source, mode, _, by := f.spec(s.ID); kind != "rego" || source != string(contract) || mode != "editor" || by != "ui" {
 		t.Errorf("SessionPolicy: %s %q %s by %s", kind, source, mode, by)
 	}
 	// The contract's own example is not sent to be checked: a session can be
@@ -441,15 +433,15 @@ func TestCreateWithoutAPolicyIsUnrestricted(t *testing.T) {
 
 func TestCreateWithAPolicy(t *testing.T) {
 	f := newPolicyFixture(t, false)
-	rec := f.do(alice, "POST", "/api/sessions", `{"name":"one","policy":`+policyBody(t, "json", noScripting, nil)+`}`)
+	rec := f.do(alice, "POST", "/api/sessions", `{"name":"one","policy":`+policyBody(t, "rego", noScripting, nil)+`}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body)
 	}
 	s := strict[sessionWithPolicy](t, rec)
-	if kind, source, mode, _, by := f.spec(s.ID); kind != "json" || source != noScripting || mode != "editor" || by != "ui" {
+	if kind, source, mode, _, by := f.spec(s.ID); kind != "rego" || source != noScripting || mode != "editor" || by != "ui" {
 		t.Errorf("SessionPolicy: %s %q %s by %s", kind, source, mode, by)
 	}
-	if sent := f.operator.sent("/v1/validate"); sent["kind"] != "json" || sent["source"] != noScripting || len(sent) != 2 {
+	if sent := f.operator.sent("/v1/validate"); sent["kind"] != "rego" || sent["source"] != noScripting || len(sent) != 2 {
 		t.Errorf("the operator was asked about %v", sent)
 	}
 
@@ -480,14 +472,14 @@ func TestCreateWithAPolicyThatIsRefused(t *testing.T) {
 		asked int
 	}{
 		"does not validate":       {alice, policyBody(t, "rego", "package INVALID", nil), false, 422, 1},
-		"operator away":           {alice, policyBody(t, "json", noScripting, nil), true, 503, 1},
+		"operator away":           {alice, policyBody(t, "rego", noScripting, nil), true, 503, 1},
 		"not a kind":              {alice, policyBody(t, "yaml", noScripting, nil), false, 400, 0},
-		"empty":                   {alice, `{"kind":"json","source":""}`, false, 422, 0},
+		"empty":                   {alice, `{"kind":"rego","source":""}`, false, 422, 0},
 		"too long":                {alice, policyBody(t, "rego", big, nil), false, 422, 0},
-		"as code without a link":  {alice, policyBody(t, "json", noScripting, &management{Mode: "iac"}), false, 400, 0},
-		"as code, not https":      {alice, policyBody(t, "json", noScripting, &management{Mode: "iac", ManagedURL: "http://git.example.com"}), false, 400, 0},
-		"not a mode":              {alice, policyBody(t, "json", noScripting, &management{Mode: "terraform"}), false, 400, 0},
-		"token without the scope": {token("sessions:write", "policies:read"), policyBody(t, "json", noScripting, nil), false, 403, 0},
+		"as code without a link":  {alice, policyBody(t, "rego", noScripting, &management{Mode: "iac"}), false, 400, 0},
+		"as code, not https":      {alice, policyBody(t, "rego", noScripting, &management{Mode: "iac", ManagedURL: "http://git.example.com"}), false, 400, 0},
+		"not a mode":              {alice, policyBody(t, "rego", noScripting, &management{Mode: "terraform"}), false, 400, 0},
+		"token without the scope": {token("sessions:write", "policies:read"), policyBody(t, "rego", noScripting, nil), false, 403, 0},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newPolicyFixture(t, false)
@@ -567,7 +559,7 @@ func TestANewSessionStartsWhenItsPolicyIsReady(t *testing.T) {
 
 	// A later edit does not stop the session: the policy before it stays in
 	// force until the new one is.
-	if rec := f.do(alice, "PUT", "/api/sessions/"+id+"/policy", policyBody(t, "json", noScripting, nil)); rec.Code != http.StatusAccepted {
+	if rec := f.do(alice, "PUT", "/api/sessions/"+id+"/policy", policyBody(t, "rego", noScripting, nil)); rec.Code != http.StatusAccepted {
 		t.Fatalf("PUT: %d %s", rec.Code, rec.Body)
 	}
 	expect("an edit not yet observed", "running", "loading")
@@ -581,7 +573,7 @@ func TestASessionWhoseFirstPolicyIsRefusedIsDeleted(t *testing.T) {
 	f := newPolicyFixture(t, false)
 	kept := f.newSession(`{"name":"kept"}`)
 	sessionstest.SetPolicyStatus(t, f.client, kept, sessionstest.PolicyReady(1))
-	refused := f.newSession(`{"name":"refused","policy":` + policyBody(t, "json", noScripting, nil) + `}`)
+	refused := f.newSession(`{"name":"refused","policy":` + policyBody(t, "rego", noScripting, nil) + `}`)
 	sessionstest.SetStatus(t, f.client, refused, sessionstest.Ready("10.0.0.7"))
 	sessionstest.SetPolicyStatus(t, f.client, refused, sessionstest.PolicyRejected(1, true))
 
@@ -606,14 +598,14 @@ func TestASessionWhoseFirstPolicyIsRefusedIsDeleted(t *testing.T) {
 
 func TestGetPolicy(t *testing.T) {
 	f := newPolicyFixture(t, false)
-	id := f.newSession(`{"name":"one","policy":` + policyBody(t, "json", noScripting, nil) + `}`)
+	id := f.newSession(`{"name":"one","policy":` + policyBody(t, "rego", noScripting, nil) + `}`)
 
 	rec := f.do(alice, "GET", "/api/sessions/"+id+"/policy", "")
 	if rec.Code != http.StatusOK || rec.Header().Get("ETag") != `"1"` {
 		t.Fatalf("GET: %d, ETag %q, %s", rec.Code, rec.Header().Get("ETag"), rec.Body)
 	}
 	p := strict[fullPolicy](t, rec)
-	if p.Kind != "json" || p.Version != 1 || p.State != "loading" || p.Source != noScripting || p.UpdatedBy != "ui" ||
+	if p.Kind != "rego" || p.Version != 1 || p.State != "loading" || p.Source != noScripting || p.UpdatedBy != "ui" ||
 		*p.Management != (management{Mode: "editor"}) || p.Rego != "" || p.Loaded != nil || p.Updated != nil || p.Errors != nil {
 		t.Errorf("before the operator has seen it: %+v", p)
 	}
@@ -628,7 +620,7 @@ func TestGetPolicy(t *testing.T) {
 	}
 
 	// Ready, but for the version before this one: not ready.
-	if rec := f.do(alice, "PUT", "/api/sessions/"+id+"/policy", policyBody(t, "json", observeOnly, nil)); rec.Code != http.StatusAccepted {
+	if rec := f.do(alice, "PUT", "/api/sessions/"+id+"/policy", policyBody(t, "rego", observeOnly, nil)); rec.Code != http.StatusAccepted {
 		t.Fatalf("PUT: %d %s", rec.Code, rec.Body)
 	}
 	if p = f.get(id); p.State != "loading" || p.Version != 2 || p.Hash != "sha256:0f0f" {
@@ -649,7 +641,7 @@ func TestPutPolicy(t *testing.T) {
 	path := "/api/sessions/" + id + "/policy"
 
 	// Nobody reports on it: 202 after the wait, and the policy is saved.
-	rec := f.do(alice, "PUT", path, policyBody(t, "json", noScripting, nil))
+	rec := f.do(alice, "PUT", path, policyBody(t, "rego", noScripting, nil))
 	if rec.Code != http.StatusAccepted || rec.Header().Get("ETag") != `"2"` {
 		t.Fatalf("PUT: %d, ETag %q, %s", rec.Code, rec.Header().Get("ETag"), rec.Body)
 	}
@@ -690,7 +682,7 @@ func TestPutPolicy(t *testing.T) {
 	}
 	// The operator cannot be asked: 503, nothing saved.
 	f.operator.setDown(true)
-	rec = f.do(alice, "PUT", path, policyBody(t, "json", observeOnly, nil))
+	rec = f.do(alice, "PUT", path, policyBody(t, "rego", observeOnly, nil))
 	if strict[plainError](t, rec); rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("operator away: %d %s", rec.Code, rec.Body)
 	}
@@ -721,7 +713,7 @@ func TestPutPolicy(t *testing.T) {
 			time.Sleep(time.Millisecond)
 		}
 	}()
-	rec = f2.do(alice, "PUT", "/api/sessions/"+id2+"/policy", policyBody(t, "json", noScripting, nil))
+	rec = f2.do(alice, "PUT", "/api/sessions/"+id2+"/policy", policyBody(t, "rego", noScripting, nil))
 	if p := strict[fullPolicy](t, rec); rec.Code != http.StatusAccepted || p.State != "invalid" || len(p.Errors) != 1 {
 		t.Errorf("refused at the reconcile: %d %+v", rec.Code, p)
 	}
@@ -733,7 +725,7 @@ func TestIfMatch(t *testing.T) {
 	path := "/api/sessions/" + id + "/policy"
 	put := func(source, ifMatch string) int {
 		t.Helper()
-		rec := f.send(alice, "PUT", path, policyBody(t, "json", source, nil), map[string]string{"If-Match": ifMatch})
+		rec := f.send(alice, "PUT", path, policyBody(t, "rego", source, nil), map[string]string{"If-Match": ifMatch})
 		if rec.Code == http.StatusPreconditionFailed {
 			if strict[plainError](t, rec).Error == "" {
 				t.Errorf("412 with %s", rec.Body)
@@ -824,9 +816,9 @@ func TestManagementModes(t *testing.T) {
 		for _, try := range c.tries {
 			t.Run(c.name+", "+try.name, func(t *testing.T) {
 				f := newPolicyFixture(t, false)
-				body := `{"name":"one","policy":` + policyBody(t, "json", noScripting, nil) + `}`
+				body := `{"name":"one","policy":` + policyBody(t, "rego", noScripting, nil) + `}`
 				if c.setup == "iac" {
-					body = `{"name":"one","policy":` + policyBody(t, "json", noScripting, asCode) + `}`
+					body = `{"name":"one","policy":` + policyBody(t, "rego", noScripting, asCode) + `}`
 				}
 				creator := alice
 				if c.setup == "iac" {
@@ -841,7 +833,7 @@ func TestManagementModes(t *testing.T) {
 
 				sent := ""
 				if try.method == "PUT" {
-					sent = policyBody(t, "json", observeOnly, try.management)
+					sent = policyBody(t, "rego", observeOnly, try.management)
 				}
 				rec = f.do(c.user, try.method, path, sent)
 				if rec.Code != try.code {
@@ -885,7 +877,7 @@ func TestManagementModes(t *testing.T) {
 				if c.setup == "iac" {
 					first, creator = asCode, ci
 				}
-				rec := f.do(creator, "POST", "/api/sessions", `{"name":"one","policy":`+policyBody(t, "json", noScripting, first)+`}`)
+				rec := f.do(creator, "POST", "/api/sessions", `{"name":"one","policy":`+policyBody(t, "rego", noScripting, first)+`}`)
 				if rec.Code != http.StatusCreated {
 					t.Fatalf("create: %d %s", rec.Code, rec.Body)
 				}
@@ -957,14 +949,13 @@ type route struct {
 func policyRoutes(t *testing.T, id string) []route {
 	return []route{
 		{"GET", "/api/sessions/" + id + "/policy", "", 200, "policies:read"},
-		{"PUT", "/api/sessions/" + id + "/policy", policyBody(t, "json", noScripting, &management{Mode: "iac", ManagedURL: managedURL}), 202, "policies:write"},
+		{"PUT", "/api/sessions/" + id + "/policy", policyBody(t, "rego", noScripting, &management{Mode: "iac", ManagedURL: managedURL}), 202, "policies:write"},
 		{"PUT", "/api/sessions/" + id + "/policy/management", `{"mode":"editor"}`, 200, "policies:write"},
 		// Of a session that has the unrestricted policy already: no change.
 		{"DELETE", "/api/sessions/" + id + "/policy", "", 200, "policies:write"},
 		// Not about a session: any token.
-		{"POST", "/api/policies/validate", policyBody(t, "json", noScripting, nil), 200, ""},
-		{"POST", "/api/policies/evaluate", `{"kind":"json","source":"{}","input":{"operation":"mcp_call_tool"}}`, 200, ""},
-		{"GET", "/api/policy-schema.json", "", 200, ""},
+		{"POST", "/api/policies/validate", policyBody(t, "rego", noScripting, nil), 200, ""},
+		{"POST", "/api/policies/evaluate", `{"kind":"rego","source":"package browserjs.policy","input":{"operation":"mcp_call_tool"}}`, 200, ""},
 		{"GET", "/api/policy-presets", "", 200, ""},
 	}
 }
@@ -1076,7 +1067,7 @@ func TestTokenScopes(t *testing.T) {
 			t.Errorf("%s %s with another session's token changed the policy", r.method, r.path)
 		}
 	}
-	if rec := f.do(bound, "POST", "/api/sessions", `{"policy":`+policyBody(t, "json", noScripting, nil)+`}`); rec.Code != http.StatusForbidden {
+	if rec := f.do(bound, "POST", "/api/sessions", `{"policy":`+policyBody(t, "rego", noScripting, nil)+`}`); rec.Code != http.StatusForbidden {
 		t.Errorf("create with a policy, with a session's token: %d %s", rec.Code, rec.Body)
 	}
 	bobs := auth.User{Subject: bob.Subject, Token: &auth.TokenInfo{Name: "ci", Scopes: allScopes}}
@@ -1123,7 +1114,7 @@ func TestSessionsThatPredatePolicies(t *testing.T) {
 		t.Error("a SessionPolicy was made by a refused write")
 	}
 	// One that is asked to be restricted is not made at all.
-	rec = f.do(alice, "POST", "/api/sessions", `{"name":"new","policy":`+policyBody(t, "json", noScripting, nil)+`}`)
+	rec = f.do(alice, "POST", "/api/sessions", `{"name":"new","policy":`+policyBody(t, "rego", noScripting, nil)+`}`)
 	if strict[plainError](t, rec); rec.Code != http.StatusConflict {
 		t.Errorf("create with a policy: %d %s", rec.Code, rec.Body)
 	}
@@ -1151,10 +1142,10 @@ func TestAPolicyThatWasRemoved(t *testing.T) {
 	if rec := f.do(alice, "PUT", "/api/sessions/"+id+"/policy/management", `{"mode":"editor"}`); rec.Code != http.StatusNotFound {
 		t.Errorf("PUT management: %d %s", rec.Code, rec.Body)
 	}
-	if rec := f.send(alice, "PUT", "/api/sessions/"+id+"/policy", policyBody(t, "json", noScripting, nil), map[string]string{"If-Match": `"1"`}); rec.Code != http.StatusPreconditionFailed {
+	if rec := f.send(alice, "PUT", "/api/sessions/"+id+"/policy", policyBody(t, "rego", noScripting, nil), map[string]string{"If-Match": `"1"`}); rec.Code != http.StatusPreconditionFailed {
 		t.Errorf("PUT with If-Match: %d %s", rec.Code, rec.Body)
 	}
-	rec := f.do(alice, "PUT", "/api/sessions/"+id+"/policy", policyBody(t, "json", noScripting, nil))
+	rec := f.do(alice, "PUT", "/api/sessions/"+id+"/policy", policyBody(t, "rego", noScripting, nil))
 	if p := strict[fullPolicy](t, rec); rec.Code != http.StatusAccepted || p.Source != noScripting || p.Version != 1 {
 		t.Errorf("PUT: %d %+v", rec.Code, p)
 	}
@@ -1167,7 +1158,7 @@ func TestAPolicyThatWasRemoved(t *testing.T) {
 func TestValidateEvaluateSchemaAndPresets(t *testing.T) {
 	f := newPolicyFixture(t, false)
 
-	rec := f.do(alice, "POST", "/api/policies/validate", policyBody(t, "json", noScripting, nil))
+	rec := f.do(alice, "POST", "/api/policies/validate", policyBody(t, "rego", noScripting, nil))
 	v := strict[validation](t, rec)
 	if rec.Code != 200 || v.OK == nil || !*v.OK || v.Errors == nil || v.Warnings == nil || v.Hash != "sha256:0f0f" || !strings.HasPrefix(v.Rego, "package browserjs.policy") {
 		t.Errorf("valid: %d %s", rec.Code, rec.Body)
@@ -1179,14 +1170,14 @@ func TestValidateEvaluateSchemaAndPresets(t *testing.T) {
 		t.Errorf("invalid: %d %s", rec.Code, rec.Body)
 	}
 	// Only the policy goes to the operator, whatever else was sent.
-	f.do(alice, "POST", "/api/policies/validate", `{"kind":"json","source":"{}","management":{"mode":"iac"},"session_id":"s-aaaaa"}`)
-	if sent := f.operator.sent("/v1/validate"); len(sent) != 2 || sent["kind"] != "json" || sent["source"] != "{}" {
+	f.do(alice, "POST", "/api/policies/validate", `{"kind":"rego","source":"package browserjs.policy","management":{"mode":"iac"},"session_id":"s-aaaaa"}`)
+	if sent := f.operator.sent("/v1/validate"); len(sent) != 2 || sent["kind"] != "rego" || sent["source"] != "package browserjs.policy" {
 		t.Errorf("the operator was sent %v", sent)
 	}
 
 	input := `{"operation":"mcp_call_tool","server":"browser","tool":"browser_execute","arguments":{"operations":[{"type":"evaluate"}]}}`
 	for source, allow := range map[string]bool{noScripting: true, "package browserjs.policy # DENY": false} {
-		kind := "json"
+		kind := "rego"
 		if !allow {
 			kind = "rego"
 		}
@@ -1213,7 +1204,7 @@ func TestValidateEvaluateSchemaAndPresets(t *testing.T) {
 		{"/api/policies/validate", `{"kind":"rego","source":"MALFORMED"}`, 400}, // the operator's own 400
 		{"/api/policies/validate", `{"kind":"rego","source":"` + strings.Repeat("x", 130<<10) + `"}`, 413},
 		{"/api/policies/evaluate", `{`, 400},
-		{"/api/policies/evaluate", `{"kind":"json","source":"{}"}`, 400},
+		{"/api/policies/evaluate", `{"kind":"rego","source":"package browserjs.policy"}`, 400},
 		{"/api/policies/evaluate", `{"kind":"toml","source":"{}","input":{}}`, 400},
 	} {
 		rec := f.do(alice, "POST", c.path, c.body)
@@ -1222,22 +1213,29 @@ func TestValidateEvaluateSchemaAndPresets(t *testing.T) {
 		}
 	}
 
-	rec = f.do(alice, "GET", "/api/policy-schema.json", "")
-	contract, err := os.ReadFile("../../../docs/contracts/policy/json-policy.schema.json")
-	if err != nil {
-		t.Fatal(err)
+	// There is no schema to serve: Rego is the only form.
+	if rec = f.do(alice, "GET", "/api/policy-schema.json", ""); rec.Code != http.StatusNotFound {
+		t.Errorf("schema: %d %s", rec.Code, rec.Body)
 	}
-	if rec.Code != 200 || rec.Header().Get("Content-Type") != "application/schema+json" || !bytes.Equal(rec.Body.Bytes(), contract) {
-		t.Errorf("schema: %d %s %.80s", rec.Code, rec.Header().Get("Content-Type"), rec.Body)
+	for _, body := range []string{`{"kind":"json","source":"{\"version\": 1}"}`, `{"kind":"yaml","source":"x"}`} {
+		for _, path := range []string{"/api/policies/validate", "/api/policies/evaluate"} {
+			if rec = f.do(alice, "POST", path, body); rec.Code != http.StatusBadRequest {
+				t.Errorf("%s %s: %d %s", path, body, rec.Code, rec.Body)
+			}
+		}
+	}
+	// A policy that names no kind is Rego.
+	if rec = f.do(alice, "POST", "/api/policies/validate", `{"source":"package browserjs.policy"}`); rec.Code != http.StatusOK {
+		t.Errorf("validate without a kind: %d %s", rec.Code, rec.Body)
 	}
 
 	rec = f.do(alice, "GET", "/api/policy-presets", "")
 	presets := strict[[]preset](t, rec)
-	if rec.Code != 200 || len(presets) != 5 || presets[0].ID != "unrestricted" {
+	if rec.Code != 200 || len(presets) != 7 || presets[0].ID != "unrestricted" {
 		t.Fatalf("presets: %d %s", rec.Code, rec.Body)
 	}
 	for _, p := range presets {
-		if p.ID == "" || p.Title == "" || p.Description == "" || p.Kind != "json" || !json.Valid([]byte(p.Source)) {
+		if p.ID == "" || p.Title == "" || p.Description == "" || p.Kind != "rego" || !strings.Contains(p.Source, "package browserjs.policy\n") {
 			t.Errorf("preset %+v", p)
 		}
 	}
@@ -1245,7 +1243,7 @@ func TestValidateEvaluateSchemaAndPresets(t *testing.T) {
 	// Without the operator: 503 for what it answers; the presets are the
 	// backend's own.
 	f.operator.setDown(true)
-	for _, r := range policyRoutes(t, "")[4:7] {
+	for _, r := range policyRoutes(t, "")[4:6] {
 		rec := f.do(alice, r.method, r.path, r.body)
 		if strict[plainError](t, rec); rec.Code != http.StatusServiceUnavailable {
 			t.Errorf("%s %s without the operator: %d %s", r.method, r.path, rec.Code, rec.Body)
@@ -1262,7 +1260,7 @@ func TestCreateFromTheWarmPoolWithAPolicy(t *testing.T) {
 	f := newPolicyFixture(t, false)
 	f.store.EnableWarmPool(sessionstest.WarmPoolName, time.Second)
 	sessionstest.PlayPolicyClaimController(t, f.client, "s-bcdfg")
-	id := f.newSession(`{"name":"one","policy":` + policyBody(t, "json", noScripting, nil) + `}`)
+	id := f.newSession(`{"name":"one","policy":` + policyBody(t, "rego", noScripting, nil) + `}`)
 	if id != "s-bcdfg" {
 		t.Fatalf("session %s, want the warm Sandbox", id)
 	}

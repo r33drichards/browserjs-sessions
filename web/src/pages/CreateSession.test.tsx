@@ -2,7 +2,8 @@
 import createWrapper from "@cloudscape-design/components/test-utils/dom"
 import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { FakeEditor, presetSource, renderAt, startBackend } from "../test/harness"
+import { REGO_TEMPLATE } from "../policy/rego"
+import { FakeEditor, presetSource, presets, renderAt, startBackend } from "../test/harness"
 import { CreateSession, policyForChoice } from "./CreateSession"
 
 vi.mock("../components/MonacoEditor", () => ({ default: FakeEditor }))
@@ -30,9 +31,9 @@ describe("create session", () => {
   it("creates untouched: the placeholder name and the unrestricted policy", async () => {
     const server = await openForm()
     const placeholder = (screen.getByPlaceholderText(/^[a-z]+-[a-z]+$/) as HTMLInputElement).placeholder
-    expect((screen.getByRole("radio", { name: /No restrictions/ }) as HTMLInputElement).checked).toBe(true)
+    expect((screen.getByRole("radio", { name: /^Unrestricted/ }) as HTMLInputElement).checked).toBe(true)
     submit()
-    expect(await created(server)).toEqual({ name: placeholder, policy: { kind: "json", source: presetSource("unrestricted") } })
+    expect(await created(server)).toEqual({ name: placeholder, policy: { kind: "rego", source: presetSource("unrestricted") } })
     // Lands on the new session's page with the message.
     await waitFor(() => expect(screen.getByTestId("landed").textContent).toMatch(new RegExp(`^/sessions/s-\\w+ Session ${placeholder} created`)))
   })
@@ -44,11 +45,19 @@ describe("create session", () => {
     expect((await created(server)).name).toBe("my browser")
   })
 
+  it("offers every preset with what it allows, and says what a policy is about", async () => {
+    await openForm()
+    for (const p of presets) expect(screen.getByRole("radio", { name: new RegExp(`^${p.title}`) })).toBeTruthy()
+    expect(screen.getByText("No restrictions: every operation in the browser, full control of the desktop, and any shell command.")).toBeTruthy()
+    expect(screen.getByText(/may do in the browser, on the desktop and in the shell/)).toBeTruthy()
+    expect(document.body.textContent).not.toMatch(/JSON/)
+  })
+
   it("sends the chosen preset", async () => {
     const server = await openForm()
     choose(/No scripting/)
     submit()
-    expect((await created(server)).policy).toEqual({ kind: "json", source: presetSource("no-scripting") })
+    expect((await created(server)).policy).toEqual({ kind: "rego", source: presetSource("no-scripting") })
   })
 
   it("copies the policy of the chosen session", async () => {
@@ -62,7 +71,7 @@ describe("create session", () => {
     select.openDropdown()
     select.selectOptionByValue(server.sessionNamed("research").id)
     submit()
-    expect((await created(server)).policy).toEqual({ kind: "json", source: presetSource("one-site") })
+    expect((await created(server)).policy).toEqual({ kind: "rego", source: presetSource("one-site") })
     // A session from before policies has none to copy.
     expect(server.sent.some(r => r.path.includes(server.sessionNamed("from-before").id))).toBe(false)
   })
@@ -80,7 +89,7 @@ describe("create session", () => {
     fireEvent.change(screen.getByPlaceholderText(/^https:\/\/github/), { target: { value: "https://example.com/main.tf" } })
     submit()
     expect((await created(server)).policy).toEqual({
-      kind: "json",
+      kind: "rego",
       source: presetSource("unrestricted"),
       management: { mode: "iac", managed_url: "https://example.com/main.tf" },
     })
@@ -94,19 +103,40 @@ describe("create session", () => {
     expect(server.writes()).toHaveLength(0)
 
     fireEvent.click(screen.getByRole("button", { name: "Edit policy" }))
-    const editor = await screen.findByLabelText("JSON policy editor")
-    const bad = '{\n  "version": 1,\n  "allow": { "operations": ["clik"] }\n}'
-    fireEvent.change(editor, { target: { value: bad } })
+    const editor = (await screen.findByLabelText("Rego policy editor")) as HTMLTextAreaElement
+    expect(editor.value).toBe(REGO_TEMPLATE) // a new policy starts from the Rego template
+    fireEvent.change(editor, { target: { value: "package browserjs.policy\n\nallow_tool_call if http.send({})\n" } })
     fireEvent.click(screen.getByRole("button", { name: "Use this policy" }))
     expect(await screen.findByText("Fix the errors in the policy before using it.")).toBeTruthy()
     expect(screen.getByTestId("custom-summary").textContent).toBe("No policy written yet")
 
-    const good = '{\n  "version": 1,\n  "allow": { "operations": ["click"] }\n}'
-    fireEvent.change(screen.getByLabelText("JSON policy editor"), { target: { value: good } })
+    const good = 'package browserjs.policy\n\nimport rego.v1\n\nallow_tool_call if input.tool == "browser_execute"\n'
+    fireEvent.change(screen.getByLabelText("Rego policy editor"), { target: { value: good } })
     fireEvent.click(screen.getByRole("button", { name: "Use this policy" }))
-    await waitFor(() => expect(screen.getByTestId("custom-summary").textContent).toBe("JSON · 4 lines · valid"))
+    await waitFor(() => expect(screen.getByTestId("custom-summary").textContent).toBe("Rego · 5 lines · valid"))
     submit()
-    expect((await created(server)).policy).toEqual({ kind: "json", source: good })
+    expect((await created(server)).policy).toEqual({ kind: "rego", source: good })
+    expect(server.sent.some(r => r.path.includes("policy-schema"))).toBe(false)
+  })
+
+  it("starts the written policy from a preset, and says so when it has a warning", async () => {
+    const server = await openForm()
+    choose(/Write a policy/)
+    fireEvent.click(screen.getByRole("button", { name: "Edit policy" }))
+    const editor = (await screen.findByLabelText("Rego policy editor")) as HTMLTextAreaElement
+    const dropdown = createWrapper().findAllButtonDropdowns().find(d => d.getElement().textContent === "Start from a preset")!
+    dropdown.openDropdown()
+    dropdown.findItemById("one-site")!.click()
+    await waitFor(() => expect(editor.value).toBe(presetSource("one-site")))
+
+    // The shell, left open beside a restricted browser: a warning, not an error.
+    const source = presetSource("one-site") + '\nallow_tool_call if input.server == "exec"\n'
+    fireEvent.change(editor, { target: { value: source } })
+    expect((await screen.findByRole("list", { name: "Problems" })).textContent).toContain("allows the shell")
+    fireEvent.click(screen.getByRole("button", { name: "Use this policy" }))
+    await waitFor(() => expect(screen.getByTestId("custom-summary").textContent).toMatch(/^Rego · \d+ lines · valid, 1 warning$/))
+    submit()
+    expect((await created(server)).policy).toEqual({ kind: "rego", source })
   })
 
   it("shows the errors of a policy the backend refuses, and creates nothing", async () => {
@@ -157,17 +187,17 @@ describe("create session", () => {
 
 describe("policyForChoice", () => {
   const presets = [
-    { id: "unrestricted", title: "No restrictions", description: "", kind: "json" as const, source: "U" },
-    { id: "no-scripting", title: "No scripting", description: "", kind: "json" as const, source: "N" },
+    { id: "unrestricted", title: "Unrestricted", description: "", kind: "rego" as const, source: "U" },
+    { id: "no-scripting", title: "No scripting", description: "", kind: "rego" as const, source: "N" },
   ]
   const base = { presets, managedUrl: "" }
 
   it("gives each choice its policy", () => {
-    expect(policyForChoice({ ...base, choice: "preset:no-scripting" })).toEqual({ kind: "json", source: "N" })
+    expect(policyForChoice({ ...base, choice: "preset:no-scripting" })).toEqual({ kind: "rego", source: "N" })
     expect(policyForChoice({ ...base, choice: "copy", copied: { kind: "rego", source: "R" } })).toEqual({ kind: "rego", source: "R" })
     expect(policyForChoice({ ...base, choice: "custom", custom: { kind: "rego", source: "C" } })).toEqual({ kind: "rego", source: "C" })
     expect(policyForChoice({ ...base, choice: "iac", managedUrl: " https://x.example/a " })).toEqual({
-      kind: "json",
+      kind: "rego",
       source: "U",
       management: { mode: "iac", managed_url: "https://x.example/a" },
     })

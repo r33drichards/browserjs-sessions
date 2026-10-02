@@ -39,7 +39,7 @@ async def test_readyz_is_503_until_the_first_pass(client, op):
                                      {"Authorization": "Bearer "}])
 async def test_missing_or_wrong_token_is_401_with_an_empty_body(client, op, headers):
     await op.first_pass([])
-    for method, path in [("GET", URL), ("POST", "/v1/validate"), ("POST", "/v1/evaluate"), ("GET", "/v1/schema")]:
+    for method, path in [("GET", URL), ("POST", "/v1/validate"), ("POST", "/v1/evaluate")]:
         r = await client.request(method, path, headers=headers, data=b"{}")
         assert r.status == 401 and await r.read() == b"", path
 
@@ -47,7 +47,6 @@ async def test_missing_or_wrong_token_is_401_with_an_empty_body(client, op, head
 async def test_each_token_opens_only_its_own_endpoints(client, op):
     await op.first_pass([])
     assert (await client.get(URL, headers=API)).status == 401
-    assert (await client.get("/v1/schema", headers=BUNDLE)).status == 401
     assert (await client.post("/v1/validate", headers=BUNDLE, json={"kind": "rego", "source": ALLOW_ALL})).status == 401
 
 
@@ -57,7 +56,6 @@ async def test_an_unset_token_admits_nobody(cfg, aiohttp_client):
     await op.first_pass([])
     client = await aiohttp_client(make_app(op))
     assert (await client.get(URL, headers={"Authorization": "Bearer "})).status == 401
-    assert (await client.get("/v1/schema", headers={"Authorization": "Bearer "})).status == 401
 
 
 async def test_bundle_is_503_before_the_first_pass(client, op):
@@ -131,7 +129,7 @@ async def test_many_long_polls_are_all_answered(client, op):
 
 
 async def test_validate(client, cfg):
-    r = await client.post("/v1/validate", headers=API, json={"kind": "json", "source": example("one-site", "policy.json")})
+    r = await client.post("/v1/validate", headers=API, json={"kind": "rego", "source": example("one-site", "rego")})
     assert r.status == 200
     body = await r.json()
     assert body == {"ok": True, "errors": [], "warnings": [], "rego": example("one-site", "rego"),
@@ -148,14 +146,18 @@ async def test_validate_an_invalid_policy_is_a_200(client):
 
 
 async def test_validate_is_what_the_reconcile_runs(client, op):
-    source = '{"version": 1, "allow": {"operations": ["*"], "rules": [{"operation": "press"}]}}'
-    api = await (await client.post("/v1/validate", headers=API, json={"kind": "json", "source": source})).json()
+    # A policy that restricts the browser and leaves the shell open: the
+    # warning reaches the editor and the resource's status alike.
+    source = H + 'allow_tool_call if input.server == "exec"\nallow_tool_call if input.arguments.operations == []\n'
+    api = await (await client.post("/v1/validate", headers=API, json={"kind": "rego", "source": source})).json()
     await op.first_pass([])
-    out = await op.reconcile("s-aaaaa", {"kind": "json", "source": source}, {})
-    assert out.validation.to_api() == api and api["warnings"][0]["code"] == "rule_shadowed"
+    out = await op.reconcile("s-aaaaa", {"kind": "rego", "source": source}, {})
+    assert out.validation.to_api() == api and [w["code"] for w in api["warnings"]] == ["browser_bypass_shell"]
+    # The kind may be left out: Rego is the only one.
+    assert await (await client.post("/v1/validate", headers=API, json={"source": source})).json() == api
 
 
-@pytest.mark.parametrize("body", [b"not json", b"[]", b'{"kind": "yaml", "source": "x"}', b'{"kind": "rego"}',
+@pytest.mark.parametrize("body", [b"not json", b"[]", b'{"kind": "yaml", "source": "x"}', b'{"kind": "json", "source": "{}"}', b'{"kind": "rego"}',
                                   b'{"kind": "rego", "source": ""}', b'{"kind": "rego", "source": 1}', b""])
 async def test_validate_bad_request_is_400_with_an_error(client, body):
     for path in ("/v1/validate", "/v1/evaluate"):
@@ -173,7 +175,7 @@ async def test_validate_body_over_128_kib_is_413(client):
 async def test_evaluate(client):
     call = {"operation": "mcp_call_tool", "server": "browser", "tool": "browser_execute",
             "arguments": {"operations": [{"type": "navigate", "params": {"url": "https://example.com/"}}]}}
-    body = {"kind": "json", "source": example("one-site", "policy.json"), "input": call}
+    body = {"kind": "rego", "source": example("one-site", "rego"), "input": call}
     r = await client.post("/v1/evaluate", headers=API, json=body)
     assert r.status == 200 and await r.json() == {"ok": True, "allow": True, "errors": []}
     call["arguments"]["operations"][0]["params"]["url"] = "https://evil.example/"
@@ -188,17 +190,11 @@ async def test_evaluate_needs_an_input_of_at_most_1_mib(client):
     r = await client.post("/v1/evaluate", headers=API, json={"kind": "rego", "source": ALLOW_ALL})
     assert r.status == 400
     r = await client.post("/v1/evaluate", headers=API, json={"kind": "rego", "source": ALLOW_ALL, "input": None})
-    assert r.status == 200 and (await r.json())["allow"] is True
+    assert r.status == 200 and (await r.json())["allow"] is False
     r = await client.post("/v1/evaluate", headers=API, json={"kind": "rego", "source": ALLOW_ALL, "input": "x" * (1024 * 1024)})
     assert r.status == 400
     r = await client.post("/v1/evaluate", headers=API, json={"kind": "rego", "source": ALLOW_ALL, "input": "x" * (1000 * 1000)})
     assert r.status == 200
-
-
-async def test_schema(client, cfg):
-    r = await client.get("/v1/schema", headers=API)
-    assert r.status == 200 and r.headers["Content-Type"] == "application/schema+json"
-    assert await r.read() == cfg.schema.read_bytes()
 
 
 async def test_closing_lets_go_of_held_requests(client, op):

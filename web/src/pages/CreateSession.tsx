@@ -21,8 +21,9 @@ import { signedOutHandled } from "../auth/signedOut"
 import { useCreateGate } from "../billing/SessionBilling"
 import { PanelShell } from "../components/PanelShell"
 import type { Problems } from "../components/PolicyWorkbench"
-import { JSON_TEMPLATE, PolicyWorkbench } from "../components/PolicyWorkbench"
+import { PolicyWorkbench } from "../components/PolicyWorkbench"
 import { problemLine } from "../policy/markers"
+import { REGO_TEMPLATE } from "../policy/rego"
 import { petname } from "../petname"
 import type { PolicyInput, PolicySession, PolicySource, Preset } from "../policyApi"
 import { KIND_LABEL, PolicyApiError, ifAvailable, managedUrlError, policyApi } from "../policyApi"
@@ -57,7 +58,7 @@ export function policyForChoice({ choice, presets, copied, custom, managedUrl }:
 
 const lineCount = (source: string) => source.replace(/\n$/, "").split("\n").length
 
-const NEW_DRAFT: PolicySource = { kind: "json", source: JSON_TEMPLATE }
+const NEW_DRAFT: PolicySource = { kind: "rego", source: REGO_TEMPLATE }
 const same = (a: PolicySource, b: PolicySource) => a.kind === b.kind && a.source === b.source
 
 export function CreateSession() {
@@ -70,6 +71,7 @@ export function CreateSession() {
   const [choice, setChoice] = useState("")
   const [copyFrom, setCopyFrom] = useState("")
   const [custom, setCustom] = useState<PolicySource | null>(null)
+  const [customWarnings, setCustomWarnings] = useState(0) // of the policy the panel handed over
   const [managedUrl, setManagedUrl] = useState("")
   const [panelOpen, setPanelOpen] = useState(false)
   const [panelDraft, setPanelDraft] = useState<PolicySource>(NEW_DRAFT)
@@ -89,7 +91,7 @@ export function CreateSession() {
         if (cancelled) return
         const usable = list && list.length > 0 ? list : null
         setPresets(usable)
-        if (usable) setChoice(presetChoice(usable[0].id)) // "No restrictions": Create works untouched
+        if (usable) setChoice(presetChoice(usable[0].id)) // the unrestricted one: Create works untouched
       })
       .catch(e => {
         if (!cancelled && !signedOutHandled(e)) setPresets(null)
@@ -143,6 +145,7 @@ export function CreateSession() {
       const verdict = await policyApi.validate(panelDraft)
       if (!verdict.ok) return setPanelError("Fix the errors in the policy before using it.")
       setCustom(panelDraft)
+      setCustomWarnings(verdict.warnings.length)
       setChoice(CUSTOM)
       setFieldErrors(f => ({ ...f, custom: undefined }))
       setRefused(null)
@@ -244,7 +247,7 @@ export function CreateSession() {
               header={
                 <Header
                   variant="h2"
-                  description="What an agent connected over MCP may ask this browser to do. It does not restrict you at the screen. You can change it later."
+                  description="What an agent connected over MCP may do in the browser, on the desktop and in the shell. It does not restrict you at the screen. You can change it later."
                 >
                   Policy
                 </Header>
@@ -266,7 +269,7 @@ export function CreateSession() {
                     {
                       value: CUSTOM,
                       label: "Write a policy",
-                      description: "In JSON or in Rego, in the editor panel.",
+                      description: "In Rego, in the editor panel, from a template or one of the policies above.",
                     },
                     {
                       value: IAC,
@@ -295,7 +298,7 @@ export function CreateSession() {
                       </Button>
                       <span data-testid="custom-summary">
                         {custom
-                          ? `${KIND_LABEL[custom.kind]} · ${lineCount(custom.source)} lines · valid`
+                          ? `${KIND_LABEL[custom.kind]} · ${lineCount(custom.source)} lines · valid${customWarnings ? `, ${customWarnings} warning${customWarnings === 1 ? "" : "s"}` : ""}`
                           : "No policy written yet"}
                       </span>
                     </SpaceBetween>
@@ -409,6 +412,7 @@ export function CreateSession() {
                 setPanelDraft(d)
                 setPanelError("")
               }}
+              presets={presets}
               editorHeight={240}
             />
             {panelError ? <Alert type="error">{panelError}</Alert> : null}

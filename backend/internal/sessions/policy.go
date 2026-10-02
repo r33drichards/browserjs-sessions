@@ -55,7 +55,7 @@ var ErrPolicyUnsupported = errors.New("this session cannot be given a policy")
 
 // PolicySpec is what a SessionPolicy is created with.
 type PolicySpec struct {
-	Kind       string // "json" or "rego"
+	Kind       string // "rego"
 	Source     string
 	Mode       string // PolicyModeEditor or PolicyModeIaC; "" is editor
 	ManagedURL string // where it is managed, when Mode is iac

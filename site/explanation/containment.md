@@ -80,7 +80,8 @@ difference.
   browser directly, without passing the checkpoint. A policy that restricts
   the browser must also refuse `desktop_execute` and `exec`, and a policy
   that restricts programs must refuse `desktop_execute`, which can type into
-  any terminal on the desktop. The JSON form refuses both; in Rego it is yours to decide.
+  any terminal on the desktop. The ready-made restrictive policies do, and
+  saving a policy that does not gives a warning.
 - **What an allowed program does next.** A policy reads the program and its
   arguments, and decides that one call. It does not follow the program.
   Shells, `env`, `xargs`, interpreters and many ordinary tools given the

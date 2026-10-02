@@ -1,5 +1,6 @@
 // Renders a page against the mock backend (mock/backend.ts), which answers as
-// docs/contracts/policy/backend-api.yaml says, with the contract's examples.
+// docs/contracts/policy/backend-api.yaml says, with the contract's examples
+// (examples/*.rego and their cases) as presets.
 import { render } from "@testing-library/react"
 import { RouterProvider, createMemoryRouter, useLocation } from "react-router-dom"
 import type { RouteObject } from "react-router-dom"
@@ -9,11 +10,6 @@ import { MeProvider } from "../auth/MeProvider"
 import { forgetTokensProbe } from "../policyApi"
 
 const examples = import.meta.glob("../../../docs/contracts/policy/examples/*", {
-  query: "?raw",
-  import: "default",
-  eager: true,
-}) as Record<string, string>
-const schema = import.meta.glob("../../../docs/contracts/policy/json-policy.schema.json", {
   query: "?raw",
   import: "default",
   eager: true,
@@ -30,7 +26,7 @@ export interface Sent {
 }
 
 export function startBackend(options: Partial<MockOptions> = {}) {
-  const backend = createMockBackend({ presets, schema: JSON.parse(Object.values(schema)[0]), ...options })
+  const backend = createMockBackend({ presets, ...options })
   const sent: Sent[] = []
   forgetTokensProbe()
   globalThis.__testFetch = async (input, init) => {
@@ -72,11 +68,10 @@ export function renderAt(path: string, routes: RouteObject[]) {
 
 // In place of Monaco, which needs a real browser: a textarea that shows what
 // the editor was given. Use with vi.mock("…/components/MonacoEditor", …).
-export function FakeEditor(props: { value: string; onChange: (v: string) => void; markers: unknown[]; ariaLabel: string; kind: string }) {
+export function FakeEditor(props: { value: string; onChange: (v: string) => void; markers: unknown[]; ariaLabel: string }) {
   return (
     <textarea
       aria-label={props.ariaLabel}
-      data-kind={props.kind}
       data-markers={JSON.stringify(props.markers)}
       value={props.value}
       onChange={e => props.onChange(e.target.value)}

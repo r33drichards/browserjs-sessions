@@ -8,6 +8,24 @@ in section 11, and the phase 1 tracks in
 [2026-10-02-session-policies-tracks.md](2026-10-02-session-policies-tracks.md).
 No product code is written and nothing is deployed.
 
+> **Note, 2026-10-02 (later the same day): policies are Rego only.** The
+> product owner decided to remove the JSON policy format: "remove JSON
+> policies and only allow the Rego ones." By then a session had three ways
+> in (`browser_execute`, `desktop_execute`, and a shell through the `exec`
+> server), and the JSON format of section 3 spoke of the first alone, so
+> every JSON policy, the unrestricted one included, denied the desktop.
+> Rather than grow the format, it was removed: `SessionPolicy.spec.kind` is
+> `rego` only, the translator, the schema, `GET /policy-schema.json`, the
+> editor's JSON mode and the provider's `json` argument and
+> `browserjs_policy_document` data source are gone, and the presets are
+> Rego modules. No migration was needed: enforcement had never been on and
+> no `SessionPolicy` existed in production. Sections 3, 5, 6 and 8 below
+> describe the JSON form as it was designed and are kept as history; the
+> reference is [`contracts/policy/rego-contract.md`](../contracts/policy/rego-contract.md),
+> which also covers what was not in this design: a decision module that
+> refuses unknown servers and tools, the input of every tool, and the
+> warnings for policies whose rules another tool can walk around.
+
 ## The request
 
 > I want to be able to configure each sandbox with OPA policies with either

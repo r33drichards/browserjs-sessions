@@ -43,13 +43,13 @@ describe("session page", () => {
     const id = sessionNamed("research").id
     renderAt(`/sessions/${id}`, [{ path: "/sessions/:id", element: <SessionDetail id={id} /> }])
     expect(await screen.findByTestId("viewer")).toBeTruthy()
-    expect(screen.getByRole("link", { name: "JSON, v1, in force" })).toBeTruthy()
+    expect(screen.getByRole("link", { name: "Rego, v1, in force" })).toBeTruthy()
     expect(screen.getByRole("button", { name: /^Copy the MCP URL/ })).toBeTruthy()
     fireEvent.click(screen.getByRole("tab", { name: "Policy" }))
     expect(await screen.findByRole("button", { name: "Edit" })).toBeTruthy()
     expect(screen.queryByTestId("viewer")).toBeNull()
     // The title row, with the state and the policy, stays in view.
-    expect(screen.getByRole("link", { name: "JSON, v1, in force" })).toBeTruthy()
+    expect(screen.getByRole("link", { name: "Rego, v1, in force" })).toBeTruthy()
     expect(screen.getByRole("button", { name: /^Copy the MCP URL/ })).toBeTruthy()
   })
 

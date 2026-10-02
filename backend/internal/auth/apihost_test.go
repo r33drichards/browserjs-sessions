@@ -208,7 +208,6 @@ func TestAPIHostScopes(t *testing.T) {
 		{"all", "PUT", "/v1/sessions/s-abcdefghij/policy/management", 204},
 		{"read", "POST", "/v1/policies/validate", 204},
 		{"read", "POST", "/v1/policies/evaluate", 204},
-		{"read", "GET", "/v1/policy-schema.json", 204},
 		{"read", "GET", "/v1/policy-presets", 204},
 	} {
 		f := newAPIHostFixture("alice@example.com")

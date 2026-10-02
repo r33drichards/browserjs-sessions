@@ -17,7 +17,7 @@ import (
 
 var (
 	noScripting = sessions.PolicySpec{
-		Kind:   "json",
+		Kind:   "rego",
 		Source: `{"version": 1, "allow": {"operations": ["*"]}, "deny": {"operations": ["evaluate"]}}`,
 	}
 	asCode = sessions.PolicySpec{
@@ -317,7 +317,7 @@ func TestWarmSandboxesThatCannotTakeThePolicy(t *testing.T) {
 					}},
 				},
 				"spec": map[string]any{
-					"sessionRef": map[string]any{"name": "s-bcdfg"}, "kind": "json",
+					"sessionRef": map[string]any{"name": "s-bcdfg"}, "kind": "rego",
 					"source": sessionstest.Unrestricted.Source, "management": map[string]any{"mode": "editor"},
 				},
 			}}

@@ -33,7 +33,7 @@ var PolicyBlueprint = strings.Replace(Blueprint, `            value: "{{ .Sessio
 
 // Unrestricted is the policy the fake deployment gives a session that asked
 // for none.
-var Unrestricted = sessions.PolicySpec{Kind: "json", Source: `{"version": 1, "allow": {"operations": ["*"]}}`}
+var Unrestricted = sessions.PolicySpec{Kind: "rego", Source: "package browserjs.policy\n\nimport rego.v1\n\nallow_tool_call := true\n"}
 
 // NewWithPolicies is New with policies enabled on the store and a blueprint
 // whose sessions ask OPA.
@@ -143,7 +143,7 @@ func validPolicy(obj *unstructured.Unstructured) error {
 	if ref, _, _ := unstructured.NestedString(spec, "sessionRef", "name"); ref != obj.GetName() || !sessions.ValidID(ref) {
 		return invalid("a SessionPolicy is named after its session, not %q", ref)
 	}
-	if kind := spec["kind"]; kind != "json" && kind != "rego" {
+	if kind := spec["kind"]; kind != "rego" {
 		return invalid("kind %v", kind)
 	}
 	if source, _ := spec["source"].(string); len(source) < 1 || len(source) > 65536 {

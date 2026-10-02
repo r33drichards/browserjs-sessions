@@ -41,7 +41,7 @@ def test_layout_and_loaded_document(cfg):
     assert 'package browserjs.tenant["s-ab2cd"]\n' in tenant and "browserjs.policy" not in tenant
     decision = files["/decision/s-ab2cd.rego"].decode()
     assert 'package browserjs.decision["s-ab2cd"].mcp_tools\n' in decision
-    assert 'allow if data.browserjs.tenant["s-ab2cd"].allow_tool_call == true\n' in decision
+    assert 'data.browserjs.tenant["s-ab2cd"].allow_tool_call == true\n' in decision
 
 
 def test_byte_stable_for_the_same_input(cfg):

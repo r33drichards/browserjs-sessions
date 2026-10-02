@@ -27,19 +27,16 @@ resource "browserjs_session" "research" {
   }
 }
 
-# A policy in the JSON format: everything except script in the page.
+# A policy is a Rego module. This one allows everything in the browser except
+# script in the page, and denies desktop control and the shell: either could
+# drive the browser around its rules, and the API warns when one is left open.
 resource "browserjs_session_policy" "research" {
   session_id  = browserjs_session.research.id
   managed_url = local.managed_url
-
-  json = jsonencode({
-    version = 1
-    allow   = { operations = ["*"] }
-    deny    = { operations = ["evaluate", "setContent"] }
-  })
+  rego        = file("${path.module}/no-scripting.rego")
 }
 
-# The same Rego on two more sessions: reuse is the configuration's job.
+# The same policy on two more sessions: reuse is the configuration's job.
 resource "browserjs_session" "worker" {
   for_each = toset(["worker-a", "worker-b"])
   name     = each.key

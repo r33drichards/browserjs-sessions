@@ -1,5 +1,5 @@
 // Cloudscape's page edit, for the session's policy. A policy managed as code
-// gets the same layout read-only: the source, the generated Rego and Test,
+// gets the same layout read-only: the source, the policy in force and Test,
 // with the link to where it is edited in place of the buttons.
 import Alert from "@cloudscape-design/components/alert"
 import Box from "@cloudscape-design/components/box"
@@ -15,8 +15,8 @@ import { ApiError, isSessionId } from "../api"
 import { signedOutHandled } from "../auth/signedOut"
 import type { Problems } from "../components/PolicyWorkbench"
 import { PolicyWorkbench } from "../components/PolicyWorkbench"
-import type { Policy, PolicySession, PolicySource } from "../policyApi"
-import { PolicyApiError, isManagedAsCode, policyApi } from "../policyApi"
+import type { Policy, PolicySession, PolicySource, Preset } from "../policyApi"
+import { PolicyApiError, ifAvailable, isManagedAsCode, policyApi } from "../policyApi"
 import type { Flash } from "../shell"
 import { Shell, api } from "../shell"
 import { useUnsavedChanges } from "../useUnsavedChanges"
@@ -35,6 +35,7 @@ export function EditPolicy({ id }: { id: string }) {
   const [refused, setRefused] = useState<Problems | null>(null)
   const [busy, setBusy] = useState(false)
   const [others, setOthers] = useState<PolicySession[]>([])
+  const [presets, setPresets] = useState<Preset[] | null>(null)
 
   const load = useCallback(async () => {
     setLoadError("")
@@ -45,7 +46,7 @@ export function EditPolicy({ id }: { id: string }) {
       if (!s.policy || s.policy.state === "unsupported") return
       const p = await policyApi.getPolicy(id)
       setPolicy(p)
-      setDraft({ kind: p.kind ?? "json", source: p.source ?? "" })
+      setDraft({ kind: p.kind ?? "rego", source: p.source ?? "" })
       setFailure(null)
       setRefused(null)
     } catch (e) {
@@ -64,6 +65,8 @@ export function EditPolicy({ id }: { id: string }) {
       .listSessions()
       .then((list: PolicySession[]) => setOthers(list.filter(s => s.id !== id && s.policy && s.policy.state !== "unsupported")))
       .catch(signedOutHandled)
+    // The ready-made policies, to start over from one. The editor works without them.
+    ifAvailable(policyApi.presets()).then(setPresets).catch(signedOutHandled)
   }, [id])
 
   const readOnly = isManagedAsCode(policy)
@@ -149,6 +152,7 @@ export function EditPolicy({ id }: { id: string }) {
       readOnly={readOnly}
       regoInForce={policy.rego}
       refused={refused}
+      presets={presets}
       tools={
         others.length > 0 ? (
           <ButtonDropdown

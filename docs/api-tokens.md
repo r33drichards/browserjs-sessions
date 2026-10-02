@@ -167,7 +167,7 @@ token.
 | `POST /v1/sessions`, `PATCH` and `DELETE /v1/sessions/{id}` | `sessions:write` |
 | `GET /v1/sessions/{id}/policy` | `policies:read` |
 | `PUT` and `DELETE /v1/sessions/{id}/policy`, `PUT /v1/sessions/{id}/policy/management` | `policies:write` |
-| `POST /v1/policies/validate`, `POST /v1/policies/evaluate`, `GET /v1/policy-schema.json`, `GET /v1/policy-presets` | any |
+| `POST /v1/policies/validate`, `POST /v1/policies/evaluate`, `GET /v1/policy-presets` | any |
 
 They are the handlers of `/api/...`, with the token's owner as the caller.
 The policy routes exist once the policy backend (track C) does; until then

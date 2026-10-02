@@ -15,7 +15,7 @@ import pytest
 from policy_operator.config import Config
 
 CONTRACTS = Path(__file__).resolve().parents[3] / "docs" / "contracts" / "policy"
-EXAMPLES = sorted(p.name[: -len(".policy.json")] for p in (CONTRACTS / "examples").glob("*.policy.json"))
+EXAMPLES = sorted(p.name[: -len(".rego")] for p in (CONTRACTS / "examples").glob("*.rego"))
 
 
 def example(name: str, suffix: str) -> str:

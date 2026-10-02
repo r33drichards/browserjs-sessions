@@ -14,8 +14,8 @@ info:
     NetworkPolicy additionally limits who can connect.
 
     `validate` runs exactly the code the reconcile of a `SessionPolicy` runs
-    (JSON schema check, JSON to Rego, tenant checks, `opa check` under the
-    capabilities file). There is no other implementation of "is this policy
+    (tenant checks, `opa check` under the capabilities file, the warnings of
+    rego-contract.md). There is no other implementation of "is this policy
     valid" anywhere in the product.
 servers:
   - url: http://policy-operator.browserjs-sessions.svc:8080
@@ -111,14 +111,6 @@ paths:
                   errors: {type: array, items: {$ref: "#/components/schemas/Diagnostic"}}
           description: The outcome.
         "400": {description: Bad request., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
-  /v1/schema:
-    get:
-      summary: The JSON Schema of the JSON policy format (json-policy.schema.json).
-      security: [{apiToken: []}]
-      responses:
-        "200":
-          description: The schema.
-          content: {application/schema+json: {schema: {type: object}}}
 components:
   securitySchemes:
     bundleToken: {type: http, scheme: bearer}
@@ -126,9 +118,9 @@ components:
   schemas:
     PolicySource:
       type: object
-      required: [kind, source]
+      required: [source]
       properties:
-        kind: {type: string, enum: [json, rego]}
+        kind: {type: string, enum: [rego], default: rego, description: Rego is the only kind. May be left out.}
         source: {type: string, minLength: 1, maxLength: 65536}
     Validation:
       type: object
@@ -137,7 +129,7 @@ components:
         ok: {type: boolean}
         rego:
           type: string
-          description: Present when ok. The module, package browserjs.policy; for kind json the generated one, for kind rego the source.
+          description: Present when ok. The module, package browserjs.policy: the source.
         hash:
           type: string
           description: Present when ok. "sha256:" and the hex SHA-256 of `rego`.
@@ -147,13 +139,15 @@ components:
       type: object
       required: [code, message]
       description: |
-        `row` and `col` are 1-based positions in the `source` that was sent
-        (the JSON text for kind json), absent when the problem has none.
-        Codes: `size_error`, `json_parse_error`, `schema_error`,
+        `row` and `col` are 1-based positions in the `source` that was sent,
+        absent when the problem has none.
+        Codes: `size_error`, `schema_error` (a kind that is not rego),
         `policy_guard_error`, OPA's own (`rego_parse_error`,
         `rego_type_error`, `rego_compile_error`, `rego_unsafe_var_error`,
         `rego_recursion_error`), `eval_error`, `eval_timeout`; warnings use
-        the codes of json-to-rego.md.
+        the codes of rego-contract.md (`browser_bypass_desktop`,
+        `browser_bypass_shell`, `shell_bypass_desktop`,
+        `shell_launcher_allowed`, `shell_env_allowed`).
       properties:
         row: {type: integer, minimum: 1}
         col: {type: integer, minimum: 1}

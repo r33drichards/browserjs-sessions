@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
+import createWrapper from "@cloudscape-design/components/test-utils/dom"
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { useState } from "react"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { SAMPLES } from "../policy/samples"
 import type { PolicySource, Validation } from "../policyApi"
-import { FakeEditor, presetSource, startBackend } from "../test/harness"
+import { FakeEditor, presetSource, presets, startBackend } from "../test/harness"
 import type { Problems } from "./PolicyWorkbench"
 import { PolicyWorkbench } from "./PolicyWorkbench"
 
@@ -11,91 +13,174 @@ vi.mock("./MonacoEditor", () => ({ default: FakeEditor }))
 
 afterEach(cleanup)
 
-const BAD = '{\n  "version": 1,\n  "allow": {\n    "operations": ["clik"]\n  }\n}'
+const rego = (source: string): PolicySource => ({ kind: "rego", source })
+const BAD = "package browserjs.policy\n\nallow_tool_call if http.send({})\n"
+// one-site restricts the browser; this leaves the shell open beside it.
+const WITH_SHELL = presetSource("one-site") + '\nallow_tool_call if input.server == "exec"\n'
 
-function Bench(props: { start: PolicySource; refused?: Problems; readOnly?: boolean; onValidation?: (v: Validation | null) => void }) {
-  const [draft, setDraft] = useState(props.start)
-  return <PolicyWorkbench draft={draft} onChange={setDraft} refused={props.refused} readOnly={props.readOnly} onValidation={props.onValidation} regoInForce="package browserjs.policy" />
+interface BenchProps {
+  start: PolicySource
+  refused?: Problems
+  readOnly?: boolean
+  regoInForce?: string
+  withPresets?: boolean
+  onValidation?: (v: Validation | null) => void
 }
 
-const markers = async () => JSON.parse((await screen.findByLabelText(/policy editor$/)).getAttribute("data-markers") ?? "[]")
+function Bench({ start, withPresets, ...props }: BenchProps) {
+  const [draft, setDraft] = useState(start)
+  return <PolicyWorkbench draft={draft} onChange={setDraft} presets={withPresets ? presets : undefined} {...props} />
+}
+
+const editor = () => screen.findByLabelText("Rego policy editor") as Promise<HTMLTextAreaElement>
+const markers = async () => JSON.parse((await editor()).getAttribute("data-markers") ?? "[]")
+
+function chooseSample(label: string) {
+  const select = createWrapper().findSelect()!
+  select.openDropdown()
+  select.selectOptionByValue(SAMPLES.find(s => s.label === label)!.id)
+}
+const callText = () => document.querySelector('textarea[aria-label="Sample call"]') as HTMLTextAreaElement
+const runTest = () => fireEvent.click(screen.getByRole("button", { name: "Run test" }))
 
 describe("policy workbench", () => {
   it("turns the server's errors[] into markers and a problems pane", async () => {
     startBackend()
-    render(<Bench start={{ kind: "json", source: BAD }} />)
+    render(<Bench start={rego(BAD)} />)
     const problems = await screen.findByRole("list", { name: "Problems" })
-    expect(problems.textContent).toContain('4:20  unknown operation "clik"; did you mean "click"?')
+    expect(problems.textContent).toContain("3:20  undefined function http.send")
     expect(screen.getByRole("status").textContent).toContain("1 error")
     expect(screen.getByRole("status").textContent).toContain("0 warnings")
     expect(await markers()).toEqual([
-      expect.objectContaining({ startLineNumber: 4, startColumn: 20, endLineNumber: 4, endColumn: 26, severity: "error", code: "unknown_operation" }),
+      expect.objectContaining({ startLineNumber: 3, startColumn: 20, endLineNumber: 3, endColumn: 29, severity: "error", code: "rego_type_error" }),
     ])
-    // No generated Rego for a policy that does not validate.
-    expect(screen.getByLabelText("Generated Rego, read-only").textContent).toBe("Shown when the JSON policy is valid.")
   })
 
-  it("clears them, and shows the generated Rego, once the policy is valid", async () => {
+  it("clears them once the policy is valid", async () => {
     startBackend()
     const verdicts: (Validation | null)[] = []
-    render(<Bench start={{ kind: "json", source: BAD }} onValidation={v => verdicts.push(v)} />)
+    render(<Bench start={rego(BAD)} onValidation={v => verdicts.push(v)} />)
     await screen.findByRole("list", { name: "Problems" })
-    fireEvent.change(screen.getByLabelText("JSON policy editor"), { target: { value: presetSource("no-scripting") } })
-    await waitFor(() => expect(screen.getByLabelText("Generated Rego, read-only").textContent).toContain("package browserjs.policy"))
+    fireEvent.change(await editor(), { target: { value: presetSource("no-scripting") } })
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Valid"))
     expect(screen.queryByRole("list", { name: "Problems" })).toBeNull()
     expect(await markers()).toEqual([])
-    expect(screen.getByRole("status").textContent).toContain("Valid")
     expect(verdicts.at(-1)).toMatchObject({ ok: true })
+  })
+
+  it("shows a warning that has no position in the problems pane, with no marker", async () => {
+    startBackend()
+    render(<Bench start={rego(WITH_SHELL)} />)
+    const problems = await screen.findByRole("list", { name: "Problems" })
+    expect(problems.textContent).toMatch(/^Warning this policy restricts what browser_execute may do and allows the shell/)
+    const status = screen.getByRole("status").textContent
+    expect(status).toContain("0 errors")
+    expect(status).toContain("1 warning")
+    expect(status).toContain("Valid") // a warning does not stop a save
+    expect(await markers()).toEqual([])
   })
 
   it("marks what a refused save answered until the check has its own verdict", async () => {
     // A backend whose check cannot be reached: only the save's 422 is known.
     globalThis.__testFetch = async () => new Response(JSON.stringify({ error: "the operator could not be reached" }), { status: 503, headers: { "Content-Type": "application/json" } })
     const refused = { errors: [{ row: 2, col: 3, code: "rego_type_error", message: "undefined function http.send" }], warnings: [{ code: "w", message: "no place" }] }
-    render(<Bench start={{ kind: "rego", source: "package browserjs.policy\n  http.send({})\n" }} refused={refused} />)
-    expect((await screen.findByRole("list", { name: "Problems" })).textContent).toContain("2:3  undefined function http.send")
-    expect(await markers()).toEqual([
-      expect.objectContaining({ startLineNumber: 2, startColumn: 3, severity: "error" }),
-      expect.objectContaining({ startLineNumber: 1, startColumn: 1, severity: "warning" }),
-    ])
+    render(<Bench start={rego("package browserjs.policy\n  http.send({})\n")} refused={refused} />)
+    const problems = await screen.findByRole("list", { name: "Problems" })
+    expect(problems.textContent).toContain("2:3  undefined function http.send")
+    expect(problems.textContent).toContain("Warning no place")
+    expect(await markers()).toEqual([expect.objectContaining({ startLineNumber: 2, startColumn: 3, severity: "error" })])
     await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Couldn't check the policy: the operator could not be reached"))
   })
 
-  it("converts JSON to its generated Rego after a confirmation", async () => {
+  it("is one Rego editor: no format to choose, no second pane, no schema asked for", async () => {
+    const { sent } = startBackend()
+    render(<Bench start={rego(presetSource("no-scripting"))} />)
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Valid"))
+    expect(screen.getByRole("status").textContent).toContain("Rego")
+    expect(screen.queryByRole("button", { name: "JSON" })).toBeNull()
+    expect(screen.queryByRole("button", { name: "Rego" })).toBeNull()
+    expect(screen.queryByLabelText(/Generated Rego/)).toBeNull()
+    expect(document.body.textContent).not.toMatch(/JSON policy|policy\.json/)
+    expect(sent.map(r => r.path)).toEqual(["/api/policies/validate"])
+    expect(sent[0].body).toEqual({ kind: "rego", source: presetSource("no-scripting") })
+  })
+
+  it("loads a preset's Rego into the editor", async () => {
     startBackend()
-    render(<Bench start={{ kind: "json", source: presetSource("no-scripting") }} />)
-    await waitFor(() => expect(screen.getByLabelText("Generated Rego, read-only").textContent).toContain("package"))
-    fireEvent.click(screen.getByRole("button", { name: "Rego" }))
-    expect(screen.getByLabelText("JSON policy editor")).toBeTruthy() // not yet
-    fireEvent.click(screen.getByRole("button", { name: "Convert to Rego" }))
-    const editor = (await screen.findByLabelText("Rego policy editor")) as HTMLTextAreaElement
-    expect(editor.value).toContain("package browserjs.policy")
-    expect(screen.queryByLabelText("Generated Rego, read-only")).toBeNull() // in Rego there is one pane
+    render(<Bench start={rego(BAD)} withPresets />)
+    const dropdown = createWrapper().findButtonDropdown()!
+    dropdown.openDropdown()
+    expect(dropdown.findItems().map(i => i.getElement().textContent)).toEqual(presets.map(p => expect.stringContaining(p.title)))
+    dropdown.findItemById("read-only-shell")!.click()
+    expect((await editor()).value).toBe(presetSource("read-only-shell"))
+    expect((await editor()).value).toContain("package browserjs.policy")
+  })
+
+  it("has no presets to offer unless it is given them", async () => {
+    startBackend()
+    render(<Bench start={rego(BAD)} />)
+    await editor()
+    expect(screen.queryByRole("button", { name: "Start from a preset" })).toBeNull()
   })
 
   it("tests the policy against a sample call", async () => {
     const { sent } = startBackend()
-    render(<Bench start={{ kind: "json", source: presetSource("observe-only") }} />)
-    fireEvent.click(screen.getByRole("button", { name: "Run test" }))
+    render(<Bench start={rego(presetSource("one-site"))} />)
+    chooseSample("Run git status")
+    expect(callText().value).toContain('"bin": "git"')
+    runTest()
     expect(await screen.findByText("Denied")).toBeTruthy()
     const call = sent.find(r => r.path === "/api/policies/evaluate")!
-    expect(call.body).toMatchObject({ kind: "json", source: presetSource("observe-only"), input: { tool: "browser_execute" } })
+    expect(call.body).toEqual({
+      kind: "rego",
+      source: presetSource("one-site"),
+      input: { operation: "mcp_call_tool", server: "exec", tool: "exec", arguments: { bin: "git", args: ["status"], timeout: 30 } },
+    })
 
-    fireEvent.change(screen.getByLabelText("JSON policy editor"), { target: { value: presetSource("unrestricted") } })
+    fireEvent.change(await editor(), { target: { value: presetSource("unrestricted") } })
     expect(screen.queryByText("Denied")).toBeNull() // a result belongs to the policy it was run with
-    fireEvent.click(screen.getByRole("button", { name: "Run test" }))
+    runTest()
     expect(await screen.findByText("Allowed")).toBeTruthy()
+
+    // A tool the platform does not know is refused whatever the policy says.
+    chooseSample("A tool that does not exist")
+    expect(screen.queryByText("Allowed")).toBeNull()
+    runTest()
+    expect(await screen.findByText("Denied")).toBeTruthy()
   })
 
-  it("read-only shows the source and the Rego in force, with no editor and no check", async () => {
+  it("offers the sample calls grouped by the tool they call", async () => {
+    startBackend()
+    render(<Bench start={rego(presetSource("unrestricted"))} />)
+    const select = createWrapper().findSelect()!
+    select.openDropdown()
+    const groups = select.findDropdown().findGroups().map(g => g.getElement().textContent)
+    expect(groups).toEqual(["browser / browser_execute", "browser / desktop_execute", "exec / exec", "exec / stream_logs", "exec / search_logs", "exec / kill", "browser / file_write"])
+    expect(select.findDropdown().findOptions()).toHaveLength(SAMPLES.length)
+    select.selectOptionByValue("desktop-clipboard")
+    expect(JSON.parse(callText().value)).toMatchObject({
+      server: "browser",
+      tool: "desktop_execute",
+      arguments: { operations: [{ type: "clipboard.getContent" }] },
+    })
+  })
+
+  it("read-only shows the source, with no editor, no presets and no check", async () => {
     const { sent } = startBackend()
-    render(<Bench start={{ kind: "json", source: presetSource("one-site") }} readOnly />)
-    expect(screen.getByLabelText("policy.json, read-only").textContent).toBe(presetSource("one-site"))
-    expect(screen.getByLabelText("Generated Rego, read-only").textContent).toBe("package browserjs.policy")
-    expect(screen.queryByLabelText("JSON policy editor")).toBeNull()
-    expect(screen.queryByRole("button", { name: "Rego" })).toBeNull()
+    render(<Bench start={rego(presetSource("one-site"))} readOnly withPresets regoInForce={presetSource("one-site")} />)
+    expect(screen.getByLabelText("policy.rego, read-only").textContent).toBe(presetSource("one-site"))
+    expect(screen.queryByLabelText("Policy in force, read-only")).toBeNull() // the source is what is in force
+    expect(screen.queryByLabelText("Rego policy editor")).toBeNull()
+    expect(screen.queryByRole("button", { name: "Start from a preset" })).toBeNull()
     expect(screen.getByRole("button", { name: "Run test" })).toBeTruthy()
     await new Promise(r => setTimeout(r, 500))
-    expect(sent.some(r => r.path === "/api/policies/validate")).toBe(false)
+    expect(sent).toEqual([])
+  })
+
+  it("read-only shows the policy in force beside a source that is not it", () => {
+    startBackend()
+    render(<Bench start={rego(BAD)} readOnly regoInForce={presetSource("one-site")} />)
+    expect(screen.getByLabelText("policy.rego, read-only").textContent).toBe(BAD)
+    expect(screen.getByLabelText("Policy in force, read-only").textContent).toBe(presetSource("one-site"))
   })
 })

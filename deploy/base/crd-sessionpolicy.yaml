@@ -67,9 +67,9 @@ spec:
                       type: string
                       pattern: "^s-([a-z2-7]{10}|[a-z0-9]{5})$"
                 kind:
-                  description: json is the declarative format of docs/contracts/policy/json-policy.schema.json, compiled to Rego by the operator; rego is used as written, after the tenant checks.
+                  description: The language of source. Rego is the only one (docs/contracts/policy/rego-contract.md); the field is kept so that another can be added.
                   type: string
-                  enum: ["json", "rego"]
+                  enum: ["rego"]
                 source:
                   description: What the author wrote.
                   type: string
@@ -101,7 +101,7 @@ spec:
                   description: '"sha256:" and the hex SHA-256 of status.rego. What an OPA replica reports once it has loaded this policy.'
                   type: string
                 rego:
-                  description: The module in force for this session, with package browserjs.policy; for kind json, the generated one. It is the last one that compiled, which is not the current spec's while Compiled is False.
+                  description: The module in force for this session, with package browserjs.policy. It is the last one that compiled, which is not the current spec's while Compiled is False.
                   type: string
                 regoGeneration:
                   description: The generation status.rego and status.hash were built from.

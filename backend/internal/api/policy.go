@@ -29,7 +29,6 @@ func (a *API) registerPolicies(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/sessions/{id}/policy/management", a.session(p.PutManagement))
 	mux.HandleFunc("POST /api/policies/validate", a.user(p.Validate))
 	mux.HandleFunc("POST /api/policies/evaluate", a.user(p.Evaluate))
-	mux.HandleFunc("GET /api/policy-schema.json", a.user(p.Schema))
 	mux.HandleFunc("GET /api/policy-presets", a.user(p.PresetList))
 }
 

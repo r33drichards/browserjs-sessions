@@ -15,40 +15,21 @@ session, or write your own. The ready-made ones:
 
 | Policy | What the agent may do |
 | --- | --- |
-| Unrestricted | Every browser operation |
-| No scripting | Everything except running script in a page or replacing its content |
-| Observe only | Open https pages, wait, take screenshots |
-| One site | Work on one site and its subdomains, with short typed text |
-| Form filling | Fill in forms on the sites you name: printable text, a few keys, no script |
+| Unrestricted | Everything: the browser, the desktop and the shell |
+| Browser only | Every browser operation. No desktop control, no shell |
+| No scripting | Everything in the browser except running script in a page or replacing its content. No desktop control, no shell |
+| Observe only | Open https pages, wait, take screenshots. No desktop control, no shell |
+| One site | Work on one site and its subdomains, with short typed text. No desktop control, no shell |
+| Form filling | Fill in forms on the sites you name: printable text, a few keys, no script. No desktop control, no shell |
+| Read-only shell | Everything in the browser, and a short list of read-only commands. No desktop control |
 
-## Write one in JSON
+Each is a short Rego module with comments. Pick the closest and edit it.
+
+## Write one
 
 1. Open the session's **Policy** tab and choose **Edit**.
-2. Say what is allowed. Everything else is refused.
-
-```json
-{
-  "version": 1,
-  "description": "Only example.com, and only short text.",
-  "allow": {
-    "operations": ["click", "press", "select", "wait", "screenshot", "url"],
-    "rules": [
-      { "operation": "navigate",
-        "constraints": { "url": { "schemes": ["https"], "hosts": ["example.com", "*.example.com"] } } },
-      { "operation": "type",
-        "constraints": { "text": { "max_length": 500 } } }
-    ]
-  }
-}
-```
-
-3. Try calls against it in the editor before saving.
-4. Choose **Save policy**. It applies to the next call.
-
-## Write one in Rego
-
-Use Rego when JSON cannot say it, for example to decide calls to tools other
-than the browser.
+2. Say what is allowed. Everything else is refused, on every tool: a policy
+   that only speaks of the browser refuses desktop control and the shell.
 
 ```txt
 package browserjs.policy
@@ -63,6 +44,9 @@ allow_tool_call if {
 	}
 }
 ```
+
+3. Try calls against it in the editor before saving.
+4. Choose **Save policy**. It applies to the next call.
 
 Programs are decided the same way. A call to run one arrives as the program
 and its arguments, already separate, so a rule can name them. This policy
@@ -95,8 +79,20 @@ shell (`bin` of `sh` or `bash`) unless every command is acceptable, since a
 shell's command line cannot be judged by matching text. A policy like this
 one, which does not mention the browser tools, refuses them.
 
+Do not list `sh`, `bash`, `env` or `xargs`: each runs any other program, and
+saving a policy that allows one beside a list of programs shows a warning.
+The **Read-only shell** policy is a fuller example.
+
 The package name is fixed. It carries the product's earlier name, as a few
 technical identifiers do.
+
+## Keep the rules from being walked around
+
+If a policy restricts the browser, keep desktop control and the shell
+refused: the mouse and keyboard, or a program, can drive the browser around
+the rules. If it restricts the shell, keep desktop control refused: the
+keyboard can type into a terminal. Saving a policy that leaves one open
+shows a warning that says which.
 
 ## Manage it as code
 

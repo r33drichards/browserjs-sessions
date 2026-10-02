@@ -25,7 +25,7 @@ import {
 const NOW = new Date("2026-10-07T12:00:00Z")
 
 function backend(scenario: string, extra: { checkoutPolls?: number } = {}) {
-  const mock = createMockBackend({ presets: [], schema: {}, seed: false, billing: scenario, now: () => NOW, ...extra })
+  const mock = createMockBackend({ presets: [], seed: false, billing: scenario, now: () => NOW, ...extra })
   return { mock, client: createBillingApi(mock.fetch), account: () => mock.billing.state() as Billing }
 }
 

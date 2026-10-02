@@ -1,7 +1,7 @@
 """python -m policy_operator: what the operator would publish, without a cluster.
 
   bundle <dir> [-o browserjs.tar.gz]   the bundle for a directory of SessionPolicy YAML files
-  example-resources <dir>              the contract's five examples as SessionPolicy YAML files
+  example-resources <dir>              the contract's examples as SessionPolicy YAML files
   run-cases <opa url>                  the examples' cases, asked of a running OPA as mcp-js asks
 """
 from __future__ import annotations
@@ -64,7 +64,7 @@ def describe(op: Operator, body: bytes, out) -> None:
 
 def example_sessions(cfg: Config) -> dict[str, str]:
     """Example name to the session ID it is given: s-exam1, s-exam2, …"""
-    names = sorted(p.name[: -len(".policy.json")] for p in (cfg.contract_dir / "examples").glob("*.policy.json"))
+    names = sorted(p.name[: -len(".rego")] for p in (cfg.contract_dir / "examples").glob("*.rego"))
     return {name: f"s-exam{i}" for i, name in enumerate(names, 1)}
 
 
@@ -72,11 +72,11 @@ def write_example_resources(cfg: Config, directory: Path) -> dict[str, str]:
     directory.mkdir(parents=True, exist_ok=True)
     sessions = example_sessions(cfg)
     for name, sid in sessions.items():
-        source = (cfg.contract_dir / "examples" / f"{name}.policy.json").read_text(encoding="utf-8")
+        source = (cfg.contract_dir / "examples" / f"{name}.rego").read_text(encoding="utf-8")
         resource = {
             "apiVersion": f"{GROUP}/{VERSION}", "kind": "SessionPolicy",
             "metadata": {"name": sid, "namespace": cfg.namespace},
-            "spec": {"sessionRef": {"name": sid}, "kind": "json", "source": source},
+            "spec": {"sessionRef": {"name": sid}, "kind": "rego", "source": source},
         }
         (directory / f"{name}.yaml").write_text(yaml.safe_dump(resource, sort_keys=False), encoding="utf-8")
     return sessions

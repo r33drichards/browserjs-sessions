@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
+import { presetDescription, presetsFromExamples } from "../mock/backend"
 import { ApiError, SignedOutError } from "./api"
 import {
   PolicyApiError,
@@ -22,7 +23,12 @@ function fakeFetch(status: number, body: unknown, contentType = "application/jso
 }
 
 const ID = "s-aaaaaaaaaa"
-const policy = { kind: "json", version: 3, state: "ready", source: "{}", management: { mode: "editor" } }
+const SOURCE = "package browserjs.policy\n"
+const policy = { kind: "rego", version: 3, state: "ready", source: SOURCE, management: { mode: "editor" } }
+const input = { kind: "rego", source: SOURCE } as const
+
+const examples = import.meta.glob("../../docs/contracts/policy/examples/*", { query: "?raw", import: "default", eager: true }) as Record<string, string>
+const presets = presetsFromExamples(examples)
 
 describe("policy api", () => {
   it("reads a policy from the session's policy path, with the proxy cookie and no token", async () => {
@@ -39,22 +45,22 @@ describe("policy api", () => {
     const fetch = fakeFetch(200, policy)
     const api = createPolicyApi(fetch)
     await expect(api.getPolicy("../../me")).rejects.toMatchObject({ status: 404 })
-    await expect(api.putPolicy("create", { kind: "json", source: "{}" })).rejects.toBeInstanceOf(ApiError)
+    await expect(api.putPolicy("create", input)).rejects.toBeInstanceOf(ApiError)
     expect(fetch).not.toHaveBeenCalled()
   })
 
   it("saves with If-Match set to the quoted version, and tells 200 from 202", async () => {
     const ok = fakeFetch(200, { ...policy, version: 4 })
-    const saved = await createPolicyApi(ok).putPolicy(ID, { kind: "json", source: "{}" }, 3)
+    const saved = await createPolicyApi(ok).putPolicy(ID, input, 3)
     expect(saved).toMatchObject({ inForce: true, policy: { version: 4 } })
     const [url, init] = ok.mock.calls[0] as [string, RequestInit]
     expect(url).toBe(`/api/sessions/${ID}/policy`)
     expect(init.method).toBe("PUT")
     expect(new Headers(init.headers).get("If-Match")).toBe('"3"')
-    expect(init.body).toBe(JSON.stringify({ kind: "json", source: "{}" }))
+    expect(init.body).toBe(JSON.stringify(input))
 
     const accepted = fakeFetch(202, { ...policy, version: 4, state: "loading" })
-    await expect(createPolicyApi(accepted).putPolicy(ID, { kind: "json", source: "{}" })).resolves.toMatchObject({ inForce: false })
+    await expect(createPolicyApi(accepted).putPolicy(ID, input)).resolves.toMatchObject({ inForce: false })
     expect(new Headers((accepted.mock.calls[0] as [string, RequestInit])[1].headers).has("If-Match")).toBe(false)
   })
 
@@ -72,16 +78,16 @@ describe("policy api", () => {
   it("carries the diagnostics of a 422 and the link of a mode refusal", async () => {
     const errors = [{ row: 4, col: 21, code: "unknown_operation", message: 'unknown operation "clik"' }]
     const invalid = createPolicyApi(fakeFetch(422, { error: "the policy does not validate", errors, warnings: [] }))
-    const e422 = await invalid.putPolicy(ID, { kind: "json", source: "{}" }).catch(e => e)
+    const e422 = await invalid.putPolicy(ID, input).catch(e => e)
     expect(e422).toBeInstanceOf(PolicyApiError)
     expect(e422).toMatchObject({ status: 422, message: "the policy does not validate", errors })
 
     const refused = createPolicyApi(fakeFetch(409, { error: "this policy is managed externally", managed_url: "https://example.com/main.tf" }))
-    await expect(refused.putPolicy(ID, { kind: "json", source: "{}" })).rejects.toMatchObject({
+    await expect(refused.putPolicy(ID, input)).rejects.toMatchObject({
       status: 409,
       managedUrl: "https://example.com/main.tf",
     })
-    await expect(createPolicyApi(fakeFetch(412, { error: "changed" })).putPolicy(ID, { kind: "json", source: "{}" }, 1)).rejects.toMatchObject({ status: 412 })
+    await expect(createPolicyApi(fakeFetch(412, { error: "changed" })).putPolicy(ID, input, 1)).rejects.toMatchObject({ status: 412 })
   })
 
   it("posts the source to validate and the source with an input to evaluate", async () => {
@@ -96,16 +102,14 @@ describe("policy api", () => {
     expect(JSON.parse(String(evaluate[1].body))).toEqual({ kind: "rego", source: "package browserjs.policy", input: { tool: "browser_execute" } })
   })
 
-  it("creates a session with its policy, lists presets, reads the schema as schema+json", async () => {
+  it("creates a session with its policy, and has no schema to ask for", async () => {
     const fetch = fakeFetch(201, { id: ID })
-    await createPolicyApi(fetch).createSession({ name: "a", policy: { kind: "json", source: "{}", management: { mode: "iac", managed_url: "https://x.example" } } })
+    await createPolicyApi(fetch).createSession({ name: "a", policy: { ...input, management: { mode: "iac", managed_url: "https://x.example" } } })
     const [url, init] = fetch.mock.calls[0] as [string, RequestInit]
     expect([url, init.method]).toEqual(["/api/sessions", "POST"])
     expect(JSON.parse(String(init.body)).policy.management.mode).toBe("iac")
 
-    const schema = fakeFetch(200, { $id: "x" }, "application/schema+json")
-    await expect(createPolicyApi(schema).schema()).resolves.toEqual({ $id: "x" })
-    expect(schema.mock.calls[0][0]).toBe("/api/policy-schema.json")
+    expect(createPolicyApi(fetch)).not.toHaveProperty("schema")
   })
 
   it("lists, creates and revokes tokens", async () => {
@@ -144,7 +148,7 @@ describe("policy state", () => {
   })
 
   it("summarises a policy in one line", () => {
-    expect(policySummaryLine({ kind: "json", version: 3, state: "ready" })).toBe("JSON, v3, in force")
+    expect(policySummaryLine({ kind: "rego", version: 3, state: "ready" })).toBe("Rego, v3, in force")
     expect(policySummaryLine({ kind: "rego", version: 7, state: "loading" })).toBe("Rego, v7, loading")
     expect(policySummaryLine({ state: "unsupported" })).toBe("none (created before policies)")
   })
@@ -155,12 +159,21 @@ describe("policy state", () => {
     expect(updatedByLabel(undefined)).toBe("")
   })
 
-  it("recognises the unrestricted policy", () => {
-    expect(isUnrestricted({ kind: "json", source: '{"version":1,"allow":{"operations":["*"]}}' })).toBe(true)
-    expect(isUnrestricted({ kind: "json", source: '{"version":1,"allow":{"operations":["*"]},"deny":{"operations":["evaluate"]}}' })).toBe(false)
-    expect(isUnrestricted({ kind: "json", source: '{"version":1,"allow":{"operations":["click"]}}' })).toBe(false)
-    expect(isUnrestricted({ kind: "rego", source: "package browserjs.policy" })).toBe(false)
-    expect(isUnrestricted({ kind: "json", source: "{" })).toBe(false)
+  it("recognises the unrestricted policy, whatever its comments and spacing", () => {
+    const rego = (source: string) => ({ kind: "rego" as const, source })
+    expect(isUnrestricted(rego("package browserjs.policy\n\nimport rego.v1\n\nallow_tool_call := true\n"))).toBe(true)
+    expect(isUnrestricted(rego("# all of it\npackage browserjs.policy\nimport rego.v1 # v1\n\tallow_tool_call  :=  true"))).toBe(true)
+    expect(isUnrestricted(rego("package browserjs.policy\nimport rego.v1\nallow_tool_call := false\n"))).toBe(false)
+    expect(isUnrestricted(rego("package browserjs.policy\nimport rego.v1\nallow_tool_call := true\nx := 1\n"))).toBe(false)
+    // Commented out, it allows nothing.
+    expect(isUnrestricted(rego("package browserjs.policy\nimport rego.v1\n# allow_tool_call := true\n"))).toBe(false)
+    expect(isUnrestricted(rego("package browserjs.policy"))).toBe(false)
+    expect(isUnrestricted({ kind: "rego", source: "" })).toBe(false)
+    expect(isUnrestricted({ source: "package browserjs.policy\nimport rego.v1\nallow_tool_call := true\n" })).toBe(false)
+  })
+
+  it("calls the unrestricted preset unrestricted, and no other preset", () => {
+    expect(presets.filter(isUnrestricted).map(p => p.id)).toEqual(["unrestricted"])
   })
 
   it("requires an https link for a policy managed as code", () => {
@@ -168,5 +181,24 @@ describe("policy state", () => {
     expect(managedUrlError("http://example.com/main.tf")).toMatch(/https/)
     expect(managedUrlError("not a link")).not.toBe("")
     expect(managedUrlError(" https://github.com/me/infra ")).toBe("")
+  })
+})
+
+describe("presets", () => {
+  it("are the contract's Rego examples, the unrestricted one first", () => {
+    expect(presets.map(p => p.id)).toEqual(["unrestricted", "browser-only", "form-filling", "no-scripting", "observe-only", "one-site", "read-only-shell"])
+    for (const p of presets) {
+      expect(p.kind).toBe("rego")
+      expect(p.source).toMatch(/^package browserjs\.policy$/m)
+      expect(p.cases.length).toBeGreaterThan(0)
+    }
+    expect(presets.reduce((n, p) => n + p.cases.length, 0)).toBe(264)
+  })
+
+  it("take the title from the id and the description from the comment the file begins with", () => {
+    expect(presets.map(p => p.title)).toEqual(["Unrestricted", "Browser only", "Form filling", "No scripting", "Observe only", "One site", "Read-only shell"])
+    expect(presets[0].description).toBe("No restrictions: every operation in the browser, full control of the desktop, and any shell command.")
+    expect(presetDescription("# a\n#   b  c\n#\n# d\npackage x\n# not this\n")).toBe("a b c d")
+    for (const p of presets) expect(p.description).not.toBe("")
   })
 })
