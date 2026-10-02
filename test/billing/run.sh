@@ -126,27 +126,43 @@ refuses "an Account whose name is not its hash" "an Account is named acct-<spec.
 accepts "an Account named by its hash" apply <<<"$(account "$ACCOUNT" "$HASH")"
 refuses "a changed owner" "owner and ownerHash cannot be changed" \
   merge accounts "$ACCOUNT" '{"spec":{"owner":"mallory@example.com"}}'
-accepts "stripeCustomerId set for the first time" \
-  merge accounts "$ACCOUNT" '{"spec":{"stripeCustomerId":"cus_Test1"}}'
-refuses "a changed stripeCustomerId" "stripeCustomerId cannot be changed once set" \
-  merge accounts "$ACCOUNT" '{"spec":{"stripeCustomerId":"cus_Test2"}}'
-refuses "a removed stripeCustomerId" "stripeCustomerId cannot be changed once set" \
-  merge accounts "$ACCOUNT" '{"spec":{"stripeCustomerId":null}}'
-accepts "signupCredit decided" \
-  merge accounts "$ACCOUNT" '{"spec":{"signupCredit":{"state":"refused","reason":"prepaid","at":"2026-10-01T00:00:00Z"}}}'
-refuses "a signupCredit changed once set" "the sign-up credit is decided once" \
-  merge accounts "$ACCOUNT" '{"spec":{"signupCredit":{"state":"granted","reason":null,"at":"2026-10-02T00:00:00Z"}}}'
-accepts "any other field of an Account's spec still changes" \
-  merge accounts "$ACCOUNT" '{"spec":{"paymentMethod":{"present":true,"ids":["pm_Test1"],"readAt":"2026-10-01T00:00:00Z"}}}'
-
-accepts "metronomeCustomerId set for the first time" \
-  merge accounts "$ACCOUNT" '{"spec":{"metronomeCustomerId":"d7abd0cd-4ae9-4db7-8676-e986a4ebd8dc"}}'
-refuses "a changed metronomeCustomerId" "metronomeCustomerId cannot be changed once set" \
-  merge accounts "$ACCOUNT" '{"spec":{"metronomeCustomerId":"00000000-4ae9-4db7-8676-e986a4ebd8dc"}}'
-refuses "a removed metronomeCustomerId" "metronomeCustomerId cannot be changed once set" \
-  merge accounts "$ACCOUNT" '{"spec":{"metronomeCustomerId":null}}'
-accepts "the credit the balance pass writes" \
-  merge accounts "$ACCOUNT" '{"spec":{"credit":{"exhausted":false,"balanceMicros":3400000,"checkedAt":"2026-10-02T00:00:00Z"}}}'
+# Stripe's and Metronome's state is kept per mode: test and live, sandbox
+# and production, side by side. Going live clears nothing.
+CUSTOMER=d7abd0cd-4ae9-4db7-8676-e986a4ebd8dc
+for mode in test live; do
+  accepts "stripe.$mode: customerId set for the first time" \
+    merge accounts "$ACCOUNT" '{"spec":{"stripe":{"'$mode'":{"customerId":"cus_'$mode'1"}}}}'
+  refuses "stripe.$mode: a changed customerId" "customerId cannot be changed once set" \
+    merge accounts "$ACCOUNT" '{"spec":{"stripe":{"'$mode'":{"customerId":"cus_'$mode'2"}}}}'
+  refuses "stripe.$mode: a removed customerId" "customerId cannot be changed once set" \
+    merge accounts "$ACCOUNT" '{"spec":{"stripe":{"'$mode'":{"customerId":null}}}}'
+  accepts "stripe.$mode: signupCredit decided" \
+    merge accounts "$ACCOUNT" '{"spec":{"stripe":{"'$mode'":{"signupCredit":{"state":"refused","reason":"prepaid","at":"2026-10-01T00:00:00Z"}}}}}'
+  refuses "stripe.$mode: a signupCredit changed once set" "the sign-up credit is decided once" \
+    merge accounts "$ACCOUNT" '{"spec":{"stripe":{"'$mode'":{"signupCredit":{"state":"granted","reason":null,"at":"2026-10-02T00:00:00Z"}}}}}'
+  accepts "stripe.$mode: the card's state still changes" \
+    merge accounts "$ACCOUNT" '{"spec":{"stripe":{"'$mode'":{"paymentMethod":{"present":true,"ids":["pm_Test1"],"readAt":"2026-10-01T00:00:00Z"}}}}}'
+  refuses "stripe.$mode cannot be removed" "a mode's state cannot be removed" \
+    merge accounts "$ACCOUNT" '{"spec":{"stripe":{"'$mode'":null}}}'
+done
+for environment in sandbox production; do
+  accepts "metronome.$environment: customerId set for the first time" \
+    merge accounts "$ACCOUNT" '{"spec":{"metronome":{"'$environment'":{"customerId":"'$CUSTOMER'"}}}}'
+  refuses "metronome.$environment: a changed customerId" "customerId cannot be changed once set" \
+    merge accounts "$ACCOUNT" '{"spec":{"metronome":{"'$environment'":{"customerId":"00000000-4ae9-4db7-8676-e986a4ebd8dc"}}}}'
+  refuses "metronome.$environment: a removed customerId" "customerId cannot be changed once set" \
+    merge accounts "$ACCOUNT" '{"spec":{"metronome":{"'$environment'":{"customerId":null}}}}'
+  accepts "metronome.$environment: the credit the balance pass writes" \
+    merge accounts "$ACCOUNT" '{"spec":{"metronome":{"'$environment'":{"credit":{"exhausted":false,"balanceMicros":3400000,"checkedAt":"2026-10-02T00:00:00Z"}}}}}'
+  refuses "metronome.$environment cannot be removed" "an environment's state cannot be removed" \
+    merge accounts "$ACCOUNT" '{"spec":{"metronome":{"'$environment'":null}}}'
+done
+refuses "spec.stripe cannot be removed" "stripe cannot be removed" merge accounts "$ACCOUNT" '{"spec":{"stripe":null}}'
+refuses "spec.metronome cannot be removed" "metronome cannot be removed" merge accounts "$ACCOUNT" '{"spec":{"metronome":null}}'
+# The old top-level fields are gone: the API server drops them.
+merge accounts "$ACCOUNT" '{"spec":{"stripeCustomerId":"cus_Old","metronomeCustomerId":"old"}}' >/dev/null 2>&1
+is "the top-level customer IDs of the earlier shape are not kept" " " \
+  "$(k get accounts.browserjs.dev "$ACCOUNT" -o jsonpath='{.spec.stripeCustomerId} {.spec.metronomeCustomerId}')"
 is "an Account has no status subresource any more" "" \
   "$(kubectl get crd accounts.browserjs.dev -o jsonpath='{.spec.versions[0].subresources}')"
 
@@ -477,10 +493,10 @@ else
   else
     fail "the second cluster has the same Accounts" "$(head -20 "$work/diff")"
   fi
-  is "the customer IDs came with it" "cus_Test1 d7abd0cd-4ae9-4db7-8676-e986a4ebd8dc" \
-    "$(kubectl -n "$NS" get accounts.browserjs.dev "$ACCOUNT" -o jsonpath='{.spec.stripeCustomerId} {.spec.metronomeCustomerId}')"
+  is "the customer IDs of both modes came with it" "cus_test1 cus_live1 $CUSTOMER $CUSTOMER" \
+    "$(kubectl -n "$NS" get accounts.browserjs.dev "$ACCOUNT" -o jsonpath='{.spec.stripe.test.customerId} {.spec.stripe.live.customerId} {.spec.metronome.sandbox.customerId} {.spec.metronome.production.customerId}')"
   is "and the card's state and the sign-up credit's outcome" "true refused" \
-    "$(kubectl -n "$NS" get accounts.browserjs.dev "$ACCOUNT" -o jsonpath='{.spec.paymentMethod.present} {.spec.signupCredit.state}')"
+    "$(kubectl -n "$NS" get accounts.browserjs.dev "$ACCOUNT" -o jsonpath='{.spec.stripe.test.paymentMethod.present} {.spec.stripe.test.signupCredit.state}')"
   accepts "restoring a second time" hack/billing-restore.sh "$work/export.yaml"
   accounts >"$work/third.json"
   if diff -q "$work/first.json" "$work/third.json" >/dev/null; then pass "changes nothing"; else fail "changes nothing"; fi
