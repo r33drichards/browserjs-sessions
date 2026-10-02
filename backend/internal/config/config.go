@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/r33drichards/browserjs-sessions/backend/internal/billing"
 	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
 )
 
@@ -70,6 +71,19 @@ type Config struct {
 	// what the backend calls the operator with.
 	PolicyOperatorURL string
 	OperatorAPIToken  string
+
+	// Billing is metering and billing (docs/contracts/billing/deploy.md).
+	// Its Mode is off unless BILLING says otherwise, and with it off the
+	// rest is not used. BillingCatalogue is the catalogue file.
+	Billing          billing.Config
+	BillingCatalogue string
+	// Metronome is the meter and the credit ledger
+	// (docs/contracts/billing/metronome.md). The token is required while
+	// BILLING is not off; without the webhook's secret there is no webhook
+	// route, and the balance pass alone notices credit running out.
+	MetronomeURL           string
+	MetronomeToken         string
+	MetronomeWebhookSecret string
 }
 
 // APITokens reports whether users can make API tokens and use them.
@@ -211,7 +225,88 @@ func FromEnv(get func(string) string) (Config, error) {
 			return Config{}, fmt.Errorf("OPERATOR_API_TOKEN is required with POLICY_OPERATOR_URL")
 		}
 	}
+	if err := c.billingFromEnv(get, or); err != nil {
+		return Config{}, err
+	}
 	return c, nil
+}
+
+// billingFromEnv reads the settings of metering and billing: track D's
+// (accounts and enforcement). Stripe's own are read where Stripe is.
+func (c *Config) billingFromEnv(get func(string) string, or func(k, def string) string) error {
+	b := billing.Config{PublicURL: c.PublicURL, Payments: "off"}
+	var err error
+	if b.Mode, err = billing.ParseMode(strings.ToLower(strings.TrimSpace(get("BILLING")))); err != nil {
+		return fmt.Errorf("BILLING %w", err)
+	}
+	for _, d := range []struct {
+		name, def string
+		into      *time.Duration
+	}{
+		{"BILLING_GRACE", "5m", &b.Grace},
+		{"BILLING_DRAIN_TIMEOUT", "10m", &b.DrainTimeout},
+		{"BILLING_BALANCE_PASS", "5m", &b.BalancePass},
+		{"ZERO_BALANCE_DELETE_AFTER", "336h", &b.ZeroBalanceDeleteAfter},
+	} {
+		if *d.into, err = positiveDuration(or(d.name, d.def)); err != nil {
+			return fmt.Errorf("%s: %w", d.name, err)
+		}
+	}
+	for _, n := range []struct {
+		name, def string
+		into      *int
+	}{
+		{"MAX_AWAKE_SESSIONS", "10", &b.MaxAwakeSessions},
+		{"WAKES_PER_HOUR", "30", &b.WakesPerHour},
+	} {
+		if *n.into, err = strconv.Atoi(or(n.name, n.def)); err != nil || *n.into < 1 {
+			return fmt.Errorf("%s must be a positive number, got %q", n.name, get(n.name))
+		}
+	}
+	for _, sw := range []struct {
+		name, def string
+		into      *bool
+	}{
+		{"ZERO_BALANCE_DELETE", "off", &b.ZeroBalanceDelete},
+		{"SIGNUP_CREDIT", "on", &b.SignupCredit},
+	} {
+		switch strings.ToLower(or(sw.name, sw.def)) {
+		case "on", "true":
+			*sw.into = true
+		case "off", "false":
+		default:
+			return fmt.Errorf("%s must be on or off, got %q", sw.name, get(sw.name))
+		}
+	}
+	// Admins are exempt unless the list says who is.
+	b.ExemptEmails = c.AdminEmails
+	if raw := get("BILLING_EXEMPT_EMAILS"); raw != "" {
+		b.ExemptEmails = nil
+		for _, email := range strings.Split(raw, ",") {
+			if email = strings.ToLower(strings.TrimSpace(email)); email != "" {
+				b.ExemptEmails = append(b.ExemptEmails, email)
+			}
+		}
+	}
+	c.BillingCatalogue = or("BILLING_CATALOGUE", "/etc/browserjs/catalogue.yaml")
+	// Without Stripe nobody could ever have a card: enforcing would lock
+	// everyone out.
+	switch mode := get("STRIPE_MODE"); mode {
+	case "":
+		if b.Mode == billing.Enforce {
+			return fmt.Errorf("BILLING=enforce requires STRIPE_MODE")
+		}
+	case "test", "live":
+		b.Payments = mode
+	}
+	c.MetronomeURL = strings.TrimRight(get("METRONOME_URL"), "/")
+	c.MetronomeToken, c.MetronomeWebhookSecret = get("METRONOME_API_TOKEN"), get("METRONOME_WEBHOOK_SECRET")
+	// The value is never put in an error.
+	if b.Mode != billing.Off && c.MetronomeToken == "" {
+		return fmt.Errorf("METRONOME_API_TOKEN is required while BILLING is %s", b.Mode)
+	}
+	c.Billing = b
+	return nil
 }
 
 func positiveDuration(s string) (time.Duration, error) {
