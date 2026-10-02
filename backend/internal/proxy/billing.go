@@ -64,34 +64,14 @@ func refused(w http.ResponseWriter, r *http.Request, err error) bool {
 	return true
 }
 
-// flights is the work in progress on each session: the calls being proxied
-// now (MCP calls and uploads), which a drain waits for, and the streams
-// (VNC viewers, MCP event streams), which it closes.
+// flights is the streams this replica has open to each session (VNC
+// viewers, MCP event streams), which a drain closes. The calls in flight,
+// which a drain waits for, are the Tracker's (Proxy.Idle): it says them on
+// the session, where the replica that drains reads them.
 type flights struct {
 	mu      sync.Mutex
-	calls   map[string]int
 	next    int
 	streams map[string]map[int]context.CancelFunc
-}
-
-// call counts a call in flight until the returned func is called.
-func (f *flights) call(id string) (done func()) {
-	f.mu.Lock()
-	if f.calls == nil {
-		f.calls = map[string]int{}
-	}
-	f.calls[id]++
-	f.mu.Unlock()
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			f.mu.Lock()
-			defer f.mu.Unlock()
-			if f.calls[id]--; f.calls[id] <= 0 {
-				delete(f.calls, id)
-			}
-		})
-	}
 }
 
 // stream returns a context for a stream of a session, which CloseStreams
@@ -120,17 +100,30 @@ func (f *flights) stream(ctx context.Context, id string) (_ context.Context, lea
 	}
 }
 
-// Calls is how many MCP calls and uploads to the session are being proxied
-// now. With CloseStreams it makes the Proxy a billing.InFlight.
-func (p *Proxy) Calls(id string) int {
-	p.flights.mu.Lock()
-	defer p.flights.mu.Unlock()
-	return p.flights.calls[id]
+// sessions is the sessions this replica has a stream open to.
+func (f *flights) sessions() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ids := make([]string, 0, len(f.streams))
+	for id := range f.streams {
+		ids = append(ids, id)
+	}
+	return ids
 }
 
-// CloseStreams ends the session's VNC viewers and MCP event streams, and
-// forgets what is remembered of the session, so that the next request
-// sees it as the cluster has it (draining).
+// Calls is how many MCP calls and uploads to the session this replica is
+// proxying now. With CloseStreams and Replica it makes the Proxy a
+// billing.InFlight.
+func (p *Proxy) Calls(id string) int { return p.Idle.Calls(id) }
+
+// Replica is the name under which this replica says, on a session, that it
+// has calls in flight (sessions.AnnInFlightPrefix): the drain reads the
+// marks of the others.
+func (p *Proxy) Replica() string { return p.Idle.Replica() }
+
+// CloseStreams ends this replica's VNC viewers and MCP event streams of the
+// session, and forgets what is remembered of the session, so that the next
+// request sees it as the cluster has it (draining).
 func (p *Proxy) CloseStreams(id string) {
 	p.flights.mu.Lock()
 	for _, cancel := range p.flights.streams[id] {
@@ -138,4 +131,19 @@ func (p *Proxy) CloseStreams(id string) {
 	}
 	p.flights.mu.Unlock()
 	p.Waker.Invalidate(id)
+}
+
+// seen is told of a session as the cluster has it, each time this replica
+// writes its activity or looks at one it has a stream open to
+// (idle.Tracker). Another replica may have put it to sleep, or marked it
+// draining, since this one last read it: what is remembered of it is then
+// dropped, and the streams of one that is draining are closed here as the
+// draining replica closed its own.
+func (p *Proxy) seen(s sessions.Session) {
+	if s.State != sessions.Running || s.Draining != "" {
+		p.Waker.Invalidate(s.ID)
+	}
+	if p.Billing != nil && p.Billing.Draining(s) != nil {
+		p.CloseStreams(s.ID)
+	}
 }

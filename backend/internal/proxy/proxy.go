@@ -48,7 +48,14 @@ type Proxy struct {
 	Verifier auth.Verifier
 	Authz    authz.Checker
 	Waker    *Waker
-	Idle     *idle.Tracker
+	// Idle writes, on each session, the use this replica makes of it: what
+	// the idle sweep and a billing drain decide from, whichever replica
+	// runs them.
+	Idle *idle.Tracker
+	// TicketKey signs the VNC tickets (TicketKey). Every replica must have
+	// the same one. If unset the Proxy makes its own, and its tickets are
+	// good at this replica only.
+	TicketKey []byte
 	// Billing, if set, is asked before a sleeping session is woken and
 	// refuses new requests to one that is draining (billing.go).
 	Billing Billing
@@ -68,10 +75,12 @@ type Proxy struct {
 	// DefaultMaxFileBytes if unset.
 	MaxFileBytes int64
 
+	now func() time.Time // time.Now if unset
+
 	setup   sync.Once
 	tickets *tickets
 	viewers viewers
-	flights flights // calls and streams in progress, by session (billing.go)
+	flights flights // streams in progress, by session (billing.go)
 	// Pod traffic has its own transports: no environment proxy, a bounded
 	// dial, and a bound on the wait for response headers that suits the route.
 	quick, patient http.RoundTripper
@@ -101,7 +110,16 @@ func (p *Proxy) init() {
 		if p.Billing != nil && p.Waker.Allow == nil {
 			p.Waker.Allow = p.Billing.Start
 		}
-		p.tickets = newTickets(time.Now)
+		if p.now == nil {
+			p.now = time.Now
+		}
+		p.tickets = newTickets(p.TicketKey, p.now)
+		if p.Idle.Seen == nil {
+			p.Idle.Seen = p.seen
+		}
+		if p.Idle.Watched == nil {
+			p.Idle.Watched = p.flights.sessions
+		}
 		p.quick = podTransport(uploadResponseTimeout)
 		p.patient = podTransport(mcpResponseTimeout)
 	})
@@ -422,10 +440,11 @@ func (p *Proxy) mcp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The call holds the session awake until it is over, however long the
-	// pod takes: a tool call may outlast the idle period.
-	done := p.Idle.Open(id)
+	// pod takes: a tool call may outlast the idle period. It is in flight:
+	// a drain waits for it. Both are said on the session before the session
+	// is looked at, so that a replica about to suspend it sees the call.
+	done := p.Idle.Call(r.Context(), id)
 	defer done()
-	defer p.flights.call(id)() // in flight: a drain waits for it
 	s, err := p.awake(r.Context(), id)
 	if err != nil {
 		lookupFailed(w, r, id, err)
@@ -483,14 +502,14 @@ func (p *Proxy) upload(w http.ResponseWriter, r *http.Request) {
 		lookupFailed(w, r, id, err)
 		return
 	}
-	defer p.flights.call(id)()
+	defer p.Idle.Flight(id)() // in flight: a drain waits for it
 	r.Body = http.MaxBytesReader(w, r.Body, p.MaxUploadBytes)
 	if status := p.forward(w, r, s, mcpPort, "/api/artifact-uploads/"+token, p.quick); status/100 == 2 {
 		p.Idle.Touch(id)
 	}
 }
 
-// vncTicket issues a one-time ticket for a session's screen, with the URL
+// vncTicket issues a short-lived ticket for a session's screen, with the URL
 // to open. The screen is on the sessions' host, where the browser's sign-in
 // with the app does not reach; the ticket stands in.
 func (p *Proxy) vncTicket(w http.ResponseWriter, r *http.Request) {
@@ -507,7 +526,7 @@ func (p *Proxy) vncTicket(w http.ResponseWriter, r *http.Request) {
 	if !p.allowed(w, r, u, id) {
 		return
 	}
-	ticket := p.tickets.Issue(id)
+	ticket := p.tickets.Issue(id, sessions.OwnerLabel(u.Subject), u.Admin)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(map[string]string{"ticket": ticket, "url": p.URLs.VNC(id, ticket)})
@@ -540,7 +559,8 @@ func (p *Proxy) vnc(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "this endpoint only speaks websocket", http.StatusUpgradeRequired)
 		return
 	}
-	if !p.tickets.Redeem(r.URL.Query().Get("ticket"), id) {
+	tk, ok := p.tickets.Redeem(r.URL.Query().Get("ticket"), id)
+	if !ok {
 		http.Error(w, "invalid or expired ticket", http.StatusUnauthorized)
 		return
 	}
@@ -548,15 +568,21 @@ func (p *Proxy) vnc(w http.ResponseWriter, r *http.Request) {
 	// shuts down; Shutdown ends it through this context.
 	ctx, leave := p.viewers.join(r.Context())
 	defer leave()
+	// A viewer keeps the session awake, on whichever replica it is open.
+	done := p.Idle.Open(ctx, id)
+	defer done()
 	ctx, left := p.flights.stream(ctx, id) // a drain ends it
 	defer left()
 	r = r.WithContext(ctx)
 
-	done := p.Idle.Open(id) // a viewer keeps the session awake
-	defer done()
 	s, err := p.awake(ctx, id)
 	if err != nil {
 		lookupFailed(w, r, id, err)
+		return
+	}
+	// The ticket is its user's, for their session (or an admin's, for any).
+	if !tk.admin && tk.user != sessions.OwnerLabel(s.Owner) {
+		http.Error(w, "invalid or expired ticket", http.StatusUnauthorized)
 		return
 	}
 	p.forward(w, r, s, vncPort, "/websockify", p.quick)

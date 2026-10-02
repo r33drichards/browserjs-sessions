@@ -58,7 +58,7 @@ func TestPolicyRoutesNeedTheOperatorConfigured(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	on.handler, _ = newHandler(cfg, verifier, store, idle.New(15*time.Minute, time.Now))
+	on.handler, _ = newHandler(cfg, verifier, store, idle.New(store, "test", 15*time.Minute, time.Now))
 
 	rec = on.do("POST", appHost, "/api/sessions", alice, `{"name":"work","policy":{"kind":"rego","source":"package browserjs.policy"}}`)
 	if rec.Code != http.StatusCreated {
@@ -111,7 +111,7 @@ func TestPoliciesWithAPITokens(t *testing.T) {
 		PolicyOperatorURL: operator.URL, OperatorAPIToken: "secret",
 		APIURL: "https://" + apiHost, AllowedEmails: []string{alice, bob},
 	}
-	app, _ := newHandler(cfg, verifier, store, idle.New(15*time.Minute, time.Now))
+	app, _ := newHandler(cfg, verifier, store, idle.New(store, "test", 15*time.Minute, time.Now))
 	tokenStore := tokens.NewStore(dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
 		map[schema.GroupVersionResource]string{tokens.GVR: "APITokenList"}), sessionstest.Namespace)
 	s := &server{t: t, key: base.key, client: client}

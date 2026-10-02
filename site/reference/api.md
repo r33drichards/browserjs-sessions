@@ -61,7 +61,7 @@ that is already awake they change nothing.
 
 | Method and path | Does | Answers |
 | --- | --- | --- |
-| `POST /api/sessions/{id}/vnc-ticket` | A ticket for the live view: 30 seconds, one connection | `200` `{ticket, url}` |
+| `POST /api/sessions/{id}/vnc-ticket` | A ticket for the live view: good for 10 seconds | `200` `{ticket, url}` |
 | `GET /api/sessions/{id}/files` | Lists the Downloads folder. Does not wake the session | `200` `{files: [{name, size, modified}], max_bytes}`. `409` if not running |
 | `GET /api/sessions/{id}/files/{name}` | Downloads a file, as an attachment | `200` |
 | `PUT /api/sessions/{id}/files/{name}` | Uploads a file; the body is the bytes | `2xx` `{name}`. `413` too large. `507` disk full |

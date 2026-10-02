@@ -54,6 +54,12 @@ func byOwner(all []sessions.Session) (owners []string, of map[string][]sessions.
 // card is back) is removed. It reads each account from the cluster as it
 // runs and keeps nothing between runs but what is on the sessions.
 //
+// One replica at a time sweeps (internal/leader), and a session's calls may
+// be on any of them. The replica that sweeps counts its own; the others say
+// theirs on the session (sessions.AnnInFlightPrefix), each before it
+// forwards a call, and the sweep reads those marks. Two replicas sweeping
+// at once would only do the work twice: every step is a conditional write.
+//
 // In meter mode it stops nothing and logs what it would have.
 func (e *Enforcer) Sweep(ctx context.Context, inflight InFlight) error {
 	if e.cfg.Mode == Off {
@@ -94,7 +100,7 @@ func (e *Enforcer) Sweep(ctx context.Context, inflight InFlight) error {
 			if !e.drained(ctx, s, want, inflight) {
 				continue
 			}
-			wg.Go(func() { e.sleep(ctx, s.ID, owner, want) })
+			wg.Go(func() { e.sleep(ctx, s.ID, owner, want, inflight) })
 		}
 	}
 	wg.Wait()
@@ -132,19 +138,42 @@ func (e *Enforcer) drained(ctx context.Context, s sessions.Session, reason strin
 		return true
 	}
 	// From the mark on the proxy refuses new requests; its viewers and
-	// event streams are not work in progress.
+	// event streams are not work in progress. (Those of the other replicas
+	// are closed by them, when they next see the mark.)
 	inflight.CloseStreams(s.ID)
-	if calls := inflight.Calls(s.ID); calls > 0 && now.Sub(since) < e.cfg.DrainTimeout {
-		slog.Info("billing: waiting for calls in flight", "session", s.ID, "calls", calls)
+	s.DrainingSince = since
+	if e.busy(s, inflight) {
+		slog.Info("billing: waiting for calls in flight", "session", s.ID,
+			"calls", inflight.Calls(s.ID), "elsewhere", s.InFlightElsewhere(inflight.Replica(), now))
 		return false
 	}
 	return true
 }
 
+// busy reports whether a draining session, as it was just read, still has
+// to be waited for: this replica or another has a call in flight to it, and
+// BILLING_DRAIN_TIMEOUT has not passed since the mark.
+func (e *Enforcer) busy(s sessions.Session, inflight InFlight) bool {
+	if inflight == nil || s.State == sessions.Starting {
+		return false
+	}
+	now := e.clock.Now()
+	if !s.DrainingSince.IsZero() && now.Sub(s.DrainingSince) >= e.cfg.DrainTimeout {
+		return false
+	}
+	return inflight.Calls(s.ID) > 0 || s.InFlightElsewhere(inflight.Replica(), now)
+}
+
 // sleep snapshots a session and suspends it with the reason. Credit or a
-// card arriving while the snapshot is taken leaves it running.
-func (e *Enforcer) sleep(ctx context.Context, id, owner, reason string) {
-	stillWanted := func() bool {
+// card arriving while the snapshot is taken leaves it running, and so does
+// a call that another replica took in before it saw the mark: that replica
+// said so on the session, which is read again for the write that suspends
+// it. The next sweep waits for the call.
+func (e *Enforcer) sleep(ctx context.Context, id, owner, reason string, inflight InFlight) {
+	stillWanted := func(fresh sessions.Session) bool {
+		if e.busy(fresh, inflight) {
+			return false
+		}
 		st, err := e.standing(ctx, owner)
 		if err != nil {
 			return true

@@ -43,6 +43,17 @@ rules:
     resources: ["leases"]
     resourceNames: ["billing-observer"]
     verbs: ["get"]
+  # The Lease backend-leader: the replicas elect, over it, the one that runs
+  # the periodic passes (the idle sweep, billing's sweep and balance pass,
+  # Stripe's reconciles; backend/internal/leader). RBAC cannot hold a create
+  # to a name, so that verb is a rule of its own.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    resourceNames: ["backend-leader"]
+    verbs: ["get", "update"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -63,8 +74,16 @@ metadata:
   labels:
     app: backend
 spec:
-  # Exactly one: VNC tickets and idle tracking live in the process's memory
-  # (see backend/cmd/server/main.go). Recreate, so there are never two.
+  # The backend holds no state (docs/stateless-backend.md): any number of
+  # replicas, of more than one version, can serve at once, given that they
+  # share API_SIGNING_KEY (the Secret api-tokens, below). One is what is
+  # run here.
+  #
+  # Recreate stays for the rollout that replaces a backend from before that
+  # was true: such a backend keeps its sessions' idle clocks in its own
+  # memory and would put to sleep the sessions in use through the new one.
+  # Once every cluster runs a stateless version, this can be a rolling
+  # update, or a canary.
   replicas: 1
   strategy:
     type: Recreate
@@ -118,10 +137,12 @@ spec:
               value: ""
             - name: ALLOWED_EMAILS
               value: ""
-            # Signs the access tokens API tokens are exchanged for: 32 random
-            # bytes in base64, in a Secret made at deploy. Without the
-            # Secret the backend makes a key at each start, and access
-            # tokens (an hour at most) end with the process.
+            # Signs the access tokens API tokens are exchanged for, and the
+            # tickets that open a session's screen: 32 random bytes in
+            # base64, in a Secret made at deploy. Without the Secret the
+            # backend makes a key at each start: access tokens (an hour at
+            # most) end with the process, and with more than one replica
+            # each refuses what the other signed.
             - name: API_SIGNING_KEY
               valueFrom:
                 secretKeyRef:

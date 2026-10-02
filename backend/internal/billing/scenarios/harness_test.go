@@ -82,6 +82,7 @@ type flights struct {
 }
 
 func (f flights) Calls(id string) int { return f.said.Calls(id) + f.proxy.Calls(id) }
+func (f flights) Replica() string     { return f.proxy.Replica() }
 func (f flights) CloseStreams(id string) {
 	f.said.CloseStreams(id)
 	f.proxy.CloseStreams(id)
@@ -139,7 +140,7 @@ func newWorld(t *testing.T, with func(*billing.Config)) *world {
 	w.proxy = &proxy.Proxy{
 		Verifier: textVerifier{}, Authz: owners,
 		Waker:   &proxy.Waker{Store: w.sessions, Timeout: 5 * time.Second, Poll: 5 * time.Millisecond, RunningTTL: 2 * time.Second},
-		Idle:    idle.New(15*time.Minute, w.clock.Now),
+		Idle:    idle.New(w.sessions, "test", 15*time.Minute, w.clock.Now),
 		URLs:    urls,
 		Billing: w.enforcer,
 		Target:  func(sessions.Session, int) string { return pod.Listener.Addr().String() },

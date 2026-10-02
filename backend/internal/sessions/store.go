@@ -149,9 +149,10 @@ func (s *Store) CreateWithPolicy(ctx context.Context, name, owner string, asked 
 		"apiVersion": SandboxGVR.GroupVersion().String(),
 		"kind":       "Sandbox",
 		"metadata": map[string]any{
-			"name":        id,
-			"labels":      map[string]any{LabelOwner: OwnerLabel(owner)},
-			"annotations": map[string]any{AnnName: name, AnnOwner: owner},
+			"name":   id,
+			"labels": map[string]any{LabelOwner: OwnerLabel(owner)},
+			// Its idle period starts now (activity.go).
+			"annotations": map[string]any{AnnName: name, AnnOwner: owner, AnnLastActive: time.Now().UTC().Format(timeLayout)},
 		},
 		"spec": spec,
 	}}
@@ -233,9 +234,12 @@ func (s *Store) Update(ctx context.Context, id string, name *string, action stri
 	case "":
 	case ActionStop:
 		annotations[AnnStoppedBy] = StoppedByUser
+		annotations[AnnLastActive] = nil
 		patch["spec"] = map[string]any{"operatingMode": "Suspended"}
 	case ActionResume:
 		annotations[AnnStoppedBy] = nil
+		// Its idle period starts now (activity.go).
+		annotations[AnnLastActive] = time.Now().UTC().Format(timeLayout)
 		patch["spec"] = map[string]any{"operatingMode": "Running"}
 	default:
 		return ErrInvalidAction
@@ -310,6 +314,10 @@ func (s *Store) Resume(ctx context.Context, id string) error {
 // then, if there is one. It does nothing to one that is already awake, and
 // returns ErrStateChanged for one its user stopped, including a stop that
 // lands while Wake is in progress.
+//
+// It is safe from any number of replicas at once: the write is conditional
+// on what was read, so one of them resumes the session and the others, on
+// reading again, find it awake and do nothing.
 func (s *Store) Wake(ctx context.Context, id string) error {
 	return s.modify(ctx, id, func(obj *unstructured.Unstructured) (bool, error) {
 		if operatingMode(obj) != "Suspended" {
@@ -319,6 +327,7 @@ func (s *Store) Wake(ctx context.Context, id string) error {
 			return false, ErrStateChanged
 		}
 		setAnnotation(obj, AnnStoppedBy, "")
+		startClock(obj)
 		if err := s.keepOrDropSnapshot(ctx, obj); err != nil {
 			return false, err
 		}

@@ -177,7 +177,7 @@ func (p *Proxy) downloadFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	done := p.Idle.Open(id)
+	done := p.Idle.Open(r.Context(), id)
 	defer done()
 	s, err := p.awake(r.Context(), id)
 	if err != nil {
@@ -208,9 +208,8 @@ func (p *Proxy) uploadFile(w http.ResponseWriter, r *http.Request) {
 		fileError(w, http.StatusRequestEntityTooLarge, "file too large")
 		return
 	}
-	done := p.Idle.Open(id)
+	done := p.Idle.Call(r.Context(), id) // in flight: a drain waits for it
 	defer done()
-	defer p.flights.call(id)()
 	s, err := p.awake(r.Context(), id)
 	if err != nil {
 		lookupFailed(w, r, id, err)
@@ -230,7 +229,7 @@ func (p *Proxy) deleteFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	done := p.Idle.Open(id)
+	done := p.Idle.Open(r.Context(), id)
 	defer done()
 	s, err := p.awake(r.Context(), id)
 	if err != nil {
@@ -276,7 +275,7 @@ func (p *Proxy) copyFiles(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	done := p.Idle.Open(id)
+	done := p.Idle.Open(r.Context(), id)
 	defer done()
 	s, err := p.awake(r.Context(), id)
 	if err != nil {
