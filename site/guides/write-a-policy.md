@@ -64,6 +64,37 @@ allow_tool_call if {
 }
 ```
 
+Programs are decided the same way. A call to run one arrives as the program
+and its arguments, already separate, so a rule can name them. This policy
+allows `git`, with two subcommands, and reading the output:
+
+```txt
+package browserjs.policy
+
+import rego.v1
+
+allow_tool_call if {
+	input.server == "exec"
+	input.tool == "exec"
+	count(object.keys(input.arguments) - {"bin", "args", "timeout", "cwd"}) == 0
+	input.arguments.bin == "git"
+	input.arguments.args[0] in {"status", "log"}
+	input.arguments.timeout <= 120
+}
+
+allow_tool_call if {
+	input.server == "exec"
+	input.tool in {"stream_logs", "search_logs", "kill"}
+}
+```
+
+The third line of the first rule refuses a call with any other field, `env`
+among them: environment variables such as `PATH` change what a program name
+means. Compare `bin` as a whole (`"git"`, not "starts with git"), and deny a
+shell (`bin` of `sh` or `bash`) unless every command is acceptable, since a
+shell's command line cannot be judged by matching text. A policy like this
+one, which does not mention the browser tools, refuses them.
+
 The package name is fixed. It carries the product's earlier name, as a few
 technical identifiers do.
 
