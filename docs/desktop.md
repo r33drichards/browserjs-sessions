@@ -198,6 +198,13 @@ open and `desktop_execute` used once. So the desktop costs about 85 MiB a
 session when nobody uses it, and about 40 MiB more with a terminal, a file
 manager and an editor open.
 
+Since Chromium starts on demand, a session nobody has used the browser in
+is the desktop alone (run 37065126630): the cgroup counted 157 to 165 MiB
+with no Chromium, 401 MiB once `browser_execute` had started it on
+`about:blank`, and 447 MiB with the three programs open as well. The MCP
+server answered `/healthz` 0.6 to 1.1 s after the container started. A warm
+pool sandbox is in the first state: about 240 MiB less each than before.
+
 **The requests and limits do not change.** The browser container requests
 1Gi and is limited to 2Gi. Idle use stays well under the request, so the
 packing arithmetic in `deploy/gke/warmpool.yaml` holds as written: 1280Mi a
