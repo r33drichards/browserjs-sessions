@@ -246,7 +246,9 @@ matching snapshot."
 - CPU features (INSIDE): "restoring a snapshot on a node with missing CPU
   features fails (for example, with the error `OCI runtime restore failed:
   incompatible FeatureSet`)"; Google's advice for production is "specifying a
-  minimum CPU platform". Hence `session_min_cpu_platform` and the single zone.
+  minimum CPU platform". Hence `session_min_cpu_platform`, which applies
+  in every zone of `session_node_zones` (the pool spans the region because
+  us-west1-a alone ran out of n2-standard-4 capacity).
 - After restore: new pod IP and hostname, external connections closed, wall
   clock jumps, memory is streamed back lazily so the first seconds can be slow.
 - No Cloud Storage FUSE sidecar, no TPUs, no MIG GPU sharing.

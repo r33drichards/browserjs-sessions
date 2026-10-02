@@ -10,8 +10,8 @@ metadata:
 automountServiceAccountToken: false
 ---
 # Disks for sessions and for Pomerium: balanced Persistent Disks, created in
-# the zone of the node the pod is scheduled to (the cluster has one zone
-# today; with more, WaitForFirstConsumer is what keeps disk and pod together).
+# the zone of the node the pod is scheduled to. Session nodes can be in any
+# zone of the region; WaitForFirstConsumer is what keeps disk and pod together.
 # A session's disk is deleted with its Sandbox.
 apiVersion: storage.k8s.io/v1
 kind: StorageClass

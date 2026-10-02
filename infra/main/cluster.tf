@@ -221,7 +221,7 @@ resource "google_container_node_pool" "sessions" {
   cluster  = google_container_cluster.this.name
   location = google_container_cluster.this.location
 
-  node_locations = local.node_zones
+  node_locations = var.session_node_zones != null ? var.session_node_zones : local.node_zones
 
   initial_node_count = 0
 
@@ -283,5 +283,76 @@ resource "google_container_node_pool" "sessions" {
   }
 
   # GKE Sandbox needs a node pool without gVisor to exist first.
+  depends_on = [google_container_node_pool.system]
+}
+
+# --- Fallback session pools: other machine types, same shape --------------------------
+# Session pods select only on sandbox.gke.io/runtime=gvisor, so the autoscaler
+# may grow whichever of these pools Compute Engine has capacity for.
+
+resource "google_container_node_pool" "sessions_fallback" {
+  for_each = var.session_fallback_machine_types
+
+  name     = "sessions-${each.key}"
+  cluster  = google_container_cluster.this.name
+  location = google_container_cluster.this.location
+
+  node_locations = var.session_node_zones != null ? var.session_node_zones : local.node_zones
+
+  initial_node_count = 0
+
+  autoscaling {
+    min_node_count = 0
+    max_node_count = var.session_max_nodes
+    # ANY lets the autoscaler take Spot capacity wherever there is some.
+    location_policy = var.session_spot ? "ANY" : "BALANCED"
+  }
+
+  management {
+    auto_repair  = true
+    auto_upgrade = true
+  }
+
+  upgrade_settings {
+    max_surge       = 1
+    max_unavailable = 0
+  }
+
+  node_config {
+    machine_type     = each.key
+    min_cpu_platform = each.value
+    spot             = var.session_spot
+
+    sandbox_config {
+      type = "GVISOR"
+    }
+    image_type = "COS_CONTAINERD"
+
+    disk_type    = "pd-balanced"
+    disk_size_gb = var.session_disk_size_gb
+
+    service_account = google_service_account.nodes.email
+    oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]
+
+    workload_metadata_config {
+      mode = "GKE_METADATA"
+    }
+
+    shielded_instance_config {
+      enable_secure_boot          = true
+      enable_integrity_monitoring = true
+    }
+
+    labels = {
+      "browserjs.com/pool" = "sessions-${each.key}"
+    }
+
+    resource_labels = var.labels
+  }
+
+  lifecycle {
+    ignore_changes = [initial_node_count]
+  }
+
   depends_on = [google_container_node_pool.system]
 }
