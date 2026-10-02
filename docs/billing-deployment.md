@@ -265,14 +265,11 @@ This is the one procedure here that is not runnable from a workflow.
 ## Images
 
 - **The billing operator** is the sixth image of `.github/workflows/images.yml`
-  and of `hack/pin-images.sh`. Until `images/billing-operator/Dockerfile`
-  exists the workflow skips it with a notice. It is built with
-  `images/billing-operator` as the context, unless that directory has a
-  `Dockerfile.dockerignore`, in which case it is built from the repository
-  root with that file as `-f` (the policy operator's layout);
-  `hack/local-up.sh` decides the same way. In `deploy/gke` it has the
-  placeholder digest, which `hack/pin-images.sh --check` accepts only while
-  billing is off there.
+  and of `hack/pin-images.sh`, built from the repository root with
+  `images/billing-operator/Dockerfile` (the policy operator's layout), and
+  rebuilt when `images/billing-operator/` changes. In `deploy/gke` it has
+  the placeholder digest, which `hack/pin-images.sh --check` accepts only
+  while billing is off there.
 - **The export** runs `alpine/k8s:1.36.5` (kubectl, curl, jq, bash), named
   in `deploy/gke/billing-export.yaml` with tag and digest, read from Docker
   Hub's API on 2026-10-02 (an index with `linux/amd64` and `linux/arm64`).
@@ -281,8 +278,7 @@ This is the one procedure here that is not runnable from a workflow.
 ## Local
 
 `deploy/local` is `off`. `hack/local-up.sh` builds and loads
-`browserjs/billing-operator:dev` when `images/billing-operator/Dockerfile`
-is in the tree. To meter locally: `hack/billing-stage.sh local meter`
+`browserjs/billing-operator:dev`. To meter locally: `hack/billing-stage.sh local meter`
 (not committed) and the Secret `metronome` of
 `deploy/base/secrets.example.yaml` with a developer's own sandbox token.
 With Stripe: the Secret `stripe` and the ConfigMap `billing-mode` of the

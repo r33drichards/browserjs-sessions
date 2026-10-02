@@ -56,24 +56,14 @@ if [ -f images/policy-operator/Dockerfile ]; then
   docker build --provenance=false -t browserjs/policy-operator:dev -f images/policy-operator/Dockerfile .
 fi
 
-# The billing operator, likewise once its source is in the tree. From its own
-# directory, or from the repository root if it has a Dockerfile.dockerignore
-# (as .github/workflows/images.yml decides).
-have_billing=""
-if [ -f images/billing-operator/Dockerfile ]; then
-  have_billing=1
-  if [ -f images/billing-operator/Dockerfile.dockerignore ]; then
-    docker build --provenance=false -t browserjs/billing-operator:dev -f images/billing-operator/Dockerfile .
-  else
-    docker build --provenance=false -t browserjs/billing-operator:dev images/billing-operator
-  fi
-fi
+# The billing operator, from the repository root too.
+docker build --provenance=false -t browserjs/billing-operator:dev -f images/billing-operator/Dockerfile .
 
 # kind does not recognise an image it already has when Docker uses the
 # containerd image store, and would copy all of them (4 GB) every time. What
 # was loaded is noted on the node itself, so the note goes with the cluster.
 node="$CLUSTER-control-plane"
-for image in backend mcp-js browser ${have_operator:+policy-operator} ${have_billing:+billing-operator}; do
+for image in backend mcp-js browser ${have_operator:+policy-operator} billing-operator; do
   id=$(image_id "browserjs/$image:dev")
   if [ "$(docker exec "$node" cat "/kind/loaded-$image" 2>/dev/null)" = "$id" ]; then
     echo "browserjs/$image:dev is already on the node"

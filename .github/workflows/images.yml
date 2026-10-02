@@ -101,7 +101,8 @@ jobs:
           # layer that changes whenever its inputs do: caching it would cost
           # minutes and gigabytes of cache per run and never be hit.
           # The policy operator is built from the repository root, because it
-          # copies files of docs/contracts/policy; its Dockerfile is named
+          # copies files of docs/contracts/policy (and the billing operator
+          # likewise, for the same layout); its Dockerfile is named
           # ("file"), and what the build may see is its own
           # images/policy-operator/Dockerfile.dockerignore.
           table='[
@@ -110,15 +111,8 @@ jobs:
             {"name":"browser","context":"images/browser","timeout":120,"cache":false,"free_disk":true},
             {"name":"site",   "context":"site",          "timeout":15, "cache":true, "free_disk":false},
             {"name":"policy-operator","context":".","file":"images/policy-operator/Dockerfile","timeout":15,"cache":true,"free_disk":false},
-            {"name":"billing-operator","context":"images/billing-operator","timeout":15,"cache":true,"free_disk":false}
+            {"name":"billing-operator","context":".","file":"images/billing-operator/Dockerfile","timeout":15,"cache":true,"free_disk":false}
           ]'
-          # The billing operator is built from its own directory, unless it
-          # has a Dockerfile.dockerignore beside its Dockerfile: that file
-          # only means something to a build from the repository root, which
-          # is then what it gets, as the policy operator does.
-          if [ -f images/billing-operator/Dockerfile.dockerignore ]; then
-            table="$(jq -c 'map(if .name == "billing-operator" then .context = "." | .file = "images/billing-operator/Dockerfile" else . end)' <<<"$table")"
-          fi
 
           changed_files() {
             case "$EVENT" in
@@ -169,11 +163,6 @@ jobs:
           for name in "${wanted[@]}"; do
             if [ "$name" = "backend" ] && [ ! -f Dockerfile ]; then
               echo "::notice::backend skipped: there is no Dockerfile at the repository root yet"
-              continue
-            fi
-            # Likewise the billing operator, whose source is another change.
-            if [ "$name" = "billing-operator" ] && [ ! -f images/billing-operator/Dockerfile ]; then
-              echo "::notice::billing-operator skipped: there is no images/billing-operator/Dockerfile yet"
               continue
             fi
             build+=("$name")
