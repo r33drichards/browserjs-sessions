@@ -184,3 +184,13 @@ routes:
     to: http://site
     allow_public_unauthenticated_access: true
     pass_identity_headers: false
+
+  # www: a permanent redirect to the site, same path and query. Pomerium
+  # answers it itself; nothing in the cluster is asked, and nobody signs in.
+  - name: www
+    from: https://www.computeruse.site
+    redirect:
+      host_redirect: computeruse.site
+      https_redirect: true
+      response_code: 301
+    allow_public_unauthenticated_access: true

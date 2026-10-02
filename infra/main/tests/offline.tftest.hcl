@@ -189,6 +189,11 @@ run "previous_domain_keeps_its_addresses" {
   }
 
   assert {
+    condition     = google_dns_record_set.www[0].name == "www.computeruse.site." && google_dns_record_set.www[0].managed_zone == "computeruse-site" && google_dns_record_set.www[0].type == "A"
+    error_message = "www is an A record in the served domain's zone."
+  }
+
+  assert {
     condition     = length(google_dns_managed_zone.this) == 1 && google_dns_managed_zone.this[0].dns_name == "browserjs.com." && google_dns_managed_zone.this[0].name == "browserjs-com"
     error_message = "The previous domain's zone is google_dns_managed_zone.this[0], named browserjs-com."
   }
@@ -349,7 +354,7 @@ run "federated_tokens_and_regional_cluster" {
   }
 
   assert {
-    condition     = length(google_dns_managed_zone.this) == 0 && length(google_dns_record_set.public) == 0 && length(google_dns_managed_zone.domains) == 0 && length(google_dns_record_set.domains) == 0 && length(google_dns_record_set.site) == 0 && output.dns_name_servers == null
+    condition     = length(google_dns_managed_zone.this) == 0 && length(google_dns_record_set.public) == 0 && length(google_dns_managed_zone.domains) == 0 && length(google_dns_record_set.domains) == 0 && length(google_dns_record_set.site) == 0 && length(google_dns_record_set.www) == 0 && output.dns_name_servers == null
     error_message = "create_dns_zone = false must create no DNS resources."
   }
 

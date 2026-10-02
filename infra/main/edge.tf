@@ -163,6 +163,18 @@ resource "google_dns_record_set" "site" {
   rrdatas      = [local.edge_ip]
 }
 
+# www.<domain>: Pomerium answers it with a redirect to the domain itself
+# (the "www" route of deploy/gke/pomerium-config.yaml).
+resource "google_dns_record_set" "www" {
+  count = var.create_dns_zone ? 1 : 0
+
+  managed_zone = local.zones[var.domain].name
+  name         = "www.${var.domain}."
+  type         = "A"
+  ttl          = var.dns_ttl
+  rrdatas      = [local.edge_ip]
+}
+
 # --- pomerium_nlb: cert-manager issues the certificate in the cluster ------------------
 
 # A wildcard certificate can only be proven by DNS-01: cert-manager writes a
