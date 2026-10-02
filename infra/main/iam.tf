@@ -54,18 +54,9 @@ resource "google_artifact_registry_repository_iam_member" "images_push" {
 # Keyless: a workflow of this repository, running on this one ref, may act as
 # the service account. The Workload Identity pool and its provider are made
 # by infra/bootstrap/bootstrap.sh and are not in this state; the provider
-# maps attribute.repo_ref to "<owner>/<repo>@<ref>". Pull requests run on
+# maps attribute.repository_id_ref to "<repository id>@<ref>". The ID, not
+# the name: a rename or a transfer keeps it. Pull requests run on
 # refs/pull/…, so they never match.
-resource "google_service_account_iam_member" "images_push_github" {
-  service_account_id = google_service_account.images_push.name
-  role               = "roles/iam.workloadIdentityUser"
-  member             = "principalSet://iam.googleapis.com/projects/${local.project_number}/locations/global/workloadIdentityPools/${var.github_wif_pool_id}/attribute.repo_ref/${var.github_repository}@${var.images_push_ref}"
-}
-
-# The same grant by the repository's numeric ID, which a rename or a transfer
-# does not change: the provider maps attribute.repository_id_ref to
-# "<repository id>@<ref>". Both grants exist while the repository is renamed;
-# the one by name above is removed afterwards.
 resource "google_service_account_iam_member" "images_push_github_id" {
   service_account_id = google_service_account.images_push.name
   role               = "roles/iam.workloadIdentityUser"
@@ -95,13 +86,6 @@ resource "google_project_iam_member" "deployer_cluster" {
   member  = google_service_account.deployer.member
 }
 
-resource "google_service_account_iam_member" "deployer_github" {
-  service_account_id = google_service_account.deployer.name
-  role               = "roles/iam.workloadIdentityUser"
-  member             = "principalSet://iam.googleapis.com/projects/${local.project_number}/locations/global/workloadIdentityPools/${var.github_wif_pool_id}/attribute.repo_ref/${var.github_repository}@${var.deploy_ref}"
-}
-
-# By the repository's numeric ID as well, as for images-push above.
 resource "google_service_account_iam_member" "deployer_github_id" {
   service_account_id = google_service_account.deployer.name
   role               = "roles/iam.workloadIdentityUser"

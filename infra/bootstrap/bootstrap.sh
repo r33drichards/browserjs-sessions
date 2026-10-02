@@ -18,7 +18,7 @@
 set -euo pipefail
 
 PROJECT_ID="${PROJECT_ID:-browserjs-sessions}"
-REPO="${REPO:-r33drichards/browserjs-sessions}"
+REPO="${REPO:-r33drichards/computer-use}"
 REPO_ID="${REPO_ID:-$(gh api "repos/$REPO" -q .id 2>/dev/null ||
   curl -fsS "https://api.github.com/repos/$REPO" 2>/dev/null | sed -n 's/^  "id": \([0-9]*\),$/\1/p' | head -n 1 || true)}"
 case "$REPO_ID" in
@@ -61,9 +61,8 @@ gcloud iam workload-identity-pools describe github --location=global >/dev/null 
   retry gcloud iam workload-identity-pools create github --location=global --display-name="GitHub Actions"
 # Only tokens of this one repository are accepted at all (the condition), and
 # what a service account is granted to is the repository ID, or the ID and the
-# ref. attribute.repository and attribute.repo_ref (by name) are mapped for
-# the audit log and for grants made before the ID was used.
-MAPPING="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repo_ref=assertion.repository+'@'+assertion.ref,attribute.repository_id=assertion.repository_id,attribute.repository_id_ref=assertion.repository_id+'@'+assertion.ref"
+# ref. attribute.repository (the name) is mapped for the audit log only.
+MAPPING="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repository_id=assertion.repository_id,attribute.repository_id_ref=assertion.repository_id+'@'+assertion.ref"
 CONDITION="assertion.repository_id=='$REPO_ID'"
 if gcloud iam workload-identity-pools providers describe github --location=global \
   --workload-identity-pool=github >/dev/null 2>&1; then

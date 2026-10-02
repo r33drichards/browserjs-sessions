@@ -286,7 +286,7 @@ before deploying.
 2. Open the pull request for this branch. `infra plan` should show: three
    resources to add (`google_service_account.deployer`,
    `google_project_iam_member.deployer_cluster`,
-   `google_service_account_iam_member.deployer_github`), one output, and
+   `google_service_account_iam_member.deployer_github_id`), one output, and
    `google_container_cluster.this` updated in place (`min_master_version`).
    Anything else, stop.
 3. Merge. `infra apply` starts by itself on `main` (a merge that changes

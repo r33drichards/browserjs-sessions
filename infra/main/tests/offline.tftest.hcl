@@ -146,23 +146,13 @@ run "defaults_pomerium_nlb" {
   }
 
   assert {
-    condition     = google_service_account_iam_member.images_push_github.member == "principalSet://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/github/attribute.repo_ref/r33drichards/browserjs-sessions@refs/heads/main"
-    error_message = "Image pushes must be limited to the main branch of the repository, through the bootstrap's pool."
-  }
-
-  assert {
     condition     = google_service_account_iam_member.images_push_github_id.member == "principalSet://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/github/attribute.repository_id_ref/424242@refs/heads/main"
     error_message = "Image pushes must be limited to the main branch of the repository with this ID, through the bootstrap's pool."
   }
 
   assert {
-    condition     = google_service_account_iam_member.images_push_github.role == "roles/iam.workloadIdentityUser" && google_artifact_registry_repository_iam_member.images_push.role == "roles/artifactregistry.writer"
+    condition     = google_service_account_iam_member.images_push_github_id.role == "roles/iam.workloadIdentityUser" && google_artifact_registry_repository_iam_member.images_push.role == "roles/artifactregistry.writer"
     error_message = "images-push may be impersonated and may write to the image repository; nothing else."
-  }
-
-  assert {
-    condition     = google_service_account_iam_member.deployer_github.member == "principalSet://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/github/attribute.repo_ref/r33drichards/browserjs-sessions@refs/heads/main"
-    error_message = "Deploys must be limited to the main branch of the repository, through the bootstrap's pool."
   }
 
   assert {
@@ -171,7 +161,7 @@ run "defaults_pomerium_nlb" {
   }
 
   assert {
-    condition     = google_service_account_iam_member.deployer_github.role == "roles/iam.workloadIdentityUser" && google_project_iam_member.deployer_cluster.role == "roles/container.admin"
+    condition     = google_service_account_iam_member.deployer_github_id.role == "roles/iam.workloadIdentityUser" && google_project_iam_member.deployer_cluster.role == "roles/container.admin"
     error_message = "deployer may be impersonated and may administer Kubernetes Engine; nothing else."
   }
 
