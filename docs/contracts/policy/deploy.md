@@ -122,7 +122,8 @@ GKE blueprint in step; it must accept this one difference, as it accepts the
 one in `MCP_V8_PUBLIC_URL`.
 
 A session is **policy-capable** exactly when its Sandbox's mcp-js container
-has an `MCP_V8_POLICIES_JSON` env var that contains `/browserjs/decision/`.
+has an `MCP_V8_POLICIES_JSON` env var that contains `browserjs/decision/`
+(no leading slash: in the value above it follows a quote).
 The backend uses that to tell sessions that predate the feature
 (`unsupported`).
 
