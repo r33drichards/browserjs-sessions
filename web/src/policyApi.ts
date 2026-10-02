@@ -2,7 +2,7 @@
 // has them. Kept apart from api.ts: a deployment without the feature never
 // answers these, and the pages that use them must then show nothing.
 import type { Session } from "./api"
-import { ApiError, SignedOutError, isSessionId } from "./api"
+import { ApiError, SignedOutError, isSessionId, withRefusal } from "./api"
 
 export type PolicyKind = "json" | "rego"
 export type PolicyState = "ready" | "loading" | "invalid" | "unsupported"
@@ -142,12 +142,15 @@ export function createPolicyApi(fetchImpl: Fetch = (input, init) => fetch(input,
       try {
         detail = (await res.json()) ?? {}
       } catch {}
-      throw new PolicyApiError(
-        res.status,
-        detail.error ?? `${res.status} ${res.statusText}`,
-        Array.isArray(detail.errors) ? detail.errors : [],
-        Array.isArray(detail.warnings) ? detail.warnings : [],
-        detail.managed_url,
+      throw withRefusal(
+        new PolicyApiError(
+          res.status,
+          detail.error ?? `${res.status} ${res.statusText}`,
+          Array.isArray(detail.errors) ? detail.errors : [],
+          Array.isArray(detail.warnings) ? detail.warnings : [],
+          detail.managed_url,
+        ),
+        detail,
       )
     }
     return res

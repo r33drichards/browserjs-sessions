@@ -3,6 +3,7 @@ import Flashbar from "@cloudscape-design/components/flashbar"
 import { useEffect, useState } from "react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import { useMe } from "./auth/MeProvider"
+import { BillingBanners, BillingNav } from "./billing/BillingChrome"
 import { tokensAvailable } from "./policyApi"
 
 export { api } from "./api"
@@ -10,7 +11,7 @@ export { api } from "./api"
 declare global {
   interface Window {
     // Served by the backend at /config.js, so one build works in every environment.
-    __BROWSERJS_CFG__?: { signOutUrl?: string }
+    __BROWSERJS_CFG__?: { signOutUrl?: string; siteUrl?: string; supportEmail?: string }
   }
 }
 
@@ -63,6 +64,7 @@ export function ShellHeader() {
         <Link to="/">Computer Use sessions</Link>
       </h1>
       <span>
+        <BillingNav />
         {tokens && (
           <>
             <Link to="/tokens">API tokens</Link> ·{" "}
@@ -78,6 +80,7 @@ export function ShellBody({ children, breadcrumbs }: ShellProps) {
   return (
     <>
       {breadcrumbs && <Breadcrumbs items={[ROOT_CRUMB, ...breadcrumbs]} />}
+      <BillingBanners />
       <PageFlash />
       {children}
     </>

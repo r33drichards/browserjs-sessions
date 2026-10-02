@@ -9,6 +9,8 @@
 // the policy is one of the presets, and a placeholder otherwise. A Rego
 // policy is "valid" when it has the package and an allow_tool_call rule.
 
+import { createBillingMock } from "./billing"
+
 export interface MockRequest {
   method: string
   path: string // with the query, e.g. /api/sessions?all=1
@@ -59,6 +61,9 @@ interface StoredSession {
   created: string
   policy?: StoredPolicy // undefined with `unsupported`: a session from before policies
   unsupported?: boolean
+  stoppedBy?: string
+  draining?: string
+  deleteAfter?: string
 }
 
 export interface Preset extends Source {
@@ -74,6 +79,8 @@ export interface MockOptions {
   policies?: boolean // false: a backend with the feature off (default true)
   tokens?: boolean // false: a backend without /tokens (default true)
   seed?: boolean // sessions in every policy state (default true)
+  billing?: string // a scenario of mock/billing.ts; absent or "off": a backend with billing off
+  checkoutPolls?: number
   now?: () => Date
 }
 
@@ -242,6 +249,7 @@ export function createMockBackend(options: MockOptions) {
     created: s.created,
     mcp_url: `https://sessions.example.com/${s.id}/mcp`,
     ...(policies ? { policy: summary(s) } : {}),
+    ...billing.view(s),
   })
 
   const policyView = (s: StoredSession) => {
@@ -267,7 +275,9 @@ export function createMockBackend(options: MockOptions) {
     return s
   }
 
-  if (seed) {
+  const seedSessions = () => {
+    sessions.clear()
+    if (!seed) return
     const [unrestricted, ...rest] = presets
     const pick = (id: string) => presets.find(p => p.id === id) ?? rest[0] ?? unrestricted
     addSession("research", store(pick("one-site"), { mode: "editor" }, "ui"))
@@ -286,6 +296,14 @@ export function createMockBackend(options: MockOptions) {
     broken.policy!.errors = [{ row: 4, col: 21, code: "rego_compile_error", message: "the policy no longer compiles under the current capabilities" }]
     addSession("from-before", undefined, { unsupported: true, state: "asleep" })
   }
+  const billing = createBillingMock({
+    scenario: options.billing ?? "off",
+    email: ME.email,
+    now,
+    sessions,
+    reseed: seedSessions,
+    checkoutPolls: options.checkoutPolls,
+  })
 
   function handle(req: MockRequest): MockResponse {
     const [path, query = ""] = req.path.split("?")
@@ -301,7 +319,11 @@ export function createMockBackend(options: MockOptions) {
       void query
       return json(200, [...sessions.values()].map(sessionView))
     }
+    if (parts[1] === "billing" || parts[1] === "account") return billing.handle(method, parts, query, body) ?? notRouted()
+
     if (route === "POST /sessions") {
+      const refused = billing.refuse("create")
+      if (refused) return refused
       if (sessions.size >= 12) return error(409, "session limit reached")
       let policy: StoredPolicy | undefined
       if (policies) {
@@ -331,7 +353,11 @@ export function createMockBackend(options: MockOptions) {
         if (method === "PATCH") {
           if (typeof body.name === "string") s.name = body.name
           if (body.action === "stop") s.state = "stopped"
-          if (body.action === "resume") s.state = "running"
+          if (body.action === "resume") {
+            const refused = billing.refuse("resume")
+            if (refused) return refused
+            s.state = "running"
+          }
           return json(200, sessionView(s))
         }
         if (method === "DELETE") {
@@ -433,7 +459,7 @@ export function createMockBackend(options: MockOptions) {
     return new Response(text, { status: res.status, headers: { "Content-Type": "application/json", ...res.headers } })
   }
 
-  return { handle, fetch, sessions }
+  return { handle, fetch, sessions, billing }
 }
 
 export type MockBackend = ReturnType<typeof createMockBackend>
