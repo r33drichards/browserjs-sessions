@@ -189,10 +189,15 @@ func newHandler(cfg config.Config, verifier auth.Verifier, store *sessions.Store
 // newHandlerWith is newHandler with metering and billing (nil for none).
 func newHandlerWith(cfg config.Config, verifier auth.Verifier, store *sessions.Store, tracker *idle.Tracker, bill *billingParts) (http.Handler, *proxy.Proxy) {
 	owners := authz.NewOwners(store, ownerTTL)
+	// Nil, and so no policy routes and no gate, unless the store has
+	// policies enabled.
+	policies := policy.New(store, policy.NewOperator(cfg.PolicyOperatorURL, cfg.OperatorAPIToken))
 	px := &proxy.Proxy{
 		Verifier: verifier,
 		Authz:    owners,
-		Waker: &proxy.Waker{Store: store, Timeout: cfg.ReadyTimeout, RestoreTimeout: cfg.RestoreTimeout,
+		// A session's pod is not sent anything before the session's first
+		// policy is in force.
+		Waker: &proxy.Waker{Store: policy.Gate(store, policies), Timeout: cfg.ReadyTimeout, RestoreTimeout: cfg.RestoreTimeout,
 			Poll: time.Second, RunningTTL: 2 * time.Second},
 		Idle:         tracker,
 		URLs:         cfg.SessionURLs,
@@ -202,8 +207,7 @@ func newHandlerWith(cfg config.Config, verifier auth.Verifier, store *sessions.S
 
 	apiMux := http.NewServeMux()
 	sessionAPI := api.New(store, owners, cfg.SessionURLs, cfg.MaxSessionsPerUser)
-	// Nil, and so no policy routes, unless the store has policies enabled.
-	sessionAPI.EnablePolicies(policy.New(store, policy.NewOperator(cfg.PolicyOperatorURL, cfg.OperatorAPIToken)))
+	sessionAPI.EnablePolicies(policies)
 	bill.enable(sessionAPI, px, apiMux)
 	sessionAPI.Register(apiMux)
 	px.RegisterApp(apiMux)
