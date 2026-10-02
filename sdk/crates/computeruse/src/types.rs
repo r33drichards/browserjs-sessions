@@ -134,8 +134,12 @@ pub struct SessionInfo {
     /// Absent where policies are off.
     #[serde(default)]
     pub policy: Option<PolicySummary>,
-    /// Why an asleep or stopped session is so (`user`, `idle`, `credit`,
-    /// `payment-method`, `blocked`). Only where billing is on.
+    /// True when a suspended session holds a snapshot of its running
+    /// desktop, which a wake restores. Absent otherwise.
+    #[serde(default, rename = "stateSaved")]
+    pub state_saved: Option<bool>,
+    /// Why an asleep or stopped session is so (`user`, `sleep`, `idle`,
+    /// `credit`, `payment-method`, `blocked`). Only where billing is on.
     #[serde(default, rename = "stoppedBy")]
     pub stopped_by: Option<String>,
     /// The same reasons, while it finishes its calls before such a sleep.

@@ -479,13 +479,12 @@ mod sessions {
     }
 
     #[tokio::test]
-    async fn renames_stops_resumes_sleeps_and_wakes_with_a_patch() {
+    async fn renames_stops_and_resumes_with_a_patch() {
         let fake = Fake::api(|request| {
             let body = request.json();
             let state = match body["action"].as_str() {
                 Some("stop") => "stopping",
-                Some("sleep") => "stopping",
-                Some("resume") | Some("wake") => "starting",
+                Some("resume") => "starting",
                 _ => "running",
             };
             Reply::json(
@@ -505,8 +504,6 @@ mod sessions {
             session.resume().await.unwrap().state,
             SessionState::Starting
         );
-        assert_eq!(session.sleep().await.unwrap().state, SessionState::Stopping);
-        assert_eq!(session.wake().await.unwrap().state, SessionState::Starting);
         assert_eq!(session.last_info().unwrap().state, SessionState::Starting);
 
         let patches: Vec<Value> = fake
@@ -520,11 +517,104 @@ mod sessions {
             [
                 json!({"name": "renamed"}),
                 json!({"action": "stop"}),
-                json!({"action": "resume"}),
-                json!({"action": "sleep"}),
-                json!({"action": "wake"})
+                json!({"action": "resume"})
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn sleeps_and_wakes_with_their_routes() {
+        let fake = Fake::api(|request| {
+            if request.path.ends_with("/sleep") {
+                let mut session = session_json(ID, "a", "asleep");
+                session["stateSaved"] = json!(true);
+                session["stoppedBy"] = json!("sleep");
+                return Reply::json(200, session);
+            }
+            Reply::json(200, session_json(ID, "a", "starting"))
+        })
+        .await;
+        let session = client(&fake).session(ID.into()).unwrap();
+
+        let asleep = session.sleep().await.unwrap();
+        assert_eq!(asleep.state, SessionState::Asleep);
+        assert_eq!(asleep.state_saved, Some(true));
+        assert_eq!(asleep.stopped_by.as_deref(), Some("sleep"));
+        assert_eq!(session.last_info().unwrap().state, SessionState::Asleep);
+
+        let waking = session.wake().await.unwrap();
+        assert_eq!(waking.state, SessionState::Starting);
+        assert_eq!(waking.state_saved, None);
+
+        assert_eq!(
+            fake.calls(),
+            [
+                format!("POST /v1/sessions/{ID}/sleep"),
+                format!("POST /v1/sessions/{ID}/wake")
+            ]
+        );
+        assert!(fake
+            .requests()
+            .iter()
+            .all(|r| r.path == "/oauth/token" || r.body.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn a_session_that_is_not_running_cannot_be_put_to_sleep() {
+        let fake = Fake::api(|_| {
+            Reply::json(
+                409,
+                json!({"error": "session is still starting; put it to sleep once it is running"}),
+            )
+        })
+        .await;
+        let error = client(&fake)
+            .session(ID.into())
+            .unwrap()
+            .sleep()
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, ComputerUseError::Conflict { ref message, .. } if message.contains("still starting")),
+            "{error:?}"
+        );
+        assert_eq!(fake.calls().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_sleep_is_allowed_longer_than_the_clients_timeout() {
+        // Answers after 300 ms: the snapshot being taken.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let slow = tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut request = [0u8; 2048];
+                let _ = socket.read(&mut request).await;
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                let body = session_json(ID, "a", "asleep").to_string();
+                let answer = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(answer.as_bytes()).await;
+            }
+        });
+        let client = Client::builder()
+            .api_token(TOKEN)
+            .base_url(url)
+            .exchange_token(false)
+            .timeout(Duration::from_millis(100))
+            .max_retries(0)
+            .build()
+            .unwrap();
+        let session = client.session(ID.into()).unwrap();
+        assert!(matches!(
+            session.refresh().await,
+            Err(ComputerUseError::Timeout { .. })
+        ));
+        assert_eq!(session.sleep().await.unwrap().state, SessionState::Asleep);
+        slow.abort();
     }
 
     #[tokio::test]

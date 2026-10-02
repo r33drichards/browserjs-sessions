@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"testing"
 
@@ -64,8 +63,8 @@ func newFake(t *testing.T) *fake {
 			var in struct{ Name string }
 			_ = json.Unmarshal(raw, &in)
 			answer(w, 201, session(in.Name, "starting"))
-		case "PATCH /v1/sessions/s-abcde":
-			answer(w, 200, session("smoke", "stopping"))
+		case "POST /v1/sessions/s-abcde/sleep":
+			answer(w, 200, session("smoke", "asleep"))
 		case "POST /s-abcde/mcp":
 			var message struct {
 				ID     int    `json:"id"`
@@ -141,7 +140,7 @@ func TestCreateRunJsSleep(t *testing.T) {
 	}
 
 	info, err := session.Sleep()
-	if err != nil || info.State != computeruse.SessionStateStopping {
+	if err != nil || info.State != computeruse.SessionStateAsleep {
 		t.Fatalf("sleep: %+v, %v", info, err)
 	}
 
@@ -155,9 +154,9 @@ func TestCreateRunJsSleep(t *testing.T) {
 		if c.authorization != "Bearer access-1" {
 			t.Fatalf("%s %s carried %q", c.method, c.path, c.authorization)
 		}
-		if c.method == "PATCH" && strings.TrimSpace(c.body) != `{"action":"sleep"}` {
-			t.Fatalf("sleep sent %s", c.body)
-		}
+	}
+	if last := f.calls[len(f.calls)-1]; last.method != "POST" || last.path != "/v1/sessions/s-abcde/sleep" {
+		t.Fatalf("sleep was %s %s", last.method, last.path)
 	}
 }
 

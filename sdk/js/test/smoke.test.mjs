@@ -48,7 +48,7 @@ before(async () => {
     if (request.headers.authorization !== "Bearer access-1") return answer(401, { error: "invalid token" });
     if (route === "GET /v1/me") return answer(200, { email: "you@example.com", name: "You", admin: false });
     if (route === "POST /v1/sessions") return answer(201, session(JSON.parse(body).name ?? "brave-otter", "starting"));
-    if (route === "PATCH /v1/sessions/s-abcde") return answer(200, session("smoke", "stopping"));
+    if (route === "POST /v1/sessions/s-abcde/sleep") return answer(200, session("smoke", "asleep"));
     if (route === "POST /s-abcde/mcp") {
       const message = JSON.parse(body);
       if (message.method === "notifications/initialized") return answer(202, "");
@@ -84,13 +84,13 @@ test("create a session, run JavaScript in it, sleep it", async () => {
   assert.equal(result.error, undefined);
 
   const info = await created.sleep();
-  assert.equal(info.state, SessionState.Stopping);
+  assert.equal(info.state, SessionState.Asleep);
 
   // The API token went to the token endpoint only.
   assert.equal(seen[0].path, "/oauth/token");
   for (const call of seen.slice(1)) assert.equal(call.authorization, "Bearer access-1");
-  const patch = seen.find((call) => call.method === "PATCH");
-  assert.deepEqual(JSON.parse(patch.body), { action: "sleep" });
+  const last = seen[seen.length - 1];
+  assert.equal(`${last.method} ${last.path}`, "POST /v1/sessions/s-abcde/sleep");
 });
 
 test("records are plain objects with optional fields", async () => {

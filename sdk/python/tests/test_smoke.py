@@ -63,8 +63,8 @@ class FakeApi(BaseHTTPRequestHandler):
             return self.answer(200, {"email": "you@example.com", "name": "You", "admin": False})
         if route == ("POST", "/v1/sessions"):
             return self.answer(201, dict(SESSION, name=json.loads(body).get("name", "brave-otter")))
-        if route == ("PATCH", "/v1/sessions/s-abcde"):
-            return self.answer(200, dict(SESSION, state="stopping"))
+        if route == ("POST", "/v1/sessions/s-abcde/sleep"):
+            return self.answer(200, dict(SESSION, state="asleep", stateSaved=True))
         if route == ("GET", "/v1/sessions/s-zzzzz"):
             return self.answer(404, {"error": "session not found"})
         if route == ("POST", "/s-abcde/mcp"):
@@ -113,15 +113,15 @@ class Smoke(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result.error)
 
         info = await session.sleep()
-        self.assertEqual(info.state, SessionState.STOPPING)
+        self.assertEqual(info.state, SessionState.ASLEEP)
+        self.assertTrue(info.state_saved)
 
         # The API token went to the token endpoint only; the calls carried
         # the access token.
         calls = [(method, path) for method, path, _, _ in FakeApi.seen]
         self.assertEqual(calls[0], ("POST", "/oauth/token"))
         self.assertIn(("POST", "/v1/sessions"), calls)
-        patch = [body for method, path, _, body in FakeApi.seen if method == "PATCH"][0]
-        self.assertEqual(json.loads(patch), {"action": "sleep"})
+        self.assertEqual(calls[-1], ("POST", "/v1/sessions/s-abcde/sleep"))
         self.assertTrue(all(auth == "Bearer access-1" for _, path, auth, _ in FakeApi.seen if path != "/oauth/token"))
 
     async def test_records_have_defaults(self):

@@ -13,6 +13,9 @@ use std::time::{Duration, Instant};
 
 /// How often a wait asks for the session's state.
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
+/// A sleep answers when the snapshot is taken; the service allows that two
+/// minutes.
+const SLEEP_TIMEOUT: Duration = Duration::from_secs(180);
 /// How long `wait_until` waits when it is given no limit.
 const DEFAULT_WAIT: Duration = Duration::from_secs(300);
 
@@ -62,7 +65,7 @@ impl Session {
         Ok(info)
     }
 
-    /// A lifecycle action: `PATCH /v1/sessions/{id}` with `{"action": ...}`.
+    /// Stop or resume: `PATCH /v1/sessions/{id}` with `{"action": ...}`.
     async fn action(&self, action: &str) -> Result<SessionInfo, ComputerUseError> {
         self.patch(json!({"action": action}), action).await
     }
@@ -110,24 +113,55 @@ impl Session {
         self.action("stop").await
     }
 
-    /// Starts a stopped session from its disk, or wakes a sleeping one.
-    /// Scope `sessions:write`. `402` where billing refuses it.
+    /// Starts a stopped session from its disk, or wakes a sleeping one:
+    /// the `resume` action, which [`Session::wake`] is a route for. Scope
+    /// `sessions:write`. `402` where billing refuses it.
     pub async fn resume(&self) -> Result<SessionInfo, ComputerUseError> {
         self.action("resume").await
     }
 
-    /// Puts the session to sleep now instead of after its idle time: a
-    /// snapshot of the running desktop is kept, compute is released, and
-    /// the next MCP call wakes it as it was. Scope `sessions:write`.
+    /// Puts a running session to sleep now instead of after its idle time:
+    /// a snapshot of the running desktop is kept, compute is released, and
+    /// the next MCP call (or [`Session::wake`]) brings it back as it was.
+    /// Scope `sessions:write`.
+    ///
+    /// The answer comes when the snapshot is taken, which can take a
+    /// minute or two; the call allows three minutes whatever the client's
+    /// timeout. `state_saved` says whether there is a snapshot: without
+    /// one the session still sleeps, and wakes from its disk. A session
+    /// that is asleep already is left as it is. `409`
+    /// ([`ComputerUseError::Conflict`]) for one that is starting, stopping,
+    /// stopped or failed: only a running desktop has state to save.
     pub async fn sleep(&self) -> Result<SessionInfo, ComputerUseError> {
-        self.action("sleep").await
+        let info: SessionInfo = self
+            .transport
+            .send(
+                Call::new(Method::POST, format!("{}/sleep", self.path()), "sleep")
+                    .min_timeout(SLEEP_TIMEOUT),
+            )
+            .await?
+            .json()?;
+        self.remember(&info);
+        Ok(info)
     }
 
-    /// Wakes a sleeping session without making an MCP call. The answer
-    /// does not wait for the desktop; see [`Session::wait_until_running`].
-    /// Scope `sessions:write`.
+    /// Starts a session that is asleep or stopped, without making an MCP
+    /// call: from its snapshot if it has one, from its disk otherwise. The
+    /// answer does not wait for the desktop; see
+    /// [`Session::wait_until_running`]. Waking one that is awake does
+    /// nothing. Scope `sessions:write`. `402` where billing refuses it.
     pub async fn wake(&self) -> Result<SessionInfo, ComputerUseError> {
-        self.action("wake").await
+        let info: SessionInfo = self
+            .transport
+            .send(Call::new(
+                Method::POST,
+                format!("{}/wake", self.path()),
+                "wake",
+            ))
+            .await?
+            .json()?;
+        self.remember(&info);
+        Ok(info)
     }
 
     /// Deletes the session, its disk and its snapshot. This cannot be

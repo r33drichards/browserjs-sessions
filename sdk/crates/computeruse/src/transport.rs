@@ -69,6 +69,8 @@ pub(crate) struct Call<'a> {
     pub retry: Retry,
     /// What the call is, for a timeout's message.
     pub operation: &'a str,
+    /// At least this long is allowed, whatever the client's timeout.
+    pub min_timeout: Option<Duration>,
 }
 
 impl<'a> Call<'a> {
@@ -80,6 +82,7 @@ impl<'a> Call<'a> {
             headers: Vec::new(),
             retry: Retry::Idempotent,
             operation,
+            min_timeout: None,
         }
     }
 
@@ -90,6 +93,11 @@ impl<'a> Call<'a> {
 
     pub(crate) fn header(mut self, name: &'static str, value: impl Into<String>) -> Self {
         self.headers.push((name, value.into()));
+        self
+    }
+
+    pub(crate) fn min_timeout(mut self, timeout: Duration) -> Self {
+        self.min_timeout = Some(timeout);
         self
     }
 
@@ -332,6 +340,7 @@ impl Transport {
         } else {
             self.timeout
         };
+        let timeout = call.min_timeout.map_or(timeout, |least| timeout.max(least));
         let started = Instant::now();
         let mut attempt = 0;
         let mut refreshed = false;

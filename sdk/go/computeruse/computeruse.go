@@ -573,7 +573,7 @@ func uniffiCheckChecksums() {
 		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
 			return C.uniffi_computeruse_checksum_method_session_resume()
 		})
-		if checksum != 47281 {
+		if checksum != 38912 {
 			// If this happens try cleaning and rebuilding your project
 			panic("computeruse: uniffi_computeruse_checksum_method_session_resume: UniFFI API checksum mismatch")
 		}
@@ -609,7 +609,7 @@ func uniffiCheckChecksums() {
 		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
 			return C.uniffi_computeruse_checksum_method_session_sleep()
 		})
-		if checksum != 43181 {
+		if checksum != 29786 {
 			// If this happens try cleaning and rebuilding your project
 			panic("computeruse: uniffi_computeruse_checksum_method_session_sleep: UniFFI API checksum mismatch")
 		}
@@ -645,7 +645,7 @@ func uniffiCheckChecksums() {
 		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
 			return C.uniffi_computeruse_checksum_method_session_wake()
 		})
-		if checksum != 15780 {
+		if checksum != 61272 {
 			// If this happens try cleaning and rebuilding your project
 			panic("computeruse: uniffi_computeruse_checksum_method_session_wake: UniFFI API checksum mismatch")
 		}
@@ -2476,8 +2476,9 @@ type SessionInterface interface {
 	// Returns the policy to unrestricted, in `editor` mode. Scope
 	// `policies:write`.
 	ResetPolicy() (Policy, error)
-	// Starts a stopped session from its disk, or wakes a sleeping one.
-	// Scope `sessions:write`. `402` where billing refuses it.
+	// Starts a stopped session from its disk, or wakes a sleeping one:
+	// the `resume` action, which [`Session::wake`] is a route for. Scope
+	// `sessions:write`. `402` where billing refuses it.
 	Resume() (SessionInfo, error)
 	// Runs JavaScript or TypeScript in the session with the `run_js` tool
 	// and returns what it printed. Scope `sessions:connect`.
@@ -2490,9 +2491,18 @@ type SessionInterface interface {
 	RunJsWith(request RunJsRequest) (RunJsResult, error)
 	// Changes who manages the policy. Scope `policies:write`.
 	SetPolicyManagement(management Management) (Policy, error)
-	// Puts the session to sleep now instead of after its idle time: a
-	// snapshot of the running desktop is kept, compute is released, and
-	// the next MCP call wakes it as it was. Scope `sessions:write`.
+	// Puts a running session to sleep now instead of after its idle time:
+	// a snapshot of the running desktop is kept, compute is released, and
+	// the next MCP call (or [`Session::wake`]) brings it back as it was.
+	// Scope `sessions:write`.
+	//
+	// The answer comes when the snapshot is taken, which can take a
+	// minute or two; the call allows three minutes whatever the client's
+	// timeout. `state_saved` says whether there is a snapshot: without
+	// one the session still sleeps, and wakes from its disk. A session
+	// that is asleep already is left as it is. `409`
+	// ([`ComputerUseError::Conflict`]) for one that is starting, stopping,
+	// stopped or failed: only a running desktop has state to save.
 	Sleep() (SessionInfo, error)
 	// Stops the session: the desktop goes, the disk stays, no snapshot is
 	// taken, and an MCP call does not wake it. Scope `sessions:write`.
@@ -2504,9 +2514,11 @@ type SessionInterface interface {
 	WaitUntil(state SessionState, timeoutMs *uint64) (SessionInfo, error)
 	// [`Session::wait_until`] for `running`.
 	WaitUntilRunning(timeoutMs *uint64) (SessionInfo, error)
-	// Wakes a sleeping session without making an MCP call. The answer
-	// does not wait for the desktop; see [`Session::wait_until_running`].
-	// Scope `sessions:write`.
+	// Starts a session that is asleep or stopped, without making an MCP
+	// call: from its snapshot if it has one, from its disk otherwise. The
+	// answer does not wait for the desktop; see
+	// [`Session::wait_until_running`]. Waking one that is awake does
+	// nothing. Scope `sessions:write`. `402` where billing refuses it.
 	Wake() (SessionInfo, error)
 }
 
@@ -2856,8 +2868,9 @@ func (_self *Session) ResetPolicy() (Policy, error) {
 	return res, err
 }
 
-// Starts a stopped session from its disk, or wakes a sleeping one.
-// Scope `sessions:write`. `402` where billing refuses it.
+// Starts a stopped session from its disk, or wakes a sleeping one:
+// the `resume` action, which [`Session::wake`] is a route for. Scope
+// `sessions:write`. `402` where billing refuses it.
 func (_self *Session) Resume() (SessionInfo, error) {
 	_pointer := _self.ffiObject.incrementPointer("*Session")
 	defer _self.ffiObject.decrementPointer()
@@ -3006,9 +3019,18 @@ func (_self *Session) SetPolicyManagement(management Management) (Policy, error)
 	return res, err
 }
 
-// Puts the session to sleep now instead of after its idle time: a
-// snapshot of the running desktop is kept, compute is released, and
-// the next MCP call wakes it as it was. Scope `sessions:write`.
+// Puts a running session to sleep now instead of after its idle time:
+// a snapshot of the running desktop is kept, compute is released, and
+// the next MCP call (or [`Session::wake`]) brings it back as it was.
+// Scope `sessions:write`.
+//
+// The answer comes when the snapshot is taken, which can take a
+// minute or two; the call allows three minutes whatever the client's
+// timeout. `state_saved` says whether there is a snapshot: without
+// one the session still sleeps, and wakes from its disk. A session
+// that is asleep already is left as it is. `409`
+// ([`ComputerUseError::Conflict`]) for one that is starting, stopping,
+// stopped or failed: only a running desktop has state to save.
 func (_self *Session) Sleep() (SessionInfo, error) {
 	_pointer := _self.ffiObject.incrementPointer("*Session")
 	defer _self.ffiObject.decrementPointer()
@@ -3156,9 +3178,11 @@ func (_self *Session) WaitUntilRunning(timeoutMs *uint64) (SessionInfo, error) {
 	return res, err
 }
 
-// Wakes a sleeping session without making an MCP call. The answer
-// does not wait for the desktop; see [`Session::wait_until_running`].
-// Scope `sessions:write`.
+// Starts a session that is asleep or stopped, without making an MCP
+// call: from its snapshot if it has one, from its disk otherwise. The
+// answer does not wait for the desktop; see
+// [`Session::wait_until_running`]. Waking one that is awake does
+// nothing. Scope `sessions:write`. `402` where billing refuses it.
 func (_self *Session) Wake() (SessionInfo, error) {
 	_pointer := _self.ffiObject.incrementPointer("*Session")
 	defer _self.ffiObject.decrementPointer()
@@ -4092,8 +4116,11 @@ type SessionInfo struct {
 	McpUrl *string
 	// Absent where policies are off.
 	Policy *PolicySummary
-	// Why an asleep or stopped session is so (`user`, `idle`, `credit`,
-	// `payment-method`, `blocked`). Only where billing is on.
+	// True when a suspended session holds a snapshot of its running
+	// desktop, which a wake restores. Absent otherwise.
+	StateSaved *bool
+	// Why an asleep or stopped session is so (`user`, `sleep`, `idle`,
+	// `credit`, `payment-method`, `blocked`). Only where billing is on.
 	StoppedBy *string
 	// The same reasons, while it finishes its calls before such a sleep.
 	Draining *string
@@ -4110,6 +4137,7 @@ func (r *SessionInfo) Destroy() {
 	FfiDestroyerOptionalString{}.Destroy(r.Created)
 	FfiDestroyerOptionalString{}.Destroy(r.McpUrl)
 	FfiDestroyerOptionalPolicySummary{}.Destroy(r.Policy)
+	FfiDestroyerOptionalBool{}.Destroy(r.StateSaved)
 	FfiDestroyerOptionalString{}.Destroy(r.StoppedBy)
 	FfiDestroyerOptionalString{}.Destroy(r.Draining)
 	FfiDestroyerOptionalString{}.Destroy(r.DeleteAfter)
@@ -4133,6 +4161,7 @@ func (c FfiConverterSessionInfo) Read(reader io.Reader) SessionInfo {
 		FfiConverterOptionalStringINSTANCE.Read(reader),
 		FfiConverterOptionalStringINSTANCE.Read(reader),
 		FfiConverterOptionalPolicySummaryINSTANCE.Read(reader),
+		FfiConverterOptionalBoolINSTANCE.Read(reader),
 		FfiConverterOptionalStringINSTANCE.Read(reader),
 		FfiConverterOptionalStringINSTANCE.Read(reader),
 		FfiConverterOptionalStringINSTANCE.Read(reader),
@@ -4156,6 +4185,7 @@ func (c FfiConverterSessionInfo) Write(writer io.Writer, value SessionInfo) {
 	FfiConverterOptionalStringINSTANCE.Write(writer, value.Created)
 	FfiConverterOptionalStringINSTANCE.Write(writer, value.McpUrl)
 	FfiConverterOptionalPolicySummaryINSTANCE.Write(writer, value.Policy)
+	FfiConverterOptionalBoolINSTANCE.Write(writer, value.StateSaved)
 	FfiConverterOptionalStringINSTANCE.Write(writer, value.StoppedBy)
 	FfiConverterOptionalStringINSTANCE.Write(writer, value.Draining)
 	FfiConverterOptionalStringINSTANCE.Write(writer, value.DeleteAfter)
