@@ -62,6 +62,10 @@ show kubectl get runtimeclasses,storageclasses
 show kubectl describe nodes
 show kubectl top nodes
 show kubectl top pods -A --containers --sort-by=memory
+# What each node has, what is reserved on it (requests) and what is in use.
+show kubectl describe nodes
+show kubectl top nodes
+show kubectl top pods -A --containers --sort-by=memory
 show kubectl -n kube-system get pods -l k8s-app=kube-dns -o wide
 
 section "Admission policies in full"
