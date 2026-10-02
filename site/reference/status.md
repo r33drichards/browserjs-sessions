@@ -36,9 +36,4 @@ Not built into the product yet.
 | --- | --- |
 | Full desktop control (`desktop_execute`) | Let the agent use the mouse and keyboard on the whole desktop and take screenshots of the screen, so it can operate what is outside a web page: browser prompts, the file chooser, other windows. |
 
-## Not planned at present
-
-- Applications other than Chromium on the desktop, or a terminal.
-- Sharing a session with another account.
-
 Nothing on this page is a promise of a date.
