@@ -64,6 +64,8 @@ EXPECT_POLICIES = os.environ.get("EXPECT_POLICIES", "1") != "0"
 START_TIMEOUT = int(os.environ.get("START_TIMEOUT", "420"))
 # Sessions this script made are named so, and it deletes any it finds.
 NAME_PREFIX = "release-canary-"
+# Where a policy taken over by a token says it is managed: this page.
+MANAGED_URL = "https://github.com/r33drichards/computer-use/blob/main/docs/releases.md"
 
 CONTEXT = ssl.create_default_context(cafile=os.environ.get("CA_FILE") or None)
 
@@ -189,8 +191,10 @@ class MCP:
                                 "clientInfo": {"name": "release-canary", "version": "0"}})
         self.post({"jsonrpc": "2.0", "method": "notifications/initialized"}, 30)
 
-    def run_js(self, code, timeout=120):
-        result = self.rpc("tools/call", {"name": "run_js", "arguments": {"code": code}}, timeout)
+    def run_js(self, code, timeout=150):
+        # Its own limit is 30 s by default; a browser that has just started
+        # can take longer over its first page.
+        result = self.rpc("tools/call", {"name": "run_js", "arguments": {"code": code, "execution_timeout_secs": 120}}, timeout)
         return "\n".join(c.get("text", "") for c in result.get("content", []))
 
 
@@ -376,10 +380,15 @@ def main():
             return
 
         def browser_execute():
-            out = browser(mcp, [
+            operations = [
                 {"type": "setContent", "params": {"html": "<title>canary page</title><p id=p>hello</p>"}},
                 {"type": "evaluate", "params": {"script": "window.__canary = %s; document.title + '/' + document.getElementById('p').textContent" % json.dumps(state["marker"])}},
-            ])
+            ]
+            out = browser(mcp, operations)
+            if "canary page/hello" not in out:
+                # Once more: the first call can meet a browser still starting.
+                print("      (first try: %s)" % scrub(out[:200]), flush=True)
+                out = browser(mcp, operations)
             expect("CANARY-RETURNED" in out and "canary page/hello" in out, "browser_execute: %s" % out[:300])
         check("browser_execute: a page is loaded and read", browser_execute)
 
@@ -399,7 +408,8 @@ def main():
                 expect(preset, "there is no preset browser-only")
                 # A token writes a policy by taking it over ("iac").
                 status, saved = api("PUT", "/v1/sessions/%s/policy" % sid,
-                                    {"kind": "rego", "source": preset[0]["source"], "management": {"mode": "iac"}})
+                                    {"kind": "rego", "source": preset[0]["source"],
+                                     "management": {"mode": "iac", "managed_url": MANAGED_URL}})
                 expect(status in (200, 202), "PUT policy answered %d: %s" % (status, saved))
                 wait_policy(sid)
 
