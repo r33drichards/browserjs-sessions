@@ -5,10 +5,12 @@
 #
 #   off        installed, nothing runs: OPA and the operator have no pods,
 #              the backend is not told about the operator
-#   serving    OPA and the operator run and the backend keeps policies, but
-#              no session pod asks OPA: nothing is enforced
-#   enforcing  new session pods ask OPA on every browser call, and a session
-#              with no SessionPolicy is denied everything
+#   serving    OPA and the operator run, with an empty bundle. The backend
+#              is still not told, and no session pod asks OPA: nothing a
+#              user or a session can notice has changed
+#   enforcing  the backend keeps a policy for every new session, and new
+#              session pods ask OPA on every browser call; a session with
+#              no SessionPolicy is denied everything
 #
 #   hack/policy-stage.sh                  shows the stage of gke and of local
 #   hack/policy-stage.sh --check          the same, and fails if the files of
@@ -19,10 +21,11 @@
 #   hack/policy-stage.sh --env warm|cold  prints the variable an enforcing
 #                                         pod template carries
 #
-# What it edits: the "- path: patch-policy-off.yaml" line of the overlay's
-# kustomization.yaml (commented out or not), and the MCP_V8_POLICIES_JSON
-# variable of mcp-js in the overlay's pod templates, directly below
-# MCP_V8_PUBLIC_URL (docs/contracts/policy/deploy.md).
+# What it edits: the "- path: patch-policy-off.yaml" and "- path:
+# patch-policy-backend-off.yaml" lines of the overlay's kustomization.yaml
+# (commented out or not), and the MCP_V8_POLICIES_JSON variable of mcp-js in
+# the overlay's pod templates, directly below MCP_V8_PUBLIC_URL
+# (docs/contracts/policy/deploy.md).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -115,21 +118,25 @@ set_env() { # file, on|off
   fi
 }
 
-off_line='- path: patch-policy-off.yaml'
-is_off() { grep -qE "^ *$off_line\$" "deploy/$1/kustomization.yaml"; }
-set_off() { # overlay, on|off
-  local file="deploy/$1/kustomization.yaml"
-  grep -qE "^ *(# )?$off_line\$" "$file" || die "$file: no line \"$off_line\" (commented out or not)"
-  if [ "$2" = on ]; then
-    sed -E "s|^( *)# ($off_line)\$|\1\2|" "$file" >"$file.tmp"
+# A "- path: <file>" line of the overlay's kustomization.yaml.
+listed() { # overlay, file
+  grep -qE "^ *- path: $2\$" "deploy/$1/kustomization.yaml"
+}
+list() { # overlay, file, on|off
+  local file="deploy/$1/kustomization.yaml" line="- path: $2"
+  grep -qE "^ *(# )?$line\$" "$file" || die "$file: no line \"$line\" (commented out or not)"
+  if [ "$3" = on ]; then
+    sed -E "s|^( *)# ($line)\$|\1\2|" "$file" >"$file.tmp"
   else
-    sed -E "s|^( *)($off_line)\$|\1# \2|" "$file" >"$file.tmp"
+    sed -E "s|^( *)($line)\$|\1# \2|" "$file" >"$file.tmp"
   fi
   if cmp -s "$file.tmp" "$file"; then rm "$file.tmp"; else
     mv "$file.tmp" "$file"
-    echo "$file: patch-policy-off.yaml $([ "$2" = on ] && echo listed || echo "commented out")"
+    echo "$file: $2 $([ "$3" = on ] && echo listed || echo "commented out")"
   fi
 }
+workloads_off=patch-policy-off.yaml
+backend_off=patch-policy-backend-off.yaml
 
 # Prints the overlay's stage, or says what disagrees and returns 1.
 stage() { # overlay
@@ -141,16 +148,27 @@ stage() { # overlay
     echo "policy-stage: $1: ${with[*]} asks OPA and ${without[*]} does not" >&2
     return 1
   fi
-  if is_off "$1"; then
+  if listed "$1" "$workloads_off"; then
     if [ ${#with[@]} -gt 0 ]; then
-      echo "policy-stage: $1: the pod templates ask OPA, but patch-policy-off.yaml leaves OPA without pods: every browser call of a new session would be denied" >&2
+      echo "policy-stage: $1: the pod templates ask OPA, but $workloads_off leaves OPA without pods: every browser call of a new session would be denied" >&2
+      return 1
+    fi
+    if ! listed "$1" "$backend_off"; then
+      echo "policy-stage: $1: the backend is told about the operator, but $workloads_off leaves the operator without pods: no session could be created" >&2
       return 1
     fi
     echo off
+  elif listed "$1" "$backend_off"; then
+    if [ ${#with[@]} -gt 0 ]; then
+      echo "policy-stage: $1: the pod templates ask OPA, but $backend_off keeps the backend from making policies: every browser call of a new session would be denied" >&2
+      return 1
+    fi
+    echo serving
   elif [ ${#with[@]} -gt 0 ]; then
     echo enforcing
   else
-    echo serving
+    echo "policy-stage: $1: the backend keeps policies, but the pod templates do not ask OPA: it would refuse every warm pod and start each session cold" >&2
+    return 1
   fi
 }
 
@@ -179,14 +197,17 @@ case "${1:-}" in
     case "${2:-}" in
       off)
         for file in $(templates "$overlay"); do set_env "$file" off; done
-        set_off "$overlay" on
+        list "$overlay" "$backend_off" on
+        list "$overlay" "$workloads_off" on
         ;;
       serving)
         for file in $(templates "$overlay"); do set_env "$file" off; done
-        set_off "$overlay" off
+        list "$overlay" "$backend_off" on
+        list "$overlay" "$workloads_off" off
         ;;
       enforcing)
-        set_off "$overlay" off
+        list "$overlay" "$workloads_off" off
+        list "$overlay" "$backend_off" off
         for file in $(templates "$overlay"); do set_env "$file" on; done
         ;;
       *) die "the stage is one of: off, serving, enforcing" ;;

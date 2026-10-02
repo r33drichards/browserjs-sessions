@@ -88,8 +88,8 @@ spec:
             - name: ADMIN_EMAILS
               value: ""
             # Session policies. They are off, and the API is as it was,
-            # while POLICY_OPERATOR_URL is unset: patch-policy-off.yaml in an
-            # overlay removes it (docs/policy-deployment.md).
+            # while POLICY_OPERATOR_URL is unset: patch-policy-backend-off.yaml
+            # in an overlay removes it (docs/policy-deployment.md).
             - name: POLICY_OPERATOR_URL
               value: http://policy-operator.browserjs-sessions.svc:8080
             - name: OPERATOR_API_TOKEN

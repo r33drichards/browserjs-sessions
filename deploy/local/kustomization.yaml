@@ -32,6 +32,8 @@ patches:
   - path: patch-pomerium.yaml
   - path: patch-services.yaml
   - path: patch-policy.yaml
-  # Session policies are off while the next line is there. It is the last
-  # patch, and is switched by hack/policy-stage.sh (docs/policy-deployment.md).
+  # The stage of session policies: off with both lines, serving with the
+  # second only, enforcing with neither. They are the last patches, and are
+  # switched by hack/policy-stage.sh (docs/policy-deployment.md).
   - path: patch-policy-off.yaml
+  - path: patch-policy-backend-off.yaml
