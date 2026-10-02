@@ -1,0 +1,10 @@
+# For docker build -f images/policy-operator/Dockerfile . (context: the
+# repository root). Only what the Dockerfile copies.
+*
+!images/policy-operator/requirements.txt
+!images/policy-operator/policy_operator
+!docs/contracts/policy/capabilities.json
+!docs/contracts/policy/decision-module.rego.tmpl
+!docs/contracts/policy/json-policy.schema.json
+**/__pycache__
+**/*.pyc
