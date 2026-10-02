@@ -1,0 +1,17 @@
+# ~/.bashrc of a session, copied here the first time the session started.
+# It is yours to change: the home directory is on the session's disk.
+case $- in
+  *i*) ;;
+  *) return ;;
+esac
+
+HISTSIZE=10000
+HISTFILESIZE=20000
+HISTCONTROL=ignoreboth
+shopt -s histappend checkwinsize
+
+PS1='\[\e[1;32m\]\u@session\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]\$ '
+
+alias ls='ls --color=auto'
+alias ll='ls -alF'
+alias grep='grep --color=auto'

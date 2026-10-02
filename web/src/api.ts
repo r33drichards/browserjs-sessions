@@ -8,13 +8,16 @@ export interface Session {
   message?: string
   created: string
   mcp_url: string
+  // A session that is asleep holds a snapshot of its pod to wake from. Absent
+  // (asleep without one, or stopped), it starts fresh, with its disk only.
+  stateSaved?: boolean
   // Only where the backend has billing on (docs/contracts/billing/backend-api.yaml).
   stoppedBy?: StoppedBy // why it is asleep or stopped
   draining?: StoppedBy // finishing calls before such a sleep
   deleteAfter?: string // due for deletion at this time
 }
 
-export type StoppedBy = "user" | "idle" | "credit" | "payment-method" | "blocked"
+export type StoppedBy = "user" | "sleep" | "idle" | "credit" | "payment-method" | "blocked"
 
 export interface Me {
   email: string
@@ -125,6 +128,10 @@ export function createApi(fetchImpl: Fetch = fetch) {
     renameSession: async (id: string, name: string) => call<Session>("PATCH", await sessionPath(id), { name }),
     setRunning: async (id: string, running: boolean) =>
       call<Session>("PATCH", await sessionPath(id), { action: running ? "resume" : "stop" }),
+    // Snapshots the pod, then suspends: answers once the snapshot is done.
+    sleepSession: async (id: string) => call<Session>("POST", await sessionPath(id, "/sleep")),
+    // Starts a session that is asleep (from its snapshot) or stopped (fresh).
+    wakeSession: async (id: string) => call<Session>("POST", await sessionPath(id, "/wake")),
     deleteSession: async (id: string) => call<void>("DELETE", await sessionPath(id)),
     vncTicket: async (id: string) => call<VncTicket>("POST", await sessionPath(id, "/vnc-ticket")),
     listFiles: async (id: string) => call<SessionFiles>("GET", await sessionPath(id, "/files")),

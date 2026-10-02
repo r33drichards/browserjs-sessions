@@ -5,8 +5,7 @@ import subprocess
 import pytest
 
 from policy_operator import opa
-from policy_operator.check import check, evaluate, policy_hash
-from policy_operator.jsonpos import positions
+from policy_operator.check import WARNINGS, KNOWN_TOOLS, check, evaluate, policy_hash
 
 from conftest import EXAMPLES, H, cases, example
 
@@ -28,17 +27,26 @@ def decide(cfg, tmp_path, validation, sid, input_doc):
 @pytest.mark.parametrize("name", EXAMPLES)
 def test_every_case_of_every_example_through_real_opa(cfg, tmp_path, name):
     sid = "s-ab2cd"
-    v = check(cfg, "json", example(name, "policy.json"), sid)
+    v = check(cfg, "rego", example(name, "rego"), sid)
     assert v.ok, v.errors
-    assert v.rego == example(name, "rego")
+    # The presets are what people start from: none earns a warning.
+    assert v.warnings == []
     all_cases = cases(name)
     assert all_cases
     wrong = [c["name"] for c in all_cases if decide(cfg, tmp_path, v, sid, c["input"]) != c["allow"]]
     assert wrong == []
 
 
-def test_all_86_cases_are_run():
-    assert sum(len(cases(n)) for n in EXAMPLES) == 86
+def test_all_264_cases_are_run():
+    assert EXAMPLES == ["browser-only", "form-filling", "no-scripting", "observe-only", "one-site", "read-only-shell", "unrestricted"]
+    assert sum(len(cases(n)) for n in EXAMPLES) == 264
+
+
+def test_examples_begin_with_what_they_are(cfg):
+    # The backend takes a preset's description from its first comment.
+    for name in EXAMPLES:
+        first, rest = example(name, "rego").split("package browserjs.policy\n", 1)
+        assert first.startswith("# ") and all(l.startswith("# ") for l in first.splitlines()), name
 
 
 @pytest.mark.parametrize("name", EXAMPLES)
@@ -54,8 +62,6 @@ def test_hash_is_of_the_module_before_the_rewrite(cfg):
     src = example("one-site", "rego")
     v = check(cfg, "rego", src, "s-ab2cd")
     assert v.hash == "sha256:" + hashlib.sha256(src.encode()).hexdigest() == policy_hash(v.rego)
-    j = check(cfg, "json", example("one-site", "policy.json"), "s-ab2cd")
-    assert j.hash == v.hash
 
 
 def test_to_api_shape(cfg):
@@ -194,63 +200,93 @@ def test_unknown_kind(cfg):
     assert not check(cfg, "yaml", "x").ok
 
 
-# --- kind json --------------------------------------------------------------
-
-def test_json_parse_error_has_a_position(cfg):
-    v = check(cfg, "json", '{\n  "version": 1,\n  "allow": [,]\n}')
-    assert v.errors == [{"row": 3, "col": 13, "code": "json_parse_error", "message": "Expecting value"}]
-    assert [e["code"] for e in check(cfg, "json", '{"version": NaN}').errors] == ["json_parse_error"]
-    assert [e["code"] for e in check(cfg, "json", '{"version": 1, "allow": {"rules": [{"operation": "wait", "constraints": {"ms": {"max": 1e999}}}]}}').errors] == ["json_parse_error"]
-    assert [e["code"] for e in check(cfg, "json", "[" * 30000).errors] == ["json_parse_error"]
+def test_json_is_not_a_kind(cfg):
+    v = check(cfg, "json", '{"version": 1, "allow": {"operations": ["*"]}}')
+    assert not v.ok and v.errors == [{"code": "schema_error", "message": "kind must be rego"}]
 
 
-def test_schema_errors_point_into_the_json(cfg):
-    src = '{\n  "version": 1,\n  "allow": {\n    "rules": [\n      {"operation": "fly"}\n    ]\n  },\n  "extra": true\n}'
-    v = check(cfg, "json", src)
-    assert not v.ok and {e["code"] for e in v.errors} == {"schema_error"}
-    by_message = {e["message"].split(":")[0]: (e["row"], e["col"]) for e in v.errors}
-    assert by_message["allow.rules[0].operation"] == (5, 8)
-    assert (1, 1) in by_message.values()  # the additional property, reported on the document
-    assert [e["code"] for e in check(cfg, "json", "[]").errors] == ["schema_error"]
-    assert [e["code"] for e in check(cfg, "json", '{"version": 2}').errors] == ["schema_error"]
+# --- The decision module ------------------------------------------------------
+
+def tool_call(server, tool):
+    return {"operation": "mcp_call_tool", "server": server, "tool": tool, "arguments": {}}
 
 
-def test_positions():
-    pos = positions('{"a": [1, {"b": null}],\n "c": "x"}')
-    assert pos[()] == (1, 1) and pos[("a",)] == (1, 2) and pos[("a", 0)] == (1, 8)
-    assert pos[("a", 1, "b")] == (1, 12) and pos[("c",)] == (2, 2)
-
-
-def test_warnings_do_not_stop_a_policy_and_point_into_the_json(cfg, tmp_path):
-    src = '{"version": 1,\n "allow": {"operations": ["*"],\n  "rules": [{"operation": "url", "constraints": {"x": {"min": 1}}}]},\n "deny": {"operations": ["evaluate"]}}'
-    v = check(cfg, "json", src, "s-ab2cd")
+def test_the_decision_module_refuses_servers_and_tools_it_has_not_heard_of(cfg, tmp_path):
+    # Whatever the tenant says: a policy cannot allow a tool that did not
+    # exist when it was written.
+    v = check(cfg, "rego", H + "allow_tool_call := true\n", "s-ab2cd")
     assert v.ok, v.errors
-    assert [(w["code"], w["row"]) for w in v.warnings] == [("rule_shadowed", 3), ("unknown_parameter", 3)]
+    for server, tools in KNOWN_TOOLS.items():
+        for tool in tools:
+            assert decide(cfg, tmp_path, v, "s-ab2cd", tool_call(server, tool)) is True
+            assert evaluate(cfg, "rego", v.rego, tool_call(server, tool))["allow"] is True
+    for call in (tool_call("browser", "file_write"), tool_call("browser", "exec"), tool_call("exec", "browser_execute"),
+                 tool_call("other", "browser_execute"), {"operation": "mcp_call_tool"}, tool_call(None, None),
+                 tool_call(["browser"], "browser_execute"), tool_call("browser", {"browser_execute": 1})):
+        assert decide(cfg, tmp_path, v, "s-ab2cd", call) is False, call
+        # The editor's Test answers as a session would be answered.
+        assert evaluate(cfg, "rego", v.rego, call) == {"ok": True, "allow": False, "errors": []}, call
 
 
-@pytest.mark.parametrize("source", ['{"version": 1}', '{"version": 1, "deny": {"operations": ["evaluate"]}}',
-                                    '{"version": 1, "allow": {"operations": [], "rules": []}}'])
-def test_a_policy_that_allows_nothing_compiles_and_denies(cfg, tmp_path, source):
-    v = check(cfg, "json", source, "s-ab2cd")
+def test_known_tools_are_the_decision_modules(cfg):
+    template = cfg.decision_template.read_text(encoding="utf-8")
+    for server, tools in KNOWN_TOOLS.items():
+        assert f'"{server}": {{' + ", ".join(f'"{t}"' for t in sorted(tools)) + "}," in template
+    assert template.count('": {"') == len(KNOWN_TOOLS)
+
+
+# --- Warnings: tools that undo each other's rules -------------------------------
+
+BROWSER_ONLY_SAFE = 'allow_tool_call if {\n\tinput.server == "browser"\n\tinput.tool == "browser_execute"\n\tevery op in input.arguments.operations { op.type != "evaluate" }\n}\n'
+DESKTOP = 'allow_tool_call if input.tool == "desktop_execute"\n'
+SCREEN = 'allow_tool_call if {\n\tinput.tool == "desktop_execute"\n\tevery op in input.arguments.operations { startswith(op.type, "screen.") }\n}\n'
+SHELL = 'allow_tool_call if input.server == "exec"\n'
+ONE_COMMAND = 'allow_tool_call if {\n\tinput.tool == "exec"\n\tinput.arguments.bin == "git"\n\tinput.arguments.args == ["status"]\n\tnot input.arguments.env\n}\n'
+PROGRAMS = 'allow_tool_call if {\n\tinput.tool == "exec"\n\tinput.arguments.bin in {"git", "ls", "%s"}\n\tobject.get(input.arguments, "env", {}) == {}\n}\n'
+ANY_ENV = 'allow_tool_call if {\n\tinput.tool == "exec"\n\tinput.arguments.bin in {"git", "ls"}\n}\n'
+ANY_BROWSER = 'allow_tool_call if input.tool == "browser_execute"\n'
+
+
+@pytest.mark.parametrize("body, codes", [
+    ("allow_tool_call := true\n", []),
+    ("allow_tool_call := false\n", []),
+    (ANY_BROWSER, []),
+    (BROWSER_ONLY_SAFE, []),
+    (BROWSER_ONLY_SAFE + SCREEN, []),
+    (BROWSER_ONLY_SAFE + ONE_COMMAND, []),
+    (BROWSER_ONLY_SAFE + DESKTOP, ["browser_bypass_desktop", "shell_bypass_desktop"]),
+    (BROWSER_ONLY_SAFE + SHELL, ["browser_bypass_shell"]),
+    (BROWSER_ONLY_SAFE + DESKTOP + SHELL, ["browser_bypass_desktop", "browser_bypass_shell"]),
+    (ANY_BROWSER + DESKTOP, ["shell_bypass_desktop"]),
+    (ANY_BROWSER + DESKTOP + ONE_COMMAND, ["shell_bypass_desktop"]),
+    (ANY_BROWSER + SHELL, []),
+    # A list of programs with a launcher on it is a list of every program.
+    (ANY_BROWSER + PROGRAMS % "cat", []),
+    (ANY_BROWSER + PROGRAMS % "bash", ["shell_launcher_allowed"]),
+    (ANY_BROWSER + PROGRAMS % "xargs", ["shell_launcher_allowed"]),
+    (BROWSER_ONLY_SAFE + PROGRAMS % "env", ["browser_bypass_shell", "shell_launcher_allowed"]),
+    # A list of programs that does not look at env lets PATH say what they are.
+    (ANY_BROWSER + ANY_ENV, ["shell_env_allowed"]),
+    # The policy that looks at arguments and never at the tool.
+    ('allow_tool_call if not "evaluate" in {op.type | some op in input.arguments.operations}\n',
+     ["browser_bypass_desktop", "browser_bypass_shell"]),
+])
+def test_a_policy_whose_rules_can_be_walked_around_is_warned_about(cfg, body, codes):
+    v = check(cfg, "rego", H + body)
     assert v.ok, v.errors
-    assert [w["code"] for w in v.warnings] == ["allow_empty"]
-    call = {"operation": "mcp_call_tool", "server": "browser", "tool": "browser_execute"}
-    assert decide(cfg, tmp_path, v, "s-ab2cd", {**call, "arguments": {"operations": [{"type": "url"}]}}) is False
-    assert decide(cfg, tmp_path, v, "s-ab2cd", {**call, "arguments": None}) is False
-    # json-to-rego.md: an empty list of operations is allowed (it does nothing).
-    assert decide(cfg, tmp_path, v, "s-ab2cd", {**call, "arguments": {"operations": []}}) is True
+    assert [w["code"] for w in v.warnings] == codes
+    assert all(set(w) == {"code", "message"} and w["message"] == WARNINGS[w["code"]] for w in v.warnings)
 
 
-def test_generated_rego_errors_have_no_position(cfg):
-    # Nothing the schema accepts is known to produce Rego that fails, so force it.
+def test_warnings_never_fail_a_policy(cfg, monkeypatch):
     import policy_operator.check as c
-    real = c.translate
-    c.translate = lambda doc: ("package browserjs.policy\nimport rego.v1\nallow_tool_call if http.send({})\n", [])
-    try:
-        v = check(cfg, "json", '{"version": 1}')
-    finally:
-        c.translate = real
-    assert v.errors == [{"code": "rego_type_error", "message": "in the generated Rego: undefined function http.send"}]
+    monkeypatch.setattr(c.opa, "eval_many", lambda *a: None)
+    assert check(cfg, "rego", H + BROWSER_ONLY_SAFE + DESKTOP).warnings == []
+    def late(*a):
+        raise c.opa.OpaTimeout("late")
+    monkeypatch.setattr(c.opa, "eval_many", late)
+    v = check(cfg, "rego", H + BROWSER_ONLY_SAFE + DESKTOP)
+    assert v.ok and v.warnings == []
 
 
 # --- evaluate ---------------------------------------------------------------
@@ -260,16 +296,16 @@ SAMPLE = {"operation": "mcp_call_tool", "server": "browser", "tool": "browser_ex
 
 
 def test_evaluate(cfg):
-    assert evaluate(cfg, "json", example("one-site", "policy.json"), SAMPLE) == {"ok": True, "allow": True, "errors": []}
+    assert evaluate(cfg, "rego", example("one-site", "rego"), SAMPLE) == {"ok": True, "allow": True, "errors": []}
     other = {**SAMPLE, "arguments": {"operations": [{"type": "evaluate", "params": {"script": "1"}}]}}
-    assert evaluate(cfg, "json", example("one-site", "policy.json"), other) == {"ok": True, "allow": False, "errors": []}
+    assert evaluate(cfg, "rego", example("one-site", "rego"), other) == {"ok": True, "allow": False, "errors": []}
     assert evaluate(cfg, "rego", H + "allow_tool_call if input.x\n", None) == {"ok": True, "allow": False, "errors": []}
 
 
 def test_evaluate_allows_only_true(cfg):
-    assert evaluate(cfg, "rego", H + 'allow_tool_call := "yes"\n', {})["allow"] is False
-    assert evaluate(cfg, "rego", H + "allow_tool_call := 1\n", {})["allow"] is False
-    assert evaluate(cfg, "rego", H + "allow_tool_call := true\n", {})["allow"] is True
+    assert evaluate(cfg, "rego", H + 'allow_tool_call := "yes"\n', SAMPLE)["allow"] is False
+    assert evaluate(cfg, "rego", H + "allow_tool_call := 1\n", SAMPLE)["allow"] is False
+    assert evaluate(cfg, "rego", H + "allow_tool_call := true\n", SAMPLE)["allow"] is True
 
 
 def test_evaluate_invalid_policy(cfg):

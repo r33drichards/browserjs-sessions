@@ -1,0 +1,58 @@
+name: backend tests
+
+# The backend's Go tests. They contact nothing but the Go module proxy:
+# Kubernetes is client-go's fake, Stripe is an in-memory fake, the webhook's
+# events are signed with a made-up secret, and no job here has a key.
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "docs/contracts/billing/catalogue.yaml"
+      - ".github/workflows/backend-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "docs/contracts/billing/catalogue.yaml"
+      - ".github/workflows/backend-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: backend tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Format
+        run: test -z "$(gofmt -l . | tee /dev/stderr)"
+
+      - name: Modules are tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: Vet and tests
+        run: |
+          go vet ./...
+          go test -race ./...

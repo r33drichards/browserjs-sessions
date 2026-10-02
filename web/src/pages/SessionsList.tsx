@@ -11,7 +11,8 @@ import { useMe } from "../auth/MeProvider"
 import { signedOutHandled } from "../auth/signedOut"
 import { useBilling } from "../billing/BillingProvider"
 import { SessionState } from "../billing/SessionBilling"
-import { WAKE_BLOCK_LABEL, wakeBlock } from "../billingApi"
+import { wakeBlock } from "../billingApi"
+import { LifecycleActions } from "../components/SessionLifecycle"
 import type { PolicySession } from "../policyApi"
 import { isManagedAsCode, policySummaryLine } from "../policyApi"
 import { Shell, api } from "../shell"
@@ -124,18 +125,8 @@ export function SessionsList() {
                 <Button onClick={() => copyMcpUrl(s)} ariaLabel={`Copy the MCP URL of ${s.name}`}>
                   {copied?.id === s.id ? (copied.ok ? "Copied" : "Couldn't copy") : "Copy MCP URL"}
                 </Button>
-                {s.state === "running" || s.state === "starting" ? (
-                  <Button onClick={() => act(() => api.setRunning(s.id, false))}>Stop</Button>
-                ) : (
-                  // A session billing keeps asleep says why instead of resuming.
-                  <Button
-                    disabled={!!wakeBlock(s, billing)}
-                    disabledReason={WAKE_BLOCK_LABEL[wakeBlock(s, billing) ?? "credit"]}
-                    onClick={() => act(() => api.setRunning(s.id, true))}
-                  >
-                    Resume
-                  </Button>
-                )}
+                {/* A session billing keeps asleep says why instead of waking. */}
+                <LifecycleActions session={s} blocked={wakeBlock(s, billing)} run={act} />
                 <Button
                   onClick={() => {
                     if (window.confirm(`Delete "${s.name}" and its disk? This cannot be undone.`))

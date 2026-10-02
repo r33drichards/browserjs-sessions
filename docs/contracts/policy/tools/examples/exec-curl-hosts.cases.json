@@ -445,7 +445,7 @@
         "args": [
           "-q",
           "-o",
-          "/home/browser/.bashrc",
+          "/data/chrome/home/.bashrc",
           "https://example.com/"
         ],
         "timeout": 60

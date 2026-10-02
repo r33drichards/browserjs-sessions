@@ -1,5 +1,5 @@
 // `npm run dev:mock`: the dev server answers /api itself, from mock/backend.ts,
-// with the contract's own examples and schema. No backend, cluster or proxy.
+// with the contract's own examples as presets. No backend, cluster or proxy.
 //   MOCK=1          every feature on
 //   MOCK=off        a backend with policies, tokens and billing off (today's API)
 //   MOCK_BILLING=   the billing scenario to start in (mock/billing.ts; default
@@ -11,15 +11,13 @@ import { fileURLToPath } from "node:url"
 import type { Plugin } from "vite"
 import { createMockBackend, presetsFromExamples } from "./backend"
 
-const contracts = join(dirname(fileURLToPath(import.meta.url)), "../../docs/contracts/policy")
+const examples = join(dirname(fileURLToPath(import.meta.url)), "../../docs/contracts/policy/examples")
 
 export function mockBackend(mode: string): Plugin {
-  const examples = join(contracts, "examples")
   const files = Object.fromEntries(readdirSync(examples).map(name => [name, readFileSync(join(examples, name), "utf8")]))
   const on = mode !== "off"
   const backend = createMockBackend({
     presets: presetsFromExamples(files),
-    schema: JSON.parse(readFileSync(join(contracts, "json-policy.schema.json"), "utf8")),
     policies: on,
     tokens: on,
     billing: on ? (process.env.MOCK_BILLING ?? "active") : "off",

@@ -27,7 +27,6 @@ COPY --from=opa /opa /usr/local/bin/opa
 # The contract files the operator reads, copied and not duplicated.
 COPY docs/contracts/policy/capabilities.json \
      docs/contracts/policy/decision-module.rego.tmpl \
-     docs/contracts/policy/json-policy.schema.json \
      /contracts/
 
 COPY images/policy-operator/policy_operator /app/policy_operator
@@ -42,9 +41,9 @@ ENV PYTHONPATH=/app \
 # The same policy code answers at build time: the image does not exist if
 # OPA, the contract files and the package do not fit together.
 RUN opa version \
-    && cd /app && python -c "import json, policy_operator.check as c, policy_operator.config as k; \
-v = c.check(k.Config.from_env(), 'json', json.dumps({'version': 1, 'allow': {'operations': ['*']}})); \
-assert v.ok, v.errors; print(v.hash)"
+    && cd /app && python -c "import policy_operator.check as c, policy_operator.config as k; \
+v = c.check(k.Config.from_env(), 'rego', 'package browserjs.policy\n\nimport rego.v1\n\nallow_tool_call if input.tool == \"exec\"\n'); \
+assert v.ok and [w['code'] for w in v.warnings] == ['browser_bypass_shell'], (v.errors, v.warnings); print(v.hash)"
 
 USER 65532:65532
 WORKDIR /app

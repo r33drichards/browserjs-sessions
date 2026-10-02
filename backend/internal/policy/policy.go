@@ -31,7 +31,6 @@ const (
 )
 
 const (
-	KindJSON = "json"
 	KindRego = "rego"
 
 	// MaxSource is the longest policy source, in bytes (the CRD's limit).
@@ -79,7 +78,7 @@ type Loaded struct {
 type Policy struct {
 	Summary
 	Source    string       `json:"source,omitempty"`
-	Rego      string       `json:"rego,omitempty"` // the module in force; for kind json, the generated one
+	Rego      string       `json:"rego,omitempty"` // the module in force; as the author wrote it
 	Errors    []Diagnostic `json:"errors,omitempty"`
 	Warnings  []Diagnostic `json:"warnings,omitempty"`
 	Loaded    *Loaded      `json:"loaded,omitempty"`

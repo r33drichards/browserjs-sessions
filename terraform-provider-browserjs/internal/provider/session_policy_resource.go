@@ -7,9 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
-	"github.com/hashicorp/terraform-plugin-framework-validators/resourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -27,11 +25,10 @@ import (
 const policyWriteTimeout = 2 * time.Minute
 
 var (
-	_ resource.Resource                     = (*sessionPolicyResource)(nil)
-	_ resource.ResourceWithConfigure        = (*sessionPolicyResource)(nil)
-	_ resource.ResourceWithConfigValidators = (*sessionPolicyResource)(nil)
-	_ resource.ResourceWithModifyPlan       = (*sessionPolicyResource)(nil)
-	_ resource.ResourceWithImportState      = (*sessionPolicyResource)(nil)
+	_ resource.Resource                = (*sessionPolicyResource)(nil)
+	_ resource.ResourceWithConfigure   = (*sessionPolicyResource)(nil)
+	_ resource.ResourceWithModifyPlan  = (*sessionPolicyResource)(nil)
+	_ resource.ResourceWithImportState = (*sessionPolicyResource)(nil)
 )
 
 func newSessionPolicyResource() resource.Resource { return &sessionPolicyResource{} }
@@ -39,37 +36,20 @@ func newSessionPolicyResource() resource.Resource { return &sessionPolicyResourc
 type sessionPolicyResource struct{ data *providerData }
 
 type sessionPolicyModel struct {
-	ID           types.String         `tfsdk:"id"`
-	SessionID    types.String         `tfsdk:"session_id"`
-	JSON         jsontypes.Normalized `tfsdk:"json"`
-	Rego         types.String         `tfsdk:"rego"`
-	ManagedURL   types.String         `tfsdk:"managed_url"`
-	WaitForReady types.Bool           `tfsdk:"wait_for_ready"`
-	Version      types.Int64          `tfsdk:"version"`
-	Hash         types.String         `tfsdk:"hash"`
-	CompiledRego types.String         `tfsdk:"compiled_rego"`
-	State        types.String         `tfsdk:"state"`
-	Timeouts     timeouts.Value       `tfsdk:"timeouts"`
+	ID           types.String   `tfsdk:"id"`
+	SessionID    types.String   `tfsdk:"session_id"`
+	Rego         types.String   `tfsdk:"rego"`
+	ManagedURL   types.String   `tfsdk:"managed_url"`
+	WaitForReady types.Bool     `tfsdk:"wait_for_ready"`
+	Version      types.Int64    `tfsdk:"version"`
+	Hash         types.String   `tfsdk:"hash"`
+	CompiledRego types.String   `tfsdk:"compiled_rego"`
+	State        types.String   `tfsdk:"state"`
+	Timeouts     timeouts.Value `tfsdk:"timeouts"`
 }
 
-// source is the policy's kind and text, and whether they are known yet.
-func (m *sessionPolicyModel) source() (kind, source string, known bool) {
-	switch {
-	case !m.JSON.IsNull():
-		return "json", m.JSON.ValueString(), !m.JSON.IsUnknown()
-	case !m.Rego.IsNull():
-		return "rego", m.Rego.ValueString(), !m.Rego.IsUnknown()
-	}
-	return "", "", false
-}
-
-// sourceAttr is the attribute a policy of this kind is written in.
-func sourceAttr(kind string) path.Path {
-	if kind == "rego" {
-		return path.Root("rego")
-	}
-	return path.Root("json")
-}
+// regoAttr is the attribute the policy is written in.
+var regoAttr = path.Root("rego")
 
 // setComputed takes what the server decides: version, hash, module, state.
 func (m *sessionPolicyModel) setComputed(p *client.Policy) {
@@ -79,17 +59,17 @@ func (m *sessionPolicyModel) setComputed(p *client.Policy) {
 	m.State = types.StringValue(p.State)
 }
 
-// setAll takes everything from the server, for a refresh.
-func (m *sessionPolicyModel) setAll(id string, p *client.Policy) {
+// setAll takes everything from the server, for a refresh. Rego is the only
+// kind of policy there is; any other is an error, never read as Rego.
+func (m *sessionPolicyModel) setAll(id string, p *client.Policy, diags *diag.Diagnostics) {
+	if p.Kind != "" && p.Kind != client.KindRego {
+		diags.AddError("The policy is of a kind this provider does not know",
+			fmt.Sprintf("The API says the policy of session %s is of kind %q. Policies are Rego only. Upgrade the provider if the API has gained a kind, or reset the policy in the browserjs UI.", id, p.Kind))
+		return
+	}
 	m.ID = types.StringValue(id)
 	m.SessionID = types.StringValue(id)
-	if p.Kind == "rego" {
-		m.JSON = jsontypes.NewNormalizedNull()
-		m.Rego = types.StringValue(p.Source)
-	} else {
-		m.JSON = jsontypes.NewNormalizedValue(p.Source)
-		m.Rego = types.StringNull()
-	}
+	m.Rego = types.StringValue(p.Source)
 	// A policy somebody took back in the UI is no longer managed as code.
 	// Reading its URL as empty makes the next plan an update that takes the
 	// policy back.
@@ -106,11 +86,13 @@ func (r *sessionPolicyResource) Metadata(_ context.Context, req resource.Metadat
 
 func (r *sessionPolicyResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "The policy of one session, managed as code: what an agent connected over MCP may ask the session's browser to do.\n\n" +
+		MarkdownDescription: "The policy of one session, managed as code: which tool calls an agent connected over MCP may make: the browser (`browser_execute`), desktop control (`desktop_execute`) and the shell (the `exec` server).\n\n" +
+			"The policy is a Rego module of package `browserjs.policy` that defines `allow_tool_call`; what it is asked and the built-ins it may use are in `docs/contracts/policy/rego-contract.md` of the browserjs repository, and ready-made policies in `docs/contracts/policy/examples/`.\n\n" +
+			"~> **A policy that restricts `browser_execute` must deny `desktop_execute` and the `exec` server.** Either can drive the browser around the rules: the desktop through the address bar and DevTools, a shell command through the browser's own control ports. The API answers such a policy with a warning, which the plan and the apply show.\n\n" +
 			"Creating this resource puts the session's policy in managed-as-code mode: the UI shows it read-only with a link to `managed_url`. " +
 			"Destroying it resets the session to the unrestricted policy, editable in the UI again.\n\n" +
 			"A change to the policy is applied in place and restarts nothing; it never replaces the session. " +
-			"The policy is checked at plan time, and errors are reported with their line and column.\n\n" +
+			"The policy is checked at plan time, and errors are reported with their line and column, warnings as warnings.\n\n" +
 			"If somebody chooses \"Manage here instead\" in the UI, the next plan shows `managed_url` changing from empty, and the apply takes the policy back.\n\n" +
 			"The API token needs the scopes `policies:read` and `policies:write`.",
 		Attributes: map[string]schema.Attribute{
@@ -125,14 +107,9 @@ func (r *sessionPolicyResource) Schema(ctx context.Context, _ resource.SchemaReq
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 				Validators:          []validator.String{stringvalidator.RegexMatches(sessionID, "must be a session ID such as s-ab2cd")},
 			},
-			"json": schema.StringAttribute{
-				CustomType:          jsontypes.NormalizedType{},
-				Optional:            true,
-				MarkdownDescription: "A policy in the JSON format (see `browserjs_policy_document`, or `jsonencode`). Compared as parsed JSON, so formatting and key order are not a change. Exactly one of `json` and `rego` is required.",
-			},
 			"rego": schema.StringAttribute{
-				Optional:            true,
-				MarkdownDescription: "A policy as a Rego module of package `browserjs.policy`. Exactly one of `json` and `rego` is required.",
+				Required:            true,
+				MarkdownDescription: "The policy: a Rego module of package `browserjs.policy`, usually `file(\"${path.module}/policy.rego\")`. Compared as text, so a change of formatting is a change.",
 				Validators:          []validator.String{stringvalidator.LengthBetween(1, 65536)},
 			},
 			"managed_url": schema.StringAttribute{
@@ -156,7 +133,7 @@ func (r *sessionPolicyResource) Schema(ctx context.Context, _ resource.SchemaReq
 			},
 			"compiled_rego": schema.StringAttribute{
 				Computed:            true,
-				MarkdownDescription: "The Rego module in force. For `json`, the module generated from it.",
+				MarkdownDescription: "The Rego module in force: `rego`, or, while `state` is `invalid`, the last one that compiled.",
 			},
 			"state": schema.StringAttribute{
 				Computed:            true,
@@ -191,37 +168,14 @@ func (httpsURL) ValidateString(_ context.Context, req validator.StringRequest, r
 	}
 }
 
-func (r *sessionPolicyResource) ConfigValidators(context.Context) []resource.ConfigValidator {
-	return []resource.ConfigValidator{
-		resourcevalidator.ExactlyOneOf(path.MatchRoot("json"), path.MatchRoot("rego")),
-	}
-}
-
 func (r *sessionPolicyResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	r.data = configured(req.ProviderData, &resp.Diagnostics)
 }
 
-// sameJSON reports whether a and b are both known JSON texts with the same
-// meaning.
-func sameJSON(ctx context.Context, a, b jsontypes.Normalized, diags *diag.Diagnostics) bool {
-	if a.IsNull() || b.IsNull() || a.IsUnknown() || b.IsUnknown() {
-		return false
-	}
-	eq, d := a.StringSemanticEquals(ctx, b)
-	diags.Append(d...)
-	return eq
-}
-
 // sameSource reports whether a and b ask for the same policy under the same
-// management, JSON compared as parsed.
-func sameSource(ctx context.Context, a, b *sessionPolicyModel, diags *diag.Diagnostics) bool {
-	if a.JSON.IsUnknown() || b.JSON.IsUnknown() || a.Rego.IsUnknown() || b.Rego.IsUnknown() || a.ManagedURL.IsUnknown() {
-		return false
-	}
-	if a.JSON.IsNull() != b.JSON.IsNull() {
-		return false
-	}
-	if !a.JSON.IsNull() && !sameJSON(ctx, a.JSON, b.JSON, diags) {
+// management.
+func sameSource(a, b *sessionPolicyModel) bool {
+	if a.Rego.IsUnknown() || b.Rego.IsUnknown() || a.ManagedURL.IsUnknown() {
 		return false
 	}
 	return a.Rego.Equal(b.Rego) && a.ManagedURL.Equal(b.ManagedURL)
@@ -245,13 +199,7 @@ func (r *sessionPolicyResource) ModifyPlan(ctx context.Context, req resource.Mod
 		if resp.Diagnostics.HasError() {
 			return
 		}
-		// The same JSON written differently is not a change: plan the text
-		// already in the state, which Terraform accepts in place of the
-		// configuration's for exactly this purpose.
-		if sameJSON(ctx, plan.JSON, state.JSON, &resp.Diagnostics) && !plan.JSON.Equal(state.JSON) {
-			resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("json"), state.JSON)...)
-		}
-		if sameSource(ctx, &plan, &state, &resp.Diagnostics) {
+		if sameSource(&plan, &state) {
 			resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("version"), state.Version)...)
 			resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("hash"), state.Hash)...)
 			resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("compiled_rego"), state.CompiledRego)...)
@@ -259,13 +207,12 @@ func (r *sessionPolicyResource) ModifyPlan(ctx context.Context, req resource.Mod
 		}
 	}
 
-	kind, source, known := plan.source()
-	if !known || r.data == nil {
+	if plan.Rego.IsNull() || plan.Rego.IsUnknown() || r.data == nil {
 		return
 	}
-	v, err := r.data.client.ValidatePolicy(ctx, kind, source)
+	v, err := r.data.client.ValidatePolicy(ctx, plan.Rego.ValueString())
 	if client.StatusOf(err) == 503 {
-		resp.Diagnostics.AddAttributeWarning(sourceAttr(kind), "The policy was not checked at plan time",
+		resp.Diagnostics.AddAttributeWarning(regoAttr, "The policy was not checked at plan time",
 			err.Error()+"\n\nThe apply checks it again before anything is saved.")
 		return
 	}
@@ -273,28 +220,29 @@ func (r *sessionPolicyResource) ModifyPlan(ctx context.Context, req resource.Mod
 		apiError(&resp.Diagnostics, "check the policy", err)
 		return
 	}
-	policyDiagnostics(&resp.Diagnostics, kind, v.Errors, v.Warnings)
+	policyDiagnostics(&resp.Diagnostics, v.Errors, v.Warnings)
 	if !v.OK && len(v.Errors) == 0 {
-		resp.Diagnostics.AddAttributeError(sourceAttr(kind), "Invalid policy", "The API says the policy is not valid and gave no reason.")
+		resp.Diagnostics.AddAttributeError(regoAttr, "Invalid policy", "The API says the policy is not valid and gave no reason.")
 	}
 }
 
 // policyDiagnostics turns the API's errors and warnings about a policy into
-// diagnostics on the attribute it was written in, each with its position.
-func policyDiagnostics(diags *diag.Diagnostics, kind string, errs, warns []client.Diagnostic) {
-	attr := sourceAttr(kind)
+// diagnostics on rego, each with its position when the API gave one.
+func policyDiagnostics(diags *diag.Diagnostics, errs, warns []client.Diagnostic) {
 	for _, d := range errs {
-		diags.AddAttributeError(attr, "Invalid policy", diagnosticText(kind, d))
+		diags.AddAttributeError(regoAttr, "Invalid policy", diagnosticText(d))
 	}
 	for _, d := range warns {
-		diags.AddAttributeWarning(attr, "Policy warning", diagnosticText(kind, d))
+		diags.AddAttributeWarning(regoAttr, "Policy warning", diagnosticText(d))
 	}
 }
 
-func diagnosticText(kind string, d client.Diagnostic) string {
+// diagnosticText is "rego line 3, column 1: message (code)". A diagnostic
+// about the policy as a whole has no position, and is "message (code)".
+func diagnosticText(d client.Diagnostic) string {
 	var b strings.Builder
 	if d.Row > 0 {
-		fmt.Fprintf(&b, "%s line %d, column %d: ", kind, d.Row, d.Col)
+		fmt.Fprintf(&b, "rego line %d, column %d: ", d.Row, d.Col)
 	}
 	b.WriteString(d.Message)
 	if d.Code != "" {
@@ -307,17 +255,16 @@ func diagnosticText(kind string, d client.Diagnostic) string {
 // be in force. It returns nil after adding an error.
 func (r *sessionPolicyResource) write(ctx context.Context, plan *sessionPolicyModel, timeout time.Duration, diags *diag.Diagnostics) *client.Policy {
 	id := plan.SessionID.ValueString()
-	kind, source, _ := plan.source()
 	p, loading, err := r.data.client.PutPolicy(ctx, id, client.PolicyInput{
-		Kind:       kind,
-		Source:     source,
+		Kind:       client.KindRego,
+		Source:     plan.Rego.ValueString(),
 		Management: &client.Management{Mode: client.ModeIaC, ManagedURL: plan.ManagedURL.ValueString()},
 	})
 	if err != nil {
-		r.writeError(ctx, id, kind, err, diags)
+		r.writeError(ctx, id, err, diags)
 		return nil
 	}
-	policyDiagnostics(diags, kind, nil, p.Warnings)
+	policyDiagnostics(diags, nil, p.Warnings)
 	if !loading || !plan.WaitForReady.ValueBool() {
 		return p
 	}
@@ -341,9 +288,9 @@ func (r *sessionPolicyResource) write(ctx context.Context, plan *sessionPolicyMo
 		apiError(diags, "read the policy of session "+id, err)
 		return nil
 	case p.State == client.StateInvalid:
-		policyDiagnostics(diags, kind, p.Errors, nil)
+		policyDiagnostics(diags, p.Errors, nil)
 		if len(p.Errors) == 0 {
-			diags.AddAttributeError(sourceAttr(kind), "Invalid policy", "The policy was saved and did not compile; the API gave no reason.")
+			diags.AddAttributeError(regoAttr, "Invalid policy", "The policy was saved and did not compile; the API gave no reason.")
 		}
 		diags.AddError("The policy is not in force",
 			fmt.Sprintf("The policy of session %s was saved (version %d) and did not compile. The policy before it, if there was one, is still in force.", id, p.Version))
@@ -355,7 +302,7 @@ func (r *sessionPolicyResource) write(ctx context.Context, plan *sessionPolicyMo
 	return p
 }
 
-func (r *sessionPolicyResource) writeError(ctx context.Context, id, kind string, err error, diags *diag.Diagnostics) {
+func (r *sessionPolicyResource) writeError(ctx context.Context, id string, err error, diags *diag.Diagnostics) {
 	e, _ := err.(*client.APIError)
 	switch client.StatusOf(err) {
 	case 404:
@@ -374,9 +321,9 @@ func (r *sessionPolicyResource) writeError(ctx context.Context, id, kind string,
 		}
 		diags.AddError("The policy may not be written", detail)
 	case 422:
-		policyDiagnostics(diags, kind, e.Errors, e.Warnings)
+		policyDiagnostics(diags, e.Errors, e.Warnings)
 		if len(e.Errors) == 0 {
-			diags.AddAttributeError(sourceAttr(kind), "Invalid policy", err.Error())
+			diags.AddAttributeError(regoAttr, "Invalid policy", err.Error())
 		}
 	default:
 		apiError(diags, "save the policy of session "+id, err)
@@ -428,7 +375,10 @@ func (r *sessionPolicyResource) Read(ctx context.Context, req resource.ReadReque
 		apiError(&resp.Diagnostics, "read the policy of session "+id, err)
 		return
 	}
-	state.setAll(id, p)
+	state.setAll(id, p, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -439,7 +389,7 @@ func (r *sessionPolicyResource) Update(ctx context.Context, req resource.UpdateR
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if sameSource(ctx, &plan, &state, &resp.Diagnostics) {
+	if sameSource(&plan, &state) {
 		// Only wait_for_ready or the timeouts changed; nothing to send.
 		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 		return

@@ -31,7 +31,9 @@ Everything is in the namespace `browserjs-sessions`.
 | Routes `api-stripe-webhook` (`/stripe/webhook`) and `api-metronome-webhook` (`/metronome/webhook`), on the API host, public | every `pomerium-config.yaml` | the request's signature is the credential; the backend serves each only while its feature is on |
 | CronJob `billing-export`, its ServiceAccount, Role, RoleBinding, NetworkPolicy | `deploy/gke/billing-export.yaml` | **suspended** until the stage `enforce`; Accounts only |
 | Bucket `<project>-billing-export`, and the right of that ServiceAccount to add objects to it | `infra/main/billing.tf` | versioned, 90 days; see "The export" for why it is here already |
-| Secret `stripe` (`STRIPE_API_KEY`, `STRIPE_WEBHOOK_SECRET`), ConfigMap `billing-mode` (`STRIPE_MODE`), Secret `metronome` (`METRONOME_API_TOKEN`, `METRONOME_WEBHOOK_SECRET`) | not in the repository | written by the deploy workflow (`hack/billing-secrets.sh`), or absent; placeholders in `secrets.example.yaml` |
+| Secret `stripe` (`STRIPE_API_KEY`), ConfigMap `billing-mode` (`STRIPE_MODE`), Secret `metronome` (`METRONOME_API_TOKEN`, `METRONOME_WEBHOOK_SECRET`) | not in the repository | written by the deploy workflow (`hack/billing-secrets.sh`), or absent; placeholders in `secrets.example.yaml` |
+| ConfigMap `billing-iac` (`ids.json`: the IDs of what OpenTofu made) | not in the repository | written by the **billing apply** workflow; an optional source of the backend's `/etc/browserjs` volume, read as `/etc/browserjs/billing-iac/ids.json` (`BILLING_IDS`'s default). Absent, the backend starts without the file; written later, it appears with no restart |
+| Secret `stripe-webhook` (`STRIPE_WEBHOOK_SECRET`, label `browserjs.dev/stripe-mode`) | not in the repository | written by the **billing apply** workflow from OpenTofu's state ([billing-iac.md](billing-iac.md)); the deploy only checks it. Nobody enters this secret |
 
 The backend's `/etc/browserjs` is now one projected volume of two
 ConfigMaps (`session-blueprint`, `billing-catalogue`), which keeps
@@ -101,9 +103,12 @@ is not set or `test`, production when it is `live`. It is not in the files.
 
 The deploy workflow's step "Billing secrets" (`hack/billing-secrets.sh`):
 
-- **Stripe.** With `STRIPE_MODE` set it writes the Secret `stripe` and the
-  ConfigMap `billing-mode` together from the secrets of that mode; not set,
-  it deletes both.
+- **Stripe.** With `STRIPE_MODE` set it writes the Secret `stripe` (the API
+  key of that mode) and the ConfigMap `billing-mode` together; not set, it
+  deletes both. The webhook's signing secret is not its to write: the
+  Secret `stripe-webhook` is made by **billing apply**, and the deploy
+  only checks that it is there and is that mode's (its label), and never
+  deletes it.
 - **Metronome.** With the stage of `deploy/gke` at `meter` or `enforce` it
   writes the Secret `metronome` from the secrets of the environment; at
   `off` it deletes it.
@@ -115,9 +120,12 @@ The deploy workflow's step "Billing secrets" (`hack/billing-secrets.sh`):
 `STRIPE_MODE`, none is, and a repository with no Stripe account and no
 Metronome account deploys. A secret that is needed and empty stops the run
 before it touches the cluster, naming the secret; so does a Stripe key of
-the other mode (by its prefix: the backend would refuse to start) and a
-webhook secret that is not a `whsec_`. No value is printed, by the script
-or in an error.
+the other mode (by its prefix: the backend would refuse to start). With
+`STRIPE_MODE` set, a cluster with no Secret `stripe-webhook`, or with the
+other mode's, stops the run in the step "Billing secrets", before anything
+is written, with the message to run **billing apply** for that mode (a
+backend told the mode and given no signing secret would not start). No
+value is printed, by the script or in an error.
 
 What the deploy refuses (step "Billing stage and secrets", before it signs
 in to the cluster):
@@ -125,10 +133,10 @@ in to the cluster):
 | Files | `STRIPE_MODE` | |
 |---|---|---|
 | `off` | set | refused: the backend requires `BILLING` with `STRIPE_MODE`, and would not start |
-| `meter` | not set, `test` | deployed if both `METRONOME_SANDBOX_` secrets are set (and with `test`, both `STRIPE_TEST_` secrets) |
+| `meter` | not set, `test` | deployed if both `METRONOME_SANDBOX_` secrets are set (and with `test`, `STRIPE_TEST_API_KEY`, and the cluster has the test mode's `stripe-webhook`) |
 | `enforce` | not set | refused: the backend refuses to enforce without Stripe |
 | `enforce` | `test` | as `meter` with `test` |
-| `meter`, `enforce` | `live` | deployed if both `METRONOME_PRODUCTION_` and both `STRIPE_LIVE_` secrets are set |
+| `meter`, `enforce` | `live` | deployed if both `METRONOME_PRODUCTION_` secrets and `STRIPE_LIVE_API_KEY` are set, and the cluster has the live mode's `stripe-webhook` |
 | `meter` or `enforce`, operator image not pinned | any | refused by `hack/pin-images.sh --check` |
 
 The stages of the contract, in these terms: 1 is `meter`; 2 is `meter` with
@@ -142,23 +150,64 @@ None is needed while billing is off and `STRIPE_MODE` is not set.
 
 | Kind | Name | Needed from | Used by |
 |---|---|---|---|
-| secret | `METRONOME_SANDBOX_API_TOKEN` | stage 1 (`meter`): an API token of Metronome's sandbox | `deploy.yml` |
+| secret | `METRONOME_SANDBOX_API_TOKEN` | stage 1 (`meter`): an API token of Metronome's sandbox | `deploy.yml`, `billing-plan.yml`, `billing-apply.yml` |
 | secret | `METRONOME_SANDBOX_WEBHOOK_SECRET` | stage 1: the secret of the sandbox's webhook destination `https://api.computeruse.site/metronome/webhook` | `deploy.yml` |
 | variable | `STRIPE_MODE` | `test` at stage 2, `live` at stage 4; not set before | `deploy.yml` |
-| secret | `STRIPE_TEST_API_KEY` | stage 2: the sandbox's restricted key `backend` (`rk_test_...`) | `deploy.yml` |
-| secret | `STRIPE_TEST_WEBHOOK_SECRET` | stage 2: the signing secret of the sandbox's webhook endpoint `https://api.computeruse.site/stripe/webhook` (`whsec_...`) | `deploy.yml` |
-| secret | `STRIPE_LIVE_API_KEY`, `STRIPE_LIVE_WEBHOOK_SECRET` | stage 4 | `deploy.yml` |
+| secret | `STRIPE_TEST_SETUP_KEY` | before stage 1: the sandbox's restricted key `opentofu` (permissions in [billing-iac.md](billing-iac.md)) | `billing-plan.yml`, `billing-apply.yml` |
+| secret | `STRIPE_TEST_API_KEY` | stage 2: the sandbox's restricted key `backend` (`rk_test_...`, the run-time permissions of `deploy.md`) | `deploy.yml` |
+| secret | `STRIPE_LIVE_API_KEY` | stage 4 | `deploy.yml` |
 | secret | `METRONOME_PRODUCTION_API_TOKEN`, `METRONOME_PRODUCTION_WEBHOOK_SECRET` | stage 4 | `deploy.yml` |
 
 The deploy job runs in the environment `production`; a repository-level
 variable and repository-level secrets reach it.
 
-The objects in Stripe (products, prices, the portal's configuration) and in
-Metronome (billable metrics, products, the rate card, the alert) are made
-with OpenTofu from `infra/billing/`, by its own plan and apply workflows,
-which use `STRIPE_TEST_SETUP_KEY` (later `STRIPE_LIVE_SETUP_KEY`) and the
-same Metronome tokens as above. They are not part of this change, and
-there is no setup workflow or command.
+There is no `STRIPE_TEST_WEBHOOK_SECRET` or `STRIPE_LIVE_WEBHOOK_SECRET`:
+OpenTofu makes the webhook endpoint, and **billing apply** copies its
+signing secret from the state into the cluster. The objects in Stripe
+(products, prices, the endpoint, the portal's configuration) and in
+Metronome (billable metrics, products, the rate card, the alert) are all
+made that way, from `infra/billing`; there is no setup workflow or command.
+
+## From today's `off` to working test-mode billing
+
+In order. Every step is a GitHub setting, a workflow or a pull request.
+
+1. **Secrets** (repository Settings, Secrets and variables, Actions):
+   `STRIPE_TEST_SETUP_KEY`, `STRIPE_TEST_API_KEY`,
+   `METRONOME_SANDBOX_API_TOKEN`. Two different Stripe keys: `opentofu`
+   makes objects, `backend` is what the product runs with.
+2. In Metronome's sandbox, by hand (it has no API for this): the webhook
+   destination `https://api.computeruse.site/metronome/webhook`; its
+   secret into `METRONOME_SANDBOX_WEBHOOK_SECRET`.
+3. **Variable** `STRIPE_MODE` = `test`. From here until step 6 is deployed
+   the `deploy` workflow refuses to run (the mode is set and billing is
+   off in the files): that is intended, do not deploy in between.
+4. Workflow **billing plan** (by hand, or on any pull request touching
+   `infra/billing`): read the plan for `test`.
+5. Workflow **billing apply**, on `main`, mode `test`, confirm `apply`. It
+   makes the objects in both services and writes the Secret
+   `stripe-webhook` (the namespace exists: the product is deployed). It
+   says "deployment/backend does not take secret/stripe-webhook yet" if the
+   manifests of this change are not deployed yet; that is fine.
+6. A pull request with
+   `hack/pin-images.sh billing-operator=sha256:… backend=sha256:…` (the
+   digests of the latest `images` run on `main`) and
+   `hack/billing-stage.sh gke meter`; merge.
+7. Workflow **deploy**, on `main`, confirm `deploy`.
+8. Workflow **cluster info**, section "Billing": `BILLING=meter` on both,
+   `billing-operator` READY 1, Secrets `metronome` (two keys), `stripe`
+   (one key) and `stripe-webhook` (label `test`), `billing-mode` says
+   `test`, Lease `billing-observer` renewed under two minutes ago.
+9. In the app: add the card `4242 4242 4242 4242`; in Stripe's sandbox the
+   webhook endpoint's deliveries are 200.
+
+To meter first and add payments later, leave out `STRIPE_TEST_API_KEY` and
+step 3 (and so `STRIPE_MODE`); **billing apply** then makes the objects
+but does not copy the signing secret, and has to be run again after the
+variable is set.
+
+Then `enforce` is one more pull request (`hack/billing-stage.sh gke
+enforce`) and a `deploy`.
 
 ## Rolling out on production, from workflows only
 
@@ -170,9 +219,9 @@ read-only workflow; its summary has a "Billing" section.
 |---|---|---|---|
 | 0. Install | nothing | this one | `billing-operator` WANTED 0. The CRD `established=True`. No `BILLING` on either Deployment. No ConfigMap `billing-mode`, no Secret `stripe` or `metronome`. CronJob `billing-export` SUSPENDED true. Pomerium and the backend restarted once (below). Sessions and the warm pool untouched |
 | 1. Meter | tracks A and D merged; the `images` run on `main` has published `billing-operator`, and the pinned backend is one that knows `BILLING`; `infra/billing` applied to Metronome's sandbox (the rate card exists: the backend checks at start); the two `METRONOME_SANDBOX_` secrets | `hack/pin-images.sh billing-operator=sha256:… backend=sha256:…` and `hack/billing-stage.sh gke meter` | `billing-operator` READY 1 on the system node, no restarts. `BILLING=meter` on both. Secret `metronome` with two keys. Lease `billing-observer` RENEWED under two minutes ago. After a sign-in: an Account with a METRONOME customer |
-| 2. Test payments | track C merged and pinned; `infra/billing` applied to Stripe's sandbox; the webhook endpoint and the two `STRIPE_TEST_` secrets | none: set the variable `STRIPE_MODE` to `test`, run `deploy` | ConfigMap `billing-mode` says `test`; Secret `stripe` has two keys; the backend restarted and is ready. In Stripe's Dashboard the webhook endpoint's deliveries are 200 |
+| 2. Test payments | track C merged and pinned; `STRIPE_TEST_API_KEY`; the variable `STRIPE_MODE` = `test`; then **billing apply** with mode `test` (it writes `stripe-webhook`) | none, unless done together with step 1 (above) | ConfigMap `billing-mode` says `test`; Secret `stripe` has one key; Secret `stripe-webhook` labelled `test`; the backend restarted and is ready. In Stripe's Dashboard the webhook endpoint's deliveries are 200 |
 | 3. Enforce | stage 2 checked by hand | `hack/billing-stage.sh gke enforce` | `BILLING=enforce` on both. CronJob SUSPENDED false; the day after, LAST-SUCCESS set and a job `Complete` |
-| 4. Live payments | the product owner's steps for live mode; `infra/billing` applied to production of both; the `STRIPE_LIVE_` and `METRONOME_PRODUCTION_` secrets; the sandbox customer IDs cleared from the Accounts (below) | none: the variable `STRIPE_MODE` to `live`, run `deploy` | `billing-mode` says `live`; both Secrets changed; the backend and the operator restarted and are ready |
+| 4. Live payments | the product owner's steps for live mode; the `STRIPE_LIVE_SETUP_KEY`, `STRIPE_LIVE_API_KEY` and `METRONOME_PRODUCTION_` secrets; the variable `STRIPE_MODE` to `live`; then **billing apply** with mode `live` | none: run `deploy` | `billing-mode` says `live`; both Secrets changed; the backend and the operator restarted and are ready |
 
 Rollback, each one `deploy` run:
 
@@ -182,7 +231,9 @@ Rollback, each one `deploy` run:
 - From 2 or 4: delete the variable `STRIPE_MODE` (or set it back to
   `test`). The Secrets and the ConfigMap are removed or replaced and the
   pods restart. Not while the stage is `enforce` (refused): go back to
-  `meter` in the same run.
+  `meter` in the same run. Going from `live` back to `test` also
+  needs **billing apply** with mode `test` first, so that `stripe-webhook`
+  is the test mode's again.
 - From 3: `hack/billing-stage.sh gke meter`. Nothing is refused any more;
   sessions put to sleep for credit stay asleep until their users wake them.
   The export is suspended again; what it wrote stays in the bucket.
@@ -200,15 +251,11 @@ changes either does: a few seconds in which requests fail and screens
 reconnect. No session pod, disk, snapshot or warm pod is touched, and the
 backend behaves as before.
 
-**Stage 4 and `metronomeCustomerId`: an open contract question.** The
-contract's stage 4 says every Account's `metronomeCustomerId` and `credit`
-are "cleared by the documented command" when the environment changes from
-sandbox to production. The Account CRD's rule "metronomeCustomerId cannot
-be changed once set" refuses exactly that (the kind job shows the refusal
-of a removal). As the contracts stand the only way is to delete the
-Accounts and let the backend make them again, which also loses the
-recorded outcome of the sign-up credit. This needs a contract pull request
-before stage 4; nothing here works around it.
+**Stage 4 clears nothing.** An Account keeps Stripe's and Metronome's
+state per mode, side by side: `spec.stripe.test` and `spec.stripe.live`,
+`spec.metronome.sandbox` and `spec.metronome.production`. Going live, the
+backend starts filling the live and production halves; the test and sandbox
+halves stay as they were, and going back finds them.
 
 ## The catalogue
 
@@ -302,7 +349,7 @@ Without a cluster:
   operator accepted with billing off and refused with it on;
 - `hack/billing-secrets.sh --check`: nothing needed with billing off and no
   mode; Metronome's secrets required at `meter`, the sandbox's or
-  production's by the mode; Stripe's by the mode; the other mode's or the
+  production's by the mode; Stripe's key by the mode; the other mode's or the
   other environment's secrets, and a key of the other mode, each refused,
   with no value in the output;
 - the Go test of the API host's routes (`backend/internal/auth/deploy_test.go`).
@@ -313,8 +360,10 @@ labels, volumes and variables:
 
 1. The Account CRD is accepted, with no status subresource. Each rule
    refuses what its message says: an Account not named by its hash, a
-   changed owner, a changed and a removed `stripeCustomerId`, a changed and
-   a removed `metronomeCustomerId`, a changed `signupCredit`; and the
+   changed owner; in each of the four modes (`stripe.test`, `stripe.live`,
+   `metronome.sandbox`, `metronome.production`) a changed and a removed
+   `customerId`; in each Stripe mode a changed `signupCredit`; a removed
+   mode, and a removed `spec.stripe` or `spec.metronome`; and the
    allowed changes beside them (the card state, `credit`) are accepted.
 2. RBAC, asked (`kubectl auth can-i`) and tried (requests as each
    ServiceAccount): the backend cannot watch or delete Accounts; the
@@ -328,10 +377,12 @@ labels, volumes and variables:
    both without a restart (same pods, no container restarted).
    `hack/billing-secrets.sh` with made-up values, through the stages in
    order: nothing needed and nothing made at `off`; each missing or
-   wrong-mode secret stops it and makes nothing; at `meter` only the Secret
+   wrong-mode secret stops it and makes nothing, and so does a missing or
+   wrong-mode `stripe-webhook`; at `meter` only the Secret
    `metronome`; with `test` the Secret `stripe` and the ConfigMap as well;
    restarted pods have the values in their environment (the backend all
-   five, the operator the token only); with `live` the Secret `metronome`
+   five, the signing secret from `stripe-webhook`; the operator the token
+   only); with `live` the Secret `metronome`
    becomes production's; each change is reported once and not again; back
    at `off` all three are removed. Its output is searched for the values.
 5. The export job, from `deploy/gke`'s own CronJob with no bucket, completes
@@ -375,7 +426,9 @@ Look for these at the step named:
    the kind job can run the very same code. Beyond the contract it checks
    the Stripe key's prefix against the mode, and the stage against the
    mode, before anything is changed; and at `off` it deletes the Secret
-   `metronome`, as it does Stripe's without a mode.
+   `metronome`, as it does Stripe's without a mode. The check of
+   `stripe-webhook` needs the cluster, so it is in that step and not in
+   the first one.
 4. **Every reference to the Secret `metronome` is `optional: true`**, as
    Stripe's are, so that the manifests apply with billing off and no
    Secret. The contract says "with `secretKeyRef`"; the backend itself

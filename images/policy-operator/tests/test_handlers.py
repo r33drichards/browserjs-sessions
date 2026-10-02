@@ -69,8 +69,8 @@ def conds(status):
 async def test_create_writes_status_as_the_crd_describes_it(world):
     op, _, index = world
     await op.first_pass([])
-    source = example("one-site", "policy.json")
-    status = await reconcile(index, resource("s-aaaaa", "json", source, generation=1))
+    source = example("one-site", "rego")
+    status = await reconcile(index, resource("s-aaaaa", "rego", source, generation=1))
     assert set(status) == {"observedGeneration", "rego", "hash", "regoGeneration", "errors", "warnings",
                            "loaded", "lastAppliedTime", "conditions"}
     assert status["observedGeneration"] == 1 and status["regoGeneration"] == 1

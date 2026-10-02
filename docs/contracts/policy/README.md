@@ -11,10 +11,8 @@ request, and say which tracks it affects.
 |---|---|---|
 | [`deploy/base/crd-sessionpolicy.yaml`](../../../deploy/base/crd-sessionpolicy.yaml) | the `SessionPolicy` custom resource | A, B, C |
 | [`deploy/base/crd-apitoken.yaml`](../../../deploy/base/crd-apitoken.yaml) | the `APIToken` custom resource | E |
-| [`json-policy.schema.json`](json-policy.schema.json) | the JSON policy format | A, D, F |
-| [`json-to-rego.md`](json-to-rego.md) | how JSON becomes Rego, exactly | A |
-| [`examples/`](examples/) | five policies; for each the Rego it compiles to and decisions it must give | A (tests), D (presets), F (docs) |
-| [`rego-contract.md`](rego-contract.md) | package, rule, input, decision path, tenant checks, bundle layout | A, B |
+| [`examples/`](examples/) | seven policies in Rego, which are the presets; for each the decisions it must give | A (tests), D (presets), F (docs) |
+| [`rego-contract.md`](rego-contract.md) | the one policy reference: package, rule, the input for every server and tool, the tools that undo each other's rules and the warnings about them, decision path, tenant checks, bundle layout | A, B, D, F |
 | [`input-sample.json`](input-sample.json) | an `mcp_tools` input as mcp-js sends it | A, D |
 | [`exec-input.md`](exec-input.md), [`tools/`](tools/) | the `mcp_tools` input for the `exec` server (mcp-exec: `exec`, `stream_logs`, `search_logs`, `kill`): argument schemas, six Rego policies with their cases | A, D, F |
 | [`decision-module.rego.tmpl`](decision-module.rego.tmpl) | the platform module generated per session | A |
@@ -36,11 +34,10 @@ evaluates every case the way OPA will be asked:
 
 ```
 python3 docs/contracts/policy/spike/run-cases.py "$(command -v opa)" docs/contracts/policy
-86/86 cases pass
+264/264 cases pass
 ```
 
-The Rego policies for the exec server (`tools/examples/`, written by hand, no
-JSON form) have a runner of their own, which also applies the operator's
+The Rego policies for the exec server (`tools/examples/`, written by hand) have a runner of their own, which also applies the operator's
 tenant checks:
 
 ```
@@ -48,8 +45,12 @@ python3 docs/contracts/policy/tools/run-cases.py "$(command -v opa)" docs/contra
 277/277 cases pass
 ```
 
-Track A's translator must produce each `examples/<name>.rego` from
-`examples/<name>.policy.json` byte for byte, and its tests must run the cases.
+The operator's tests run the same cases through its own `check`, and
+require that no example earns a warning.
+
+Policies are Rego only. The JSON format (`json-policy.schema.json`,
+`json-to-rego.md`) was removed on 2026-10-02, before any policy was
+enforced; nothing was migrated because nothing existed.
 
 ## Versions
 

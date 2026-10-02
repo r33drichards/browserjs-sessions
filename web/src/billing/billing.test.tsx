@@ -120,7 +120,7 @@ describe("the gate", () => {
     expect(within(await banner()).getByRole("button", { name: "Add a card" })).toBeTruthy()
     expect(within(await banner()).queryByRole("button", { name: "Dismiss" })).toBeNull()
     expect(row.textContent).toContain("Asleep: no payment method")
-    expect(within(row).getByRole("button", { name: "Resume" }).getAttribute("aria-disabled")).toBe("true")
+    expect(within(row).getByRole("button", { name: "Wake" }).getAttribute("aria-disabled")).toBe("true")
     expect(within(row).getByRole("button", { name: "Delete" }).hasAttribute("disabled")).toBe(false)
   })
 
@@ -176,12 +176,12 @@ describe("banners and the balance", () => {
     expect(screen.getByTestId("viewer")).toBeTruthy()
   })
 
-  it("exhausted: asleep and kept, with the list saying why and Resume disabled", async () => {
+  it("exhausted: asleep and kept, with the list saying why and Wake disabled", async () => {
     open("/", "exhausted")
     expect((await banner()).textContent).toMatch(/You are out of credit\. Your sessions are asleep and kept\. Your plan's credit returns on \d+ \w+\./)
     const row = (await screen.findByRole("link", { name: "research" })).closest("tr")!
     expect(row.textContent).toContain("Asleep: out of credit")
-    expect(within(row).getByRole("button", { name: "Resume" }).getAttribute("aria-disabled")).toBe("true")
+    expect(within(row).getByRole("button", { name: "Wake" }).getAttribute("aria-disabled")).toBe("true")
   })
 
   it("deletion: names the day, on the banner and on each session, and cannot be dismissed", async () => {
@@ -376,7 +376,10 @@ describe("the billing page", () => {
     expect(text()).toContain("10 sessions")
     expect(text()).toContain("4 awake at once")
     expect(screen.getAllByText("Current plan")).toHaveLength(1)
-    expect(screen.getAllByRole("button", { name: /^Change or cancel plan/ })).toHaveLength(2)
+    // A subscriber changes plan here, and cancels in the portal.
+    expect(button("Downgrade to Starter").textContent).toBe("Downgrade at the period's end")
+    expect(button("Cancel plan")).toBeTruthy()
+    expect(screen.queryByRole("button", { name: /^Change or cancel plan/ })).toBeNull()
     expect(text()).toMatch(/Renews \d+ \w+ \d{4}/)
 
     expect(text()).toContain("Visa ···· 4242, expires 08/28")
@@ -388,6 +391,21 @@ describe("the billing page", () => {
     expect(rows).toHaveLength(6)
     expect(rows[0].textContent).toMatch(/^research\d+ h \d\d\$\d+\.\d\d\$\d+\.\d\d\$\d+\.\d\d$/)
     expect(screen.getByRole("figure").querySelectorAll(".wf-chart-day").length).toBeGreaterThan(5)
+  })
+
+  it("a subscriber changes plan without leaving: a downgrade waits, and Cancel plan is the portal", async () => {
+    const { sent } = open("/billing", "active")
+    await screen.findByTestId("plan-pro")
+    fireEvent.click(button("Downgrade to Starter"))
+    await waitFor(() => expect(sent.find(r => r.path === "/api/billing/subscription")?.body).toEqual({ item: "cu_starter_monthly_v1" }))
+    expect((await banner()).textContent).toMatch(/Your plan changes to Starter on \d+ \w+\. Until then it is as it is\./)
+    // Not Checkout, not the portal: the browser went nowhere.
+    expect(went).toEqual([])
+    expect(sent.some(r => r.path === "/api/billing/checkout" || r.path === "/api/billing/portal")).toBe(false)
+    expect(screen.getByTestId("plan-pro").textContent).toBe("Pro ●")
+
+    fireEvent.click(button("Cancel plan"))
+    await waitFor(() => expect(went).toEqual(["/billing?portal=mock"]))
   })
 
   it("pay as you go: Subscribe goes to Checkout with the plan", async () => {

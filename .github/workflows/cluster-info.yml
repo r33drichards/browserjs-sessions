@@ -11,6 +11,13 @@ name: cluster info
 # It does sign in as the deployer service account, because that is the only
 # identity GitHub Actions has on the cluster, which is why it runs on main
 # only. Secrets are never read; anything a pod wrote to its log is shown.
+#
+# Pod logs hold users' e-mail addresses, and a public repository's logs,
+# summaries and artifacts can be read by anyone. In a public repository the
+# report is therefore never printed: it is encrypted with age to the public
+# key in the repository variable CLUSTER_INFO_AGE_RECIPIENT and uploaded as an
+# artifact, and without that variable the workflow refuses to run. To read it:
+#   gh run download <run id> -n cluster-info && age -d -i key.txt status.md.age
 
 on:
   workflow_dispatch:
@@ -63,6 +70,8 @@ jobs:
           POD_NAMESPACE: ${{ inputs.pod_namespace }}
           SANDBOX: ${{ inputs.sandbox }}
           TAIL: ${{ inputs.tail }}
+          PRIVATE: ${{ github.event.repository.private }}
+          AGE_RECIPIENT: ${{ vars.CLUSTER_INFO_AGE_RECIPIENT }}
         run: |
           if [ "$REF" != "refs/heads/main" ]; then
             echo "::error::cluster info runs only on refs/heads/main, not $REF (the deployer account is bound to it)"
@@ -77,6 +86,10 @@ jobs:
           done
           if [[ ! "$TAIL" =~ ^[0-9]{1,5}$ ]]; then
             echo "::error::tail must be a number of lines"
+            exit 1
+          fi
+          if [ "$PRIVATE" != "true" ] && [[ ! "$AGE_RECIPIENT" =~ ^age1[a-z0-9]{58}$ ]]; then
+            echo "::error::this repository is public and pod logs hold e-mail addresses: set the repository variable CLUSTER_INFO_AGE_RECIPIENT to an age public key (age-keygen) to get the report as an encrypted artifact"
             exit 1
           fi
 
@@ -100,17 +113,37 @@ jobs:
           project_id: ${{ vars.GCP_PROJECT_ID }}
           use_dns_based_endpoint: "true"
 
-      - name: Status to job summary
+      - name: Status
         env:
           POD: ${{ inputs.pod }}
           POD_NAMESPACE: ${{ inputs.pod_namespace }}
           SANDBOX: ${{ inputs.sandbox }}
           TAIL: ${{ inputs.tail }}
+          PRIVATE: ${{ github.event.repository.private }}
+          AGE_RECIPIENT: ${{ vars.CLUSTER_INFO_AGE_RECIPIENT }}
         run: |
           {
             echo "## cluster info"
             hack/gke-status.sh --full
           } > "${RUNNER_TEMP}/status.md" 2>&1 || true
-          # A job summary holds at most 1 MiB; the whole of it is in the log.
-          head -c 900000 "${RUNNER_TEMP}/status.md" >> "$GITHUB_STEP_SUMMARY"
-          cat "${RUNNER_TEMP}/status.md"
+          if [ "$PRIVATE" = "true" ]; then
+            # A job summary holds at most 1 MiB; the whole of it is in the log.
+            head -c 900000 "${RUNNER_TEMP}/status.md" >> "$GITHUB_STEP_SUMMARY"
+            cat "${RUNNER_TEMP}/status.md"
+            exit 0
+          fi
+          # Public: nothing of the report reaches the log or the summary.
+          sudo apt-get install -y --no-install-recommends age >/dev/null
+          mkdir "${RUNNER_TEMP}/report"
+          age -r "$AGE_RECIPIENT" -o "${RUNNER_TEMP}/report/status.md.age" "${RUNNER_TEMP}/status.md"
+          rm "${RUNNER_TEMP}/status.md"
+          echo "The report is the artifact \`cluster-info\`, encrypted to \`$AGE_RECIPIENT\`." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the encrypted report
+        if: ${{ !github.event.repository.private }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cluster-info
+          path: ${{ runner.temp }}/report/status.md.age
+          if-no-files-found: error
+          retention-days: 7

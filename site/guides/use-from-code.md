@@ -25,7 +25,7 @@ agent its own browser tab with the `tab` parameter of `browser_execute`.
 | What you see | Why |
 | --- | --- |
 | Calls answer 404 after sign-in | The account does not own the session, or the session was deleted |
-| Calls answer 409 | The session is stopped. Resume it in the app |
+| Calls answer 409 | The session is stopped. Start it in the app, or `POST /v1/sessions/{id}/wake` |
 | A call answers 504 with `Retry-After` | The session was still waking. Try again |
 
 ## Without a person: API tokens
@@ -58,7 +58,7 @@ Header: Authorization: Bearer <token>
 | Scope | Allows |
 | --- | --- |
 | `sessions:read` | List and read sessions |
-| `sessions:write` | Create, rename, stop, resume and delete sessions |
+| `sessions:write` | Create, rename, sleep, wake, stop, resume and delete sessions |
 | `sessions:connect` | Call a session's MCP endpoint |
 | `policies:read` | Read policies |
 | `policies:write` | Change policies |

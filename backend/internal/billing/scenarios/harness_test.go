@@ -21,6 +21,7 @@ import (
 	"github.com/r33drichards/browserjs-sessions/backend/internal/billing"
 	"github.com/r33drichards/browserjs-sessions/backend/internal/billing/billingtest"
 	"github.com/r33drichards/browserjs-sessions/backend/internal/billing/metronome"
+	"github.com/r33drichards/browserjs-sessions/backend/internal/billing/stripe"
 	"github.com/r33drichards/browserjs-sessions/backend/internal/idle"
 	"github.com/r33drichards/browserjs-sessions/backend/internal/proxy"
 	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
@@ -143,21 +144,31 @@ func newWorld(t *testing.T, with func(*billing.Config)) *world {
 		Billing: w.enforcer,
 		Target:  func(sessions.Session, int) string { return pod.Listener.Addr().String() },
 	}
-	stub := &billingtest.StripeStub{Accounts: w.accounts, Ledger: w.ledger, Stripe: w.stripe, Clock: w.clock, Catalogue: catalogue,
-		Secret: billingtest.WebhookSecret, PublicURL: publicURL, SignupCredit: cfg.SignupCredit}
+	// The Stripe side is the real one (backend/internal/billing/stripe):
+	// its checkout route and its webhook handler, over the fake Stripe.
+	payments, err := stripe.New(w.accounts, w.ledger, w.stripe, w.clock, stripe.Options{
+		Mode: "test", WebhookSecret: billingtest.WebhookSecret, PublicURL: publicURL,
+		NoSignupCredit: !cfg.SignupCredit, Catalogue: catalogue,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := payments.RefreshPrices(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 
 	apiMux := http.NewServeMux()
 	sessionAPI := api.New(w.sessions, owners, urls, 5)
 	sessionAPI.EnableBilling(w.enforcer)
 	(&billing.Handlers{Enforcer: w.enforcer, Stripe: w.stripe}).Register(apiMux)
-	stub.Register(apiMux)
+	payments.Register(apiMux)
 	sessionAPI.Register(apiMux)
 	w.proxy.RegisterApp(apiMux)
 
 	app := http.NewServeMux()
 	app.Handle("/api/", auth.Middleware(textVerifier{})(apiMux))
 	// Stripe's webhook: nobody signs in, the signature is the credential.
-	app.HandleFunc("/stripe/webhook", stub.Webhook)
+	app.Handle(stripe.WebhookPath, payments.Webhook())
 	app.Handle("/metronome/webhook", &metronome.Webhook{Accounts: w.accounts, Ledger: w.ledger, Clock: w.clock, Secret: billingtest.MetronomeSecret})
 	w.handler = w.proxy.Handler(app)
 	return w
@@ -204,13 +215,15 @@ func (w *world) mcp(as, id string) response {
 	return response{rec}
 }
 
-// webhook posts an event to the webhook, correctly signed.
+// webhook posts an event to Stripe's webhook, correctly signed. The
+// handler verifies with Stripe's SDK, which reads the machine's clock for
+// the signature's age, so that is the time it is signed at.
 func (w *world) webhook(e billingtest.Event) response {
 	w.t.Helper()
 	body := e.Body()
 	req := httptest.NewRequest("POST", "https://"+apiHost+"/stripe/webhook", bytes.NewReader(body))
 	req.Host = apiHost
-	req.Header.Set("Stripe-Signature", billingtest.Sign(billingtest.WebhookSecret, body, w.clock.Now()))
+	req.Header.Set("Stripe-Signature", billingtest.Sign(billingtest.WebhookSecret, body, time.Now()))
 	rec := httptest.NewRecorder()
 	w.handler.ServeHTTP(rec, req)
 	return response{rec}

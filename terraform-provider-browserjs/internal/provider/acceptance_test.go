@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
@@ -78,46 +79,17 @@ resource "browserjs_session_policy" "test" {
 `, name, managedURL, policy)
 }
 
-const (
-	accNoScripting = `
-  json = jsonencode({
-    version = 1
-    allow   = { operations = ["*"] }
-    deny    = { operations = ["evaluate", "setContent"] }
-  })`
-	// The same policy as text, in another order and layout.
-	accNoScriptingReformatted = `
-  json = <<-EOT
-    {
-      "deny":  { "operations": ["evaluate", "setContent"] },
-      "version": 1,
-      "allow": { "operations": ["*"] }
-    }
-  EOT`
-	accObserveOnly = `
-  json = jsonencode({
-    version = 1
-    allow   = { operations = ["screenshot", "url", "wait"] }
-  })`
-	accRego = `
-  rego = <<-EOT
-    package browserjs.policy
+// accRego is a rego argument: source as an indented heredoc.
+func accRego(source string) string {
+	return "  rego = <<-EOT\n    " + strings.ReplaceAll(strings.TrimRight(source, "\n"), "\n", "\n    ") + "\n  EOT"
+}
 
-    import rego.v1
-
-    allow_tool_call if {
-    	input.server == "browser"
-    	input.tool == "browser_execute"
-    }
-  EOT`
-	accBrokenRego = `
-  rego = <<-EOT
-    package browserjs.policy
-
-    import rego.v1
-
-    allow_tool_call if {
-  EOT`
+var (
+	accNoScripting = accRego(noScripting)
+	accObserveOnly = accRego(observeOnly)
+	accBrowserOnly = accRego(browserOnly)
+	accBypassable  = accRego(bypassable)
+	accBrokenRego  = accRego("package browserjs.policy\n\nimport rego.v1\n\nallow_tool_call if {")
 )
 
 func TestAccSessionAndPolicy(t *testing.T) {
@@ -150,8 +122,8 @@ func TestAccSessionAndPolicy(t *testing.T) {
 				),
 			},
 			{
-				// The same JSON written differently is not a change.
-				Config: accConfig(name, accNoScriptingReformatted),
+				// The same policy again is not a change.
+				Config: accConfig(name, accNoScripting),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
 				},
@@ -171,8 +143,8 @@ func TestAccSessionAndPolicy(t *testing.T) {
 			{ResourceName: policy, ImportState: true, ImportStateVerify: true},
 			{ResourceName: session, ImportState: true, ImportStateVerify: true},
 			{
-				// From JSON to Rego, still in place.
-				Config: accConfig(name, accRego),
+				// Another edit, still in place.
+				Config: accConfig(name, accBrowserOnly),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction(policy, plancheck.ResourceActionUpdate),
@@ -181,14 +153,13 @@ func TestAccSessionAndPolicy(t *testing.T) {
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(
 					recordSession,
-					resource.TestCheckNoResourceAttr(policy, "json"),
-					resource.TestMatchResourceAttr(policy, "compiled_rego", regexp.MustCompile(`allow_tool_call`)),
+					resource.TestCheckResourceAttrPair(policy, "compiled_rego", policy, "rego"),
 				),
 			},
 			{ResourceName: policy, ImportState: true, ImportStateVerify: true},
 			{
 				// A renamed session is the same session.
-				Config: accConfig(name+"-renamed", accRego),
+				Config: accConfig(name+"-renamed", accBrowserOnly),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction(session, plancheck.ResourceActionUpdate),
@@ -202,6 +173,12 @@ func TestAccSessionAndPolicy(t *testing.T) {
 				Config:      accConfig(name+"-renamed", accBrokenRego),
 				ExpectError: regexp.MustCompile(`(?s)Invalid policy.*rego line \d+, column \d+: `),
 			},
+			{
+				// A policy that restricts the browser and leaves the desktop
+				// and the shell open is applied; the API warns about it.
+				Config: accConfig(name+"-renamed", accBypassable),
+				Check:  resource.ComposeAggregateTestCheckFunc(recordSession, resource.TestCheckResourceAttr(policy, "state", "ready")),
+			},
 		},
 	})
 
@@ -212,41 +189,12 @@ func TestAccSessionAndPolicy(t *testing.T) {
 	}
 }
 
-func TestAccPolicyDocumentAndDataSources(t *testing.T) {
+func TestAccDataSources(t *testing.T) {
 	accAPI(t)
 	name := accName(t)
 	config := fmt.Sprintf(`
 resource "browserjs_session" "test" {
   name = %q
-}
-
-data "browserjs_policy_document" "test" {
-  description      = "one site"
-  allow_operations = ["click", "wait", "screenshot", "url"]
-  deny_operations  = ["evaluate", "setContent"]
-
-  rule {
-    operation = "navigate"
-    constraint {
-      parameter = "url"
-      schemes   = ["https"]
-      hosts     = ["example.com", "*.example.com"]
-    }
-  }
-
-  rule {
-    operation = "type"
-    constraint {
-      parameter  = "text"
-      max_length = 500
-    }
-  }
-}
-
-resource "browserjs_session_policy" "test" {
-  session_id  = browserjs_session.test.id
-  managed_url = %q
-  json        = data.browserjs_policy_document.test.json
 }
 
 data "browserjs_session" "by_id" {
@@ -258,10 +206,17 @@ data "browserjs_session" "by_name" {
   depends_on = [browserjs_session.test]
 }
 
+# The policy of a session that is looked up, not managed here.
+resource "browserjs_session_policy" "test" {
+  session_id  = data.browserjs_session.by_name.id
+  managed_url = %q
+%s
+}
+
 data "browserjs_sessions" "all" {
   depends_on = [browserjs_session.test]
 }
-`, name, managedURL, name)
+`, name, name, managedURL, accNoScripting)
 
 	resource.Test(t, resource.TestCase{
 		ProtoV6ProviderFactories: accProviders,
@@ -270,7 +225,7 @@ data "browserjs_sessions" "all" {
 				Config: config,
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("browserjs_session_policy.test", "state", "ready"),
-					resource.TestCheckResourceAttrPair("browserjs_session_policy.test", "json", "data.browserjs_policy_document.test", "json"),
+					resource.TestCheckResourceAttrPair("browserjs_session_policy.test", "id", "browserjs_session.test", "id"),
 					resource.TestCheckResourceAttrPair("data.browserjs_session.by_id", "mcp_url", "browserjs_session.test", "mcp_url"),
 					resource.TestCheckResourceAttrPair("data.browserjs_session.by_name", "id", "browserjs_session.test", "id"),
 					resource.TestMatchResourceAttr("data.browserjs_sessions.all", "sessions.#", regexp.MustCompile(`^[1-9]\d*$`)),
@@ -314,7 +269,7 @@ func TestAccPolicyDriftAgainstTheFake(t *testing.T) {
 			{
 				// An edit in the UI is undone too.
 				PreConfig: func() {
-					if err := fake.UIEdit(fake.IDByName(name), "json", observeOnly); err != nil {
+					if err := fake.UIEdit(fake.IDByName(name), observeOnly); err != nil {
 						t.Fatal(err)
 					}
 				},

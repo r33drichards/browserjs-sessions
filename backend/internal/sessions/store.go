@@ -304,8 +304,8 @@ func (s *Store) Resume(ctx context.Context, id string) error {
 	return s.Update(ctx, id, nil, ActionResume)
 }
 
-// Wake resumes a session that was put to sleep for being idle (or for its
-// owner's credit or payment method: whether the account now allows it is
+// Wake resumes a session that was put to sleep for being idle (or by its
+// user, or for its owner's credit or payment method: whether the account now allows it is
 // asked before Wake, not here); its pod is restored from the snapshot taken
 // then, if there is one. It does nothing to one that is already awake, and
 // returns ErrStateChanged for one its user stopped, including a stop that

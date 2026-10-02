@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Defaults for the window manager, under whatever the user sets. No
+  compositor: the display is rendered in software and sent over VNC, where
+  shadows and transparency cost CPU and bandwidth for nothing. One workspace:
+  a window on another one would be invisible to whoever is driving the screen.
+-->
+<channel name="xfwm4" version="1.0">
+  <property name="general" type="empty">
+    <property name="use_compositing" type="bool" value="false"/>
+    <property name="workspace_count" type="int" value="1"/>
+  </property>
+</channel>

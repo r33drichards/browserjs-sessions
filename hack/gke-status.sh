@@ -149,13 +149,18 @@ show kubectl -n "$NS" get lease billing-observer -o 'custom-columns=NAME:.metada
 # The mode is not a secret; of the Secrets, key names and sizes only.
 show kubectl -n "$NS" get configmap billing-mode -o 'jsonpath={.data}'
 show kubectl -n "$NS" describe secret stripe
+# Written by the "billing apply" workflow; its label says for which mode.
+show kubectl -n "$NS" describe secret stripe-webhook
 show kubectl -n "$NS" describe secret metronome
 printf '```\n'
 kubectl get crd accounts.browserjs.dev -o json 2>&1 | jq -r '
   "\(.metadata.name)  served=\([.spec.versions[] | select(.served) | .name] | join(","))  established=\([.status.conditions[]? | select(.type == "Established") | .status] | join(","))"' 2>&1
 printf '```\n'
 # The owner is an email address: the name (a hash) stands for it here.
-show kubectl -n "$NS" get accounts.browserjs.dev -o 'custom-columns=NAME:.metadata.name,CARD:.spec.paymentMethod.present,PLAN:.spec.subscription.priceLookupKey,METRONOME:.spec.metronomeCustomerId,EXHAUSTED:.spec.credit.exhausted,BALANCE-MICROS:.spec.credit.balanceMicros,CHECKED:.spec.credit.checkedAt,EXEMPT:.spec.exempt,BLOCKED:.spec.blocked.reason'
+echo "Stripe test mode and Metronome's sandbox:"
+show kubectl -n "$NS" get accounts.browserjs.dev -o 'custom-columns=NAME:.metadata.name,CARD:.spec.stripe.test.paymentMethod.present,PLAN:.spec.stripe.test.subscription.priceLookupKey,METRONOME:.spec.metronome.sandbox.customerId,EXHAUSTED:.spec.metronome.sandbox.credit.exhausted,BALANCE-MICROS:.spec.metronome.sandbox.credit.balanceMicros,CHECKED:.spec.metronome.sandbox.credit.checkedAt,EXEMPT:.spec.exempt,BLOCKED:.spec.blocked.reason'
+echo "Stripe live mode and Metronome's production:"
+show kubectl -n "$NS" get accounts.browserjs.dev -o 'custom-columns=NAME:.metadata.name,CARD:.spec.stripe.live.paymentMethod.present,PLAN:.spec.stripe.live.subscription.priceLookupKey,METRONOME:.spec.metronome.production.customerId,EXHAUSTED:.spec.metronome.production.credit.exhausted,BALANCE-MICROS:.spec.metronome.production.credit.balanceMicros,CHECKED:.spec.metronome.production.credit.checkedAt,EXEMPT:.spec.exempt,BLOCKED:.spec.blocked.reason'
 # The Accounts' daily backup (deploy/gke/billing-export.yaml).
 show kubectl -n "$NS" get cronjob billing-export -o 'custom-columns=NAME:.metadata.name,SUSPENDED:.spec.suspend,SCHEDULE:.spec.schedule,LAST-RUN:.status.lastScheduleTime,LAST-SUCCESS:.status.lastSuccessfulTime'
 show kubectl -n "$NS" get jobs -l app=billing-export -o wide

@@ -96,3 +96,27 @@ def eval_rule(opa_bin: str, capabilities: Path, source: str, input_doc, deadline
         return result[0]["expressions"][0]["value"], []
     except (ValueError, IndexError, KeyError, AttributeError):
         return None, []
+
+
+def eval_many(opa_bin: str, capabilities: Path, source: str, inputs: list, deadline: float) -> list[bool] | None:
+    """For each input, whether data.browserjs.policy.allow_tool_call is true;
+    None when OPA reports an error. Raises OpaTimeout past the deadline.
+    """
+    query = "{i | some i, probe in input.probes; data.browserjs.policy.allow_tool_call == true with input as probe}"
+    with tempfile.TemporaryDirectory(prefix="policy-") as d:
+        Path(d, "policy.rego").write_text(source, encoding="utf-8")
+        Path(d, "input.json").write_text(json.dumps({"probes": inputs}), encoding="utf-8")
+        proc = run(
+            opa_bin,
+            ["eval", "--format", "json", "--capabilities", str(capabilities),
+             "--timeout", f"{deadline}s", "-d", "policy.rego", "-i", "input.json", query],
+            d, timeout=deadline + 3,
+        )
+    if errors_of(proc):
+        return None
+    try:
+        result = json.loads(proc.stdout).get("result") or []
+        allowed = set(result[0]["expressions"][0]["value"])
+    except (ValueError, IndexError, KeyError, AttributeError, TypeError):
+        return None
+    return [i in allowed for i in range(len(inputs))]

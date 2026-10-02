@@ -1,0 +1,19 @@
+name: Feature request
+description: Something you want to be able to do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you are trying to do
+      description: The task, not the solution. What does an agent or a person need that they cannot have now?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you have in mind
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do instead today

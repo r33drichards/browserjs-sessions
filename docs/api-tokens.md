@@ -116,7 +116,7 @@ A token:
   | Scope | |
   |---|---|
   | `sessions:read` | list and read sessions |
-  | `sessions:write` | create, rename, stop, resume, delete sessions |
+  | `sessions:write` | create, rename, sleep, wake, stop, resume, delete sessions |
   | `sessions:connect` | call a session's MCP endpoint: drive its browser |
   | `policies:read` | read a session's policy |
   | `policies:write` | write a session's policy and its management mode |
@@ -165,9 +165,10 @@ token.
 | `GET /v1/me` | any |
 | `GET /v1/sessions`, `GET /v1/sessions/{id}` | `sessions:read` |
 | `POST /v1/sessions`, `PATCH` and `DELETE /v1/sessions/{id}` | `sessions:write` |
+| `POST /v1/sessions/{id}/sleep`, `POST /v1/sessions/{id}/wake` | `sessions:write` |
 | `GET /v1/sessions/{id}/policy` | `policies:read` |
 | `PUT` and `DELETE /v1/sessions/{id}/policy`, `PUT /v1/sessions/{id}/policy/management` | `policies:write` |
-| `POST /v1/policies/validate`, `POST /v1/policies/evaluate`, `GET /v1/policy-schema.json`, `GET /v1/policy-presets` | any |
+| `POST /v1/policies/validate`, `POST /v1/policies/evaluate`, `GET /v1/policy-presets` | any |
 
 They are the handlers of `/api/...`, with the token's owner as the caller.
 The policy routes exist once the policy backend (track C) does; until then

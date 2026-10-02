@@ -1,0 +1,80 @@
+name: terraform provider metronome
+
+# Builds and tests terraform-provider-metronome. Contacts nothing but the Go
+# module proxy: every test runs against the fake API in the provider's own
+# tree. The job has no secret and sets no METRONOME_ACC_BEARER_TOKEN, so the
+# acceptance test that would reach Metronome is always skipped here.
+
+on:
+  pull_request:
+    paths:
+      - "terraform-provider-metronome/**"
+      - ".github/workflows/terraform-provider-metronome.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-provider-metronome-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TOFU_VERSION: "1.10.7"
+
+jobs:
+  test:
+    name: build and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+        working-directory: terraform-provider-metronome
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: terraform-provider-metronome/go.mod
+          cache-dependency-path: terraform-provider-metronome/go.sum
+
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+          tofu_wrapper: false
+
+      - name: Format
+        run: |
+          test -z "$(gofmt -l . | tee /dev/stderr)"
+          tofu fmt -check -recursive -diff examples
+
+      - name: Modules are tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: Build
+        run: go build -o terraform-provider-metronome .
+
+      - name: Vet and unit tests
+        run: |
+          go vet ./...
+          go test -race ./...
+
+      # Real plans, applies and imports with OpenTofu, against the fake API.
+      # Nothing below can reach Metronome: no secret is passed to this job.
+      - name: Acceptance tests
+        run: make testacc
+
+      # The example configuration through plan, apply, edit and destroy, with
+      # the provider installed by dev_overrides.
+      - name: End to end
+        run: make e2e
+
+      - name: Generated docs are current
+        run: |
+          make docs
+          git diff --exit-code -- docs

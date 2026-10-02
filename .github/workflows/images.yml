@@ -3,7 +3,8 @@ name: images
 # Builds the container images and, from main, pushes them to Artifact
 # Registry.
 #
-#   pull request              build only: no sign-in, no push
+#   pull request              build only: no sign-in, no push; the browser
+#                             image is then started and its desktop checked
 #   push to main, or started  build and push <registry>/<name>:<commit sha>
 #   by hand on main           and :main, digests in the run summary
 #
@@ -218,9 +219,33 @@ jobs:
           platforms: linux/amd64
           push: false
           provenance: false
+          # The browser image is started below: it has to be in Docker.
+          load: ${{ matrix.name == 'browser' }}
+          tags: ${{ matrix.name == 'browser' && 'browser:ci' || '' }}
           cache-from: ${{ matrix.cache && format('type=gha,scope={0}', matrix.name) || '' }}
           # Pull requests can read main's cache; what they write stays theirs.
           cache-to: ${{ matrix.cache && format('type=gha,scope={0},mode=max,ignore-error=true', matrix.name) || '' }}
+
+      # The image as a session pod runs it (uid 1000, no capabilities), with
+      # its XFCE desktop checked on the real display: window manager, panel,
+      # session bus, Chromium maximised and answering, a terminal and a file
+      # manager that open, a resize, a restart on the same volume. Docker's
+      # runc, not gVisor. docs/desktop.md.
+      - name: Desktop smoke test
+        if: matrix.name == 'browser'
+        shell: bash
+        run: |
+          docker image ls browser:ci
+          images/browser/test/desktop-image-smoke.sh browser:ci desktop-smoke-out
+
+      - name: Screenshots and logs of the smoke test
+        if: matrix.name == 'browser' && !cancelled()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-smoke
+          path: desktop-smoke-out
+          if-no-files-found: ignore
+          retention-days: 14
 
   # main only: build, push, and report the digests.
   publish:

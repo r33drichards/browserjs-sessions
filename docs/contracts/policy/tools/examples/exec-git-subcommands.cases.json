@@ -28,7 +28,7 @@
           "--short"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": true
@@ -50,7 +50,7 @@
           "src/"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": true
@@ -70,7 +70,7 @@
           "HEAD"
         ],
         "timeout": 120,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": true
@@ -88,7 +88,7 @@
           "HEAD:README.md"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": true
@@ -172,7 +172,7 @@
           "main"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -209,7 +209,7 @@
           "x"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -228,7 +228,7 @@
           "status"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -296,11 +296,11 @@
         "bin": "git",
         "args": [
           "diff",
-          "--output=/home/browser/.bashrc",
+          "--output=/data/chrome/home/.bashrc",
           "HEAD"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -319,7 +319,7 @@
           "/tmp/x"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -337,7 +337,7 @@
           "--outp=/tmp/x"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -355,7 +355,7 @@
           "--ext-diff"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -374,7 +374,7 @@
           "--ext-d"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -393,7 +393,7 @@
           "HEAD:x"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -607,7 +607,7 @@
           "--short"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app",
+        "cwd": "/data/chrome/home/work/app",
         "env": {
           "PATH": "/tmp/evil"
         }
@@ -628,7 +628,7 @@
           "--short"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app",
+        "cwd": "/data/chrome/home/work/app",
         "env": {
           "LD_PRELOAD": "/tmp/x.so"
         }
@@ -649,7 +649,7 @@
           "--short"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app",
+        "cwd": "/data/chrome/home/work/app",
         "env": {}
       }
     },
@@ -689,7 +689,7 @@
             "--short"
           ],
           "timeout": 60,
-          "cwd": "/home/browser/work/app"
+          "cwd": "/data/chrome/home/work/app"
         }
       ]
     },
@@ -707,7 +707,7 @@
           "--short"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -727,7 +727,7 @@
           "--short"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -747,7 +747,7 @@
           "--short"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -762,7 +762,7 @@
         "bin": "git",
         "args": "status --short",
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -783,7 +783,7 @@
           }
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -803,7 +803,7 @@
           ]
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -834,7 +834,7 @@
           "--short"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app",
+        "cwd": "/data/chrome/home/work/app",
         "cmd": "id"
       }
     },
@@ -853,7 +853,7 @@
           "--short"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app",
+        "cwd": "/data/chrome/home/work/app",
         "shell": true
       }
     },
@@ -871,7 +871,7 @@
           "status",
           "--short"
         ],
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -889,7 +889,7 @@
           "--short"
         ],
         "timeout": "60",
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -907,7 +907,7 @@
           "--short"
         ],
         "timeout": 0,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -925,7 +925,7 @@
           "--short"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -943,7 +943,7 @@
           "--short"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false

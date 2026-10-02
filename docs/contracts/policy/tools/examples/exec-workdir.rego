@@ -1,4 +1,4 @@
-# Commands only with a working directory inside /home/browser/work, named in
+# Commands only with a working directory inside /data/chrome/home/work, named in
 # the call, and only these extra environment variables.
 #
 # Any program: this policy is about where, not what. And the directory
@@ -11,7 +11,7 @@ package browserjs.policy
 
 import rego.v1
 
-workdir := "/home/browser/work"
+workdir := "/data/chrome/home/work"
 
 # Never PATH, LD_PRELOAD or the like: they change what a program name means
 # and what gets loaded into it.

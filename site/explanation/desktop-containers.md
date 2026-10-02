@@ -43,7 +43,7 @@ agent that comes back the next day finds its task where it left it.
 
 This differs from restarting. A restart gives you the disk and a fresh
 desktop: the browser reopens its tabs and reloads them, logins survive, and
-whatever lived only in memory is gone. That is what **Stop** and **Resume**
+whatever lived only in memory is gone. That is what **Stop** and **Start**
 do, and what a wake falls back to if a snapshot could not be taken or
 restored.
 

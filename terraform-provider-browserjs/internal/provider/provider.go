@@ -57,7 +57,7 @@ func (p *browserjsProvider) Metadata(_ context.Context, _ provider.MetadataReque
 
 func (p *browserjsProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Manages browserjs sessions (persistent browsers that agents drive over MCP) and the policies that say what an agent may ask a session's browser to do. " +
+		MarkdownDescription: "Manages browserjs sessions (persistent browsers that agents drive over MCP) and the policies that say which tool calls an agent may make in a session: the browser, desktop control and the shell. " +
 			"It signs in with an API token created on the Tokens page of the browserjs UI.",
 		Attributes: map[string]schema.Attribute{
 			"endpoint": schema.StringAttribute{
@@ -117,7 +117,7 @@ func (p *browserjsProvider) Resources(context.Context) []func() resource.Resourc
 }
 
 func (p *browserjsProvider) DataSources(context.Context) []func() datasource.DataSource {
-	return []func() datasource.DataSource{newSessionDataSource, newSessionsDataSource, newPolicyDocumentDataSource}
+	return []func() datasource.DataSource{newSessionDataSource, newSessionsDataSource}
 }
 
 func firstNonEmpty(vs ...string) string {

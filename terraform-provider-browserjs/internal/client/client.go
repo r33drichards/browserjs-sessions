@@ -23,6 +23,9 @@ const (
 	StateUnsupported = "unsupported"
 )
 
+// KindRego is the only kind of policy.
+const KindRego = "rego"
+
 // Management modes.
 const (
 	ModeEditor = "editor"
@@ -55,7 +58,8 @@ type PolicySummary struct {
 }
 
 // Diagnostic is one error or warning about a policy's source. Row and Col
-// are 1-based, and zero when the API gave none.
+// are 1-based, and zero when the API gave none: the warnings about a tool
+// that undoes another's rules are about the policy as a whole.
 type Diagnostic struct {
 	Row     int    `json:"row,omitempty"`
 	Col     int    `json:"col,omitempty"`
@@ -268,9 +272,9 @@ func (c *Client) ResetPolicy(ctx context.Context, id string) error {
 	return err
 }
 
-// ValidatePolicy checks a policy without saving it.
-func (c *Client) ValidatePolicy(ctx context.Context, kind, source string) (*Validation, error) {
+// ValidatePolicy checks a Rego policy without saving it.
+func (c *Client) ValidatePolicy(ctx context.Context, source string) (*Validation, error) {
 	var v Validation
-	_, err := c.do(ctx, http.MethodPost, "/policies/validate", PolicyInput{Kind: kind, Source: source}, &v)
+	_, err := c.do(ctx, http.MethodPost, "/policies/validate", PolicyInput{Kind: KindRego, Source: source}, &v)
 	return &v, err
 }

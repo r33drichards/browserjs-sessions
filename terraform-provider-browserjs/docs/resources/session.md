@@ -5,7 +5,7 @@ subcategory: ""
 description: |-
   A browserjs session: one persistent browser with its own disk, driven by agents over MCP.
   ~> Destroying a session deletes its disk and the browser's logins. Nothing brings them back. Protect sessions you care about with lifecycle { prevent_destroy = true }.
-  A new session has the unrestricted policy. Give it another with browserjs_session_policy; changing a policy never replaces the session.
+  A new session has the unrestricted policy: the browser, desktop control and the shell. Give it another with browserjs_session_policy; changing a policy never replaces the session.
   The API token needs the scopes sessions:read and sessions:write.
 ---
 
@@ -15,7 +15,7 @@ A browserjs session: one persistent browser with its own disk, driven by agents 
 
 ~> **Destroying a session deletes its disk and the browser's logins.** Nothing brings them back. Protect sessions you care about with `lifecycle { prevent_destroy = true }`.
 
-A new session has the unrestricted policy. Give it another with `browserjs_session_policy`; changing a policy never replaces the session.
+A new session has the unrestricted policy: the browser, desktop control and the shell. Give it another with `browserjs_session_policy`; changing a policy never replaces the session.
 
 The API token needs the scopes `sessions:read` and `sessions:write`.
 

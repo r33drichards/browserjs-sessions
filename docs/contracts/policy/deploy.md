@@ -48,9 +48,8 @@ the same namespace:
 | Volumes | ConfigMap `opa-config` at `/config`; `emptyDir` at `/var/opa` (bundle persistence) | none |
 
 The operator image contains the `opa` binary of the same version as the OPA
-image (copied from it in the Dockerfile) and `capabilities.json`,
-`decision-module.rego.tmpl` and `json-policy.schema.json` from this
-directory, copied at build time, not duplicated in the source.
+image (copied from it in the Dockerfile) and `capabilities.json` and
+`decision-module.rego.tmpl` from this directory, copied at build time, not duplicated in the source.
 
 ## ConfigMap and Secret
 

@@ -2,25 +2,23 @@ package policy
 
 import (
 	"embed"
-	"encoding/json"
-	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
 )
 
-// The ready-made policies: copies of docs/contracts/policy/examples/*.policy.json,
+// The ready-made policies: copies of docs/contracts/policy/examples/*.rego,
 // here because a Go binary can only embed files below its package and the
 // image is built from backend/ alone. A test keeps them the same as the
 // contract's.
 //
-//go:embed presets/*.policy.json
+//go:embed presets/*.rego
 var presetFiles embed.FS
 
 const (
 	presetDir    = "presets"
-	presetSuffix = ".policy.json"
+	presetSuffix = ".rego"
 	// unrestrictedID is the preset a session gets when it is asked to have
 	// no policy, and the one a policy is reset to.
 	unrestrictedID = "unrestricted"
@@ -51,14 +49,8 @@ func mustLoadPresets() []Preset {
 		if err != nil {
 			panic(err)
 		}
-		var doc struct {
-			Description string `json:"description"`
-		}
-		if err := json.Unmarshal(source, &doc); err != nil {
-			panic(fmt.Sprintf("policy preset %s: %v", entry.Name(), err))
-		}
 		id := strings.TrimSuffix(entry.Name(), presetSuffix)
-		out = append(out, Preset{ID: id, Title: presetTitle(id), Description: doc.Description, Kind: KindJSON, Source: string(source)})
+		out = append(out, Preset{ID: id, Title: presetTitle(id), Description: presetDescription(string(source)), Kind: KindRego, Source: string(source)})
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if first, other := out[i].ID == unrestrictedID, out[j].ID == unrestrictedID; first != other {
@@ -72,16 +64,38 @@ func mustLoadPresets() []Preset {
 	return out
 }
 
+// presetDescription is the comment a preset begins with, as one line.
+func presetDescription(source string) string {
+	var words []string
+	for _, line := range strings.Split(source, "\n") {
+		text, ok := strings.CutPrefix(line, "#")
+		if !ok {
+			break
+		}
+		words = append(words, strings.Fields(text)...)
+	}
+	if len(words) == 0 {
+		panic("a policy preset must begin with a comment that says what it allows")
+	}
+	return strings.Join(words, " ")
+}
+
+// presetTitles are the titles that are not their ID with spaces.
+var presetTitles = map[string]string{"read-only-shell": "Read-only shell"}
+
 // presetTitle makes "No scripting" of "no-scripting".
 func presetTitle(id string) string {
+	if title, ok := presetTitles[id]; ok {
+		return title
+	}
 	words := strings.ReplaceAll(id, "-", " ")
 	return strings.ToUpper(words[:1]) + words[1:]
 }
 
 // Unrestricted is the policy of a session that was asked to have none:
-// every browser operation, which is what a session without policies does.
-// It is the contract's own example and is not sent to the operator to be
-// checked.
+// every operation in the browser, full control of the desktop and any shell
+// command, which is what a session without policies does. It is the
+// contract's own example and is not sent to the operator to be checked.
 func Unrestricted() sessions.PolicySpec {
-	return sessions.PolicySpec{Kind: KindJSON, Source: presets[0].Source, Mode: sessions.PolicyModeEditor}
+	return sessions.PolicySpec{Kind: KindRego, Source: presets[0].Source, Mode: sessions.PolicyModeEditor}
 }

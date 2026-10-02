@@ -51,26 +51,38 @@ policy in `editor` mode.
 |---|---|---|---|
 | `id` | string | computed | Equal to `session_id`. Import by it. |
 | `session_id` | string | required, forces replacement | |
-| `json` | string | exactly one of `json`, `rego` | A policy in the JSON format. Compared semantically (as parsed JSON), so formatting is not a change. |
-| `rego` | string | exactly one of `json`, `rego` | A Rego module, package `browserjs.policy`. |
+| `rego` | string | required | The policy: a Rego module, package `browserjs.policy`, at most 65536 bytes. Compared as text. |
 | `managed_url` | string | required | `https` URL of where this configuration lives; shown in the UI. |
 | `wait_for_ready` | bool | optional, default true | Whether apply waits for the policy to be in force. |
 | `version` | number | computed | |
 | `hash` | string | computed | |
-| `compiled_rego` | string | computed | The module in force. |
+| `compiled_rego` | string | computed | The module in force: `rego`, or while `state` is `invalid` the last one that compiled. |
 | `state` | string | computed | `ready`, `loading`, `invalid`. |
 
-- Plan: `ValidateConfig` checks "exactly one of" and the URL offline;
+Policies are Rego only. There is no `json` attribute and no JSON policy
+format; `kind` is always sent as `"rego"`. A policy decides every tool call:
+`browser_execute` and `desktop_execute` on server `browser`, and the tools of
+server `exec`. How to write one is `rego-contract.md`; the presets are
+`examples/*.rego`. A policy that restricts `browser_execute` must deny
+`desktop_execute` and the `exec` server, because either can drive the browser
+around the rules; the API returns a warning when it does not
+(`browser_bypass_desktop`, `browser_bypass_shell`, and `shell_bypass_desktop`
+for the shell), and the provider shows it.
+
+- Plan: `ValidateConfig` checks the length of `rego` and the URL offline;
   `ModifyPlan` calls `POST /policies/validate` when the source is known, and
-  turns each `errors[]` entry into a diagnostic with its row and column and
-  each `warnings[]` entry into a warning.
+  turns each `errors[]` entry into an error on `rego` and each `warnings[]`
+  entry into a warning on `rego`, with its row and column when it has them
+  (the three warnings above have none).
 - Create and update: `PUT /sessions/{id}/policy` with
-  `{kind, source, management: {mode: "iac", managed_url}}`. 200 is done. On
+  `{kind: "rego", source, management: {mode: "iac", managed_url}}`. The
+  answer's `warnings[]` are shown as at plan. 200 is done. On
   202, when `wait_for_ready`, polls `GET` until `state` is `ready` or
   `timeouts.update` (default 2 minutes) passes; `invalid` is an error with
   the diagnostics. 409 because the session predates policies is an error
   that says to recreate the session.
-- Read: `GET /sessions/{id}/policy`. If `management.mode` is no longer `iac`
+- Read: `GET /sessions/{id}/policy`. A `kind` other than `rego` is an error.
+  If `management.mode` is no longer `iac`
   (someone chose "Manage here instead" in the UI), the resource reports the
   drift by reading `managed_url` as empty, so the next plan shows an update
   that takes the policy back.
@@ -85,7 +97,8 @@ policy in `editor` mode.
 |---|---|---|
 | `browserjs_session` | `id` or `name` (exactly one; `name` must match one session) | as the resource |
 | `browserjs_sessions` | none | `sessions`: list of objects as the resource |
-| `browserjs_policy_document` | blocks mirroring the JSON format: `allow_operations` (set of strings), `deny_operations` (set of strings), `rule` blocks with `operation` and `constraint` blocks (`parameter`, `min`, `max`, `max_length`, `pattern`, `allowed`, `hosts`, `schemes`) | `json`: the rendered policy, keys in a stable order |
+
+There is no data source that builds a policy: a policy is Rego text.
 
 ## Local installation (before any registry)
 

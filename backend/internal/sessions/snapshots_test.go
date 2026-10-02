@@ -351,3 +351,60 @@ func TestSnapshotsAreOffByDefault(t *testing.T) {
 		}
 	}
 }
+
+// A sleep its user asked for is an idle sleep in all but name: snapshotted,
+// asleep rather than stopped, and woken by the next request (Wake).
+func TestUserSleepSnapshotsAndWakesOnUse(t *testing.T) {
+	ctx := t.Context()
+	store, client, _ := sessionstest.NewWithSnapshots(t, sessions.SnapshotOptions{Timeout: 2 * time.Second})
+	id := running(t, store, client)
+
+	if err := store.Sleep(ctx, id, sessions.StoppedBySleep, nil); err != nil {
+		t.Fatal(err)
+	}
+	obj := sandbox(t, client, id)
+	snap := obj.GetAnnotations()[sessions.AnnSnapshot]
+	if mode(obj) != "Suspended" || obj.GetAnnotations()[sessions.AnnStoppedBy] != sessions.StoppedBySleep || snap == "" || pin(obj) != sessionstest.Pool {
+		t.Fatalf("mode %q, pin %q, annotations %v", mode(obj), pin(obj), obj.GetAnnotations())
+	}
+	if s, _ := store.Get(ctx, id); s.State != sessions.Stopping || !s.GoingToSleep() || !s.StateSaved {
+		t.Errorf("while its pod goes: %+v", s)
+	}
+	sessionstest.SetStatus(t, client, id, sessionstest.Suspended())
+	if s, _ := store.Get(ctx, id); s.State != sessions.Asleep || !s.StateSaved || s.StoppedBy != sessions.StoppedBySleep {
+		t.Errorf("asleep: %+v", s)
+	}
+	// Asleep already: not taken over, by its user or for being idle.
+	for _, by := range []string{sessions.StoppedBySleep, sessions.StoppedByIdle} {
+		if err := store.Sleep(ctx, id, by, nil); !errors.Is(err, sessions.ErrStateChanged) {
+			t.Errorf("sleep (%s) of a sleeping session: %v", by, err)
+		}
+	}
+
+	if err := store.Wake(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	obj = sandbox(t, client, id)
+	if mode(obj) != "Running" || pin(obj) != sessionstest.Pool || obj.GetAnnotations()[sessions.AnnSnapshot] != snap {
+		t.Errorf("mode %q, pin %q, snapshot %q", mode(obj), pin(obj), obj.GetAnnotations()[sessions.AnnSnapshot])
+	}
+	if s, _ := store.Get(ctx, id); s.StateSaved || s.StoppedBy != "" {
+		t.Errorf("awake: %+v", s)
+	}
+}
+
+// A stopped session says so: no state is saved, and it does not wake on use.
+func TestUserStopSavesNoState(t *testing.T) {
+	ctx := t.Context()
+	store, client, _ := sessionstest.NewWithSnapshots(t, sessions.SnapshotOptions{Timeout: 2 * time.Second})
+	id := asleep(t, store, client)
+	if err := store.Suspend(ctx, id, sessions.StoppedByUser); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := store.Get(ctx, id); s.State != sessions.Stopped || s.StateSaved || s.GoingToSleep() {
+		t.Errorf("stopped: %+v", s)
+	}
+	if err := store.Wake(ctx, id); !errors.Is(err, sessions.ErrStateChanged) {
+		t.Errorf("wake of a stopped session: %v", err)
+	}
+}

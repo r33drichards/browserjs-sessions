@@ -16,7 +16,7 @@ Names, flags, secrets, routes and rights. Everything is in the namespace
 | 1, shadow | `BILLING=meter` and the Metronome **sandbox** token, no Stripe key: usage is metered in Metronome and shown; nothing is refused; no purchase is offered | `patch-backend.yaml`, the operator's Deployment, the secrets below |
 | 2, test payments | stage 1 + `STRIPE_MODE=test` and the test secrets: Checkout and the portal work with test cards | the repository variable `STRIPE_MODE`, the secrets below |
 | 3, enforce | `BILLING=enforce`: the card gate, the stop at zero (for the two allow-listed users this is a rehearsal, with test cards). Requires stage 2. | `patch-backend.yaml` |
-| 4, live payments | `STRIPE_MODE=live` and the live secrets, of Stripe **and of Metronome's production environment** (`infra/billing` applied to it first). Test-mode cards, sandbox customers and credit do not carry over: every Account's `metronomeCustomerId` and `credit` are cleared by the documented command, and the reconcile makes production customers. | the repository variable, the secrets |
+| 4, live payments | `STRIPE_MODE=live` and the live secrets, of Stripe **and of Metronome's production environment** (`infra/billing` applied to it first). Test-mode cards, sandbox customers and credit do not carry over, and **nothing is cleared**: an Account keeps what it had under `spec.stripe.test` and `spec.metronome.sandbox`, has nothing yet under `live` and `production`, and so goes through the gate again; its production customers are made the first time it is seen. Switching back finds the test state as it was. | the repository variable, the secrets |
 | 5, open sign-up | `OPEN_SIGNUP=true` and Pomerium's policy changed in the same pull request; needs live payments and the other prerequisites of the design's section 8.5 | `patch-backend.yaml`, `pomerium-config.yaml` |
 
 Each stage is one small pull request (or one variable) that can be reverted.
@@ -40,7 +40,7 @@ Each stage is one small pull request (or one variable) that can be reverted.
 | `BILLING_CATALOGUE` | `/etc/browserjs/catalogue.yaml` | the catalogue file (ConfigMap `billing-catalogue`), re-read when it changes; a file that does not parse keeps the last good one and is logged |
 | `STRIPE_MODE` | unset | `test` or `live`. Unset: no checkout routes, no webhook route. `BILLING=enforce` refuses to start without it. |
 | `STRIPE_API_KEY` | | from the Secret. Required with `STRIPE_MODE`. The backend refuses to start if the key is a live key in `test` mode or the reverse (it looks at the prefix; the value is never logged or put in an error). |
-| `STRIPE_WEBHOOK_SECRET` | | from the Secret. Required with `STRIPE_MODE`. |
+| `STRIPE_WEBHOOK_SECRET` | | from the Secret `stripe-webhook`, which `billing-apply.yml` writes. Required with `STRIPE_MODE`. |
 | `OPEN_SIGNUP` | `false` | `true`: any signed-in user gets an Account (within the sign-up limits), and API tokens are allowed for any account that is not blocked, in place of `ALLOWED_EMAILS` |
 | `SIGNUPS_PER_DAY`, `SIGNUPS_PER_IP_PER_DAY` | `200`, `5` | with `OPEN_SIGNUP` |
 | `TERMS_VERSION` | unset | the version of the terms users must have accepted; unset, none is asked |
@@ -58,11 +58,22 @@ never printed, never in the repository, a log or a chat:
 | Secret | What it is | Used by |
 |---|---|---|
 | `STRIPE_TEST_API_KEY` | restricted key (`rk_test_...`) of the sandbox, permissions below | `deploy.yml` |
-| `STRIPE_TEST_WEBHOOK_SECRET` | signing secret (`whsec_...`) of the sandbox's webhook endpoint | `deploy.yml` |
-| `STRIPE_TEST_SETUP_KEY` | restricted key of the sandbox for OpenTofu (`infra/billing`): Products, Prices, the portal configuration | the infra workflows |
-| `STRIPE_LIVE_API_KEY`, `STRIPE_LIVE_WEBHOOK_SECRET`, `STRIPE_LIVE_SETUP_KEY` | the same three for live mode, later | the same |
+| `STRIPE_TEST_SETUP_KEY` | restricted key of the sandbox for OpenTofu (`infra/billing`): Products, Prices, Webhook Endpoints, the portal configuration | `billing-plan.yml`, `billing-apply.yml` |
+| `STRIPE_LIVE_API_KEY`, `STRIPE_LIVE_SETUP_KEY` | the same two for live mode, later | the same |
 
-| `METRONOME_SANDBOX_API_TOKEN` | an API token of Metronome's sandbox (Developer, API tokens) | `deploy.yml`, the infra workflows (`infra/billing`) |
+**The Stripe webhook's signing secret is not a GitHub secret** (changed
+2026-10-02; there is no `STRIPE_TEST_WEBHOOK_SECRET` or
+`STRIPE_LIVE_WEBHOOK_SECRET`). OpenTofu creates the endpoint, so the secret
+exists only in OpenTofu's state, and `billing-apply.yml` copies it from
+there into the cluster's Secret **`stripe-webhook`** (key
+`STRIPE_WEBHOOK_SECRET`, label `browserjs.dev/stripe-mode`) when the mode
+it applied is `STRIPE_MODE`. Nobody enters or sees it
+(`docs/billing-iac.md`, "The webhook's signing secret").
+
+
+| Secret | What it is | Used by |
+|---|---|---|
+| `METRONOME_SANDBOX_API_TOKEN` | an API token of Metronome's sandbox (Developer, API tokens) | `deploy.yml`, `billing-plan.yml`, `billing-apply.yml` |
 | `METRONOME_SANDBOX_WEBHOOK_SECRET` | the secret of the sandbox's webhook destination | `deploy.yml` |
 | `METRONOME_PRODUCTION_API_TOKEN`, `METRONOME_PRODUCTION_WEBHOOK_SECRET` | the same two for production, later | the same |
 
@@ -78,14 +89,19 @@ Secret `metronome` with the keys `METRONOME_API_TOKEN` and
 token only, with `secretKeyRef`. A changed Secret restarts both.
 
 `deploy.yml`, in its "Secrets" step and with its `secret_from_stdin`
-helper: when `STRIPE_MODE` is set, it fails if either secret of that mode
-is empty, and applies the Secret `stripe` with the keys `STRIPE_API_KEY`
-and `STRIPE_WEBHOOK_SECRET` from the secrets of that mode; when it is
-unset it deletes the Secret `stripe` if present. The backend's Deployment
-takes both keys with `secretKeyRef` and `optional: true`, and `STRIPE_MODE`
-from a ConfigMap `billing-mode` the same step writes (so that the mode and
-the keys can only change together). A changed Secret restarts the backend
-(the step compares `resourceVersion`, as it does for Dex).
+helper: when `STRIPE_MODE` is set, it fails if the API key of that mode is
+empty, or if the Secret `stripe-webhook` is missing or its label
+`browserjs.dev/stripe-mode` is another mode's (the message says to run
+"billing apply" for that mode), and applies the Secret `stripe` with the
+key `STRIPE_API_KEY` from the secret of that mode; when it is unset it
+deletes the Secret `stripe` if present, and leaves `stripe-webhook` alone.
+The backend's Deployment takes `STRIPE_API_KEY` from the Secret `stripe`
+and `STRIPE_WEBHOOK_SECRET` from the Secret `stripe-webhook`, both with
+`secretKeyRef` and `optional: true`, and `STRIPE_MODE` from a ConfigMap
+`billing-mode` the same step writes (so that the mode and the API key can
+only change together). A changed Secret restarts the backend (the step
+compares `resourceVersion`, as it does for Dex; `billing-apply.yml` does
+the same for `stripe-webhook`).
 
 Restricted key permissions (resource names as the Dashboard shows them are
 **not verified**; Stripe's advice is to start broad in the sandbox and
@@ -94,13 +110,14 @@ prune with the key's request log):
 | Key | Write | Read |
 |---|---|---|
 | run time | Checkout Sessions, Customers, Customer portal sessions, PaymentIntents (auto-recharge), PaymentMethods (detach on account deletion), Subscriptions (cancel on account deletion) | Prices, Products, SetupIntents, Invoices, Invoice payments, Charges, Refunds, Disputes |
-| OpenTofu (`infra/billing`) | Products, Prices, Customer portal configurations | the same |
+| OpenTofu (`infra/billing`) | Products, Prices, Webhook Endpoints, Customer portal | none |
 
 ## Workflows
 
 | Workflow | Trigger | Does |
 |---|---|---|
-| the infra workflows (`infra-plan.yml`, `infra-apply.yml`, extended to `infra/billing`, or their twins for it: billing-iac's choice) | as for `infra/main`: a plan on a pull request, an apply from `main` | `tofu plan` and `tofu apply` of `infra/billing` for one environment (Stripe test with Metronome sandbox; later Stripe live with Metronome production, which needs an approval), with that environment's Stripe setup key and Metronome token. Prints what changes, never a key. There is **no** `stripe-setup.yml`, no `metronome-setup.yml` and no setup command: the product owner's instruction is that these objects are infrastructure as code. |
+| `billing-plan.yml` (new) | a pull request that touches `infra/billing`, the Metronome provider or the catalogue; by hand | checks the configuration with no credentials, then `tofu plan` of `infra/billing` for each mode whose keys are set (`test`: Stripe sandbox with Metronome sandbox; `live`: Stripe live with Metronome production). A mode without keys is skipped and says so. Prints what would change, never a key. |
+| `billing-apply.yml` (new) | by hand, on `main`: `mode`, and `confirm` typed as `apply` (test) or `apply live` (live) | plans, prints the plan, applies it, then copies the webhook endpoint's signing secret from the state to the Secret `stripe-webhook`. Nothing is applied by a merge. There is **no** `stripe-setup.yml`, no `metronome-setup.yml` and no setup command: the product owner's instruction is that these objects are infrastructure as code. How: `docs/billing-iac.md`. |
 | `deploy.yml` (edited) | as today | the Secrets and ConfigMap above |
 | `images.yml`, `hack/pin-images.sh` (edited) | as today | the `billing-operator` image beside the others |
 

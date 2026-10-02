@@ -27,7 +27,7 @@ import (
 func TestPolicyRoutesNeedTheOperatorConfigured(t *testing.T) {
 	off := newServer(t)
 	created := off.session(alice)
-	for _, path := range []string{"/api/policy-presets", "/api/policy-schema.json", "/api/sessions/" + created.ID + "/policy"} {
+	for _, path := range []string{"/api/policy-presets", "/api/sessions/" + created.ID + "/policy"} {
 		if rec := off.do("GET", appHost, path, alice, ""); rec.Code != http.StatusNotFound {
 			t.Errorf("GET %s with policies off: %d %s", path, rec.Code, rec.Body)
 		}
@@ -59,7 +59,7 @@ func TestPolicyRoutesNeedTheOperatorConfigured(t *testing.T) {
 	}
 	on.handler, _ = newHandler(cfg, verifier, store, idle.New(15*time.Minute, time.Now))
 
-	rec = on.do("POST", appHost, "/api/sessions", alice, `{"name":"work","policy":{"kind":"json","source":"{\"version\": 1}"}}`)
+	rec = on.do("POST", appHost, "/api/sessions", alice, `{"name":"work","policy":{"kind":"rego","source":"package browserjs.policy"}}`)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create with a policy: %d %s", rec.Code, rec.Body)
 	}
@@ -122,7 +122,7 @@ func TestPoliciesWithAPITokens(t *testing.T) {
 	_, all := s.newToken(alice, auth.Scopes...)
 	_, sessionsOnly := s.newToken(alice, auth.ScopeSessionsRead, auth.ScopeSessionsWrite)
 	_, bobs := s.newToken(bob, auth.Scopes...)
-	const source = `{"kind":"json","source":"{\"version\": 1}"`
+	const source = `{"kind":"rego","source":"package browserjs.policy"`
 	const link = "https://git.example.com/infra"
 	path := "/v1/sessions/" + mine.ID + "/policy"
 	message := func(rec *httptest.ResponseRecorder) (m struct {
@@ -152,7 +152,7 @@ func TestPoliciesWithAPITokens(t *testing.T) {
 		t.Errorf("updated-by = %q", by)
 	}
 	// Now the cookie may not write, and is told where the policy is managed.
-	rec = s.do("PUT", appHost, "/api/sessions/"+mine.ID+"/policy", alice, `{"kind":"json","source":"{\"version\": 1, \"deny\": {}}"}`)
+	rec = s.do("PUT", appHost, "/api/sessions/"+mine.ID+"/policy", alice, `{"kind":"rego","source":"package browserjs.policy\n"}`)
 	if m := message(rec); rec.Code != http.StatusConflict || m.Error != "this policy is managed externally" || m.ManagedURL != link {
 		t.Errorf("cookie, iac mode: %d %s", rec.Code, rec.Body)
 	}
@@ -219,7 +219,7 @@ func TestAPIHostHasNoPolicyRoutesWithPoliciesOff(t *testing.T) {
 		{"GET", "/v1/sessions/" + mine.ID + "/policy"}, {"PUT", "/v1/sessions/" + mine.ID + "/policy"},
 		{"DELETE", "/v1/sessions/" + mine.ID + "/policy"}, {"PUT", "/v1/sessions/" + mine.ID + "/policy/management"},
 		{"POST", "/v1/policies/validate"}, {"POST", "/v1/policies/evaluate"},
-		{"GET", "/v1/policy-schema.json"}, {"GET", "/v1/policy-presets"},
+		{"GET", "/v1/policy-presets"},
 	} {
 		if rec := s.bearer(c.method, apiHost, c.path, token, `{}`); rec.Code != http.StatusNotFound {
 			t.Errorf("%s %s with policies off: %d %s", c.method, c.path, rec.Code, rec.Body)

@@ -37,6 +37,10 @@ type billingParts struct {
 	pass    *metronome.Pass
 	webhook http.Handler
 	every   time.Duration // how often the pass is made
+	// What the Stripe side is made over (stripe.go).
+	accounts  billing.Accounts
+	ledger    billing.Ledger
+	catalogue billing.CatalogueSource
 }
 
 // newBilling makes billing's parts over the cluster and Metronome, nil
@@ -51,22 +55,25 @@ func newBilling(ctx context.Context, cfg config.Config, dyn dynamic.Interface, s
 		return nil, err
 	}
 	clock := billing.SystemClock{}
-	accounts := kube.NewAccounts(dyn, cfg.Namespace)
+	// test with Metronome's sandbox, or live with its production
+	// environment: the Account keeps each apart.
+	accounts := kube.NewAccounts(dyn, cfg.Namespace, kube.ModeOf(cfg.Billing.Payments))
 	if err := accounts.Check(ctx); err != nil {
 		return nil, err
 	}
 	// Neither holds anything but its client: every answer is read when it
 	// is asked for.
-	ledger := billing.NewLedger(metronome.New(cfg.MetronomeURL, cfg.MetronomeToken), accounts, clock, catalogue)
+	ledger := billing.NewLedger(metronome.New(cfg.MetronomeURL, cfg.MetronomeToken.Reveal()), accounts, clock, catalogue)
 	enforcer := billing.NewEnforcer(cfg.Billing, accounts, ledger, billing.Store{Store: store}, clock, catalogue)
 	parts := &billingParts{
 		enforcer: enforcer,
 		handlers: &billing.Handlers{Enforcer: enforcer, Observer: kube.NewObserver(dyn, cfg.Namespace)},
 		pass:     &metronome.Pass{Accounts: accounts, Ledger: ledger, Sessions: store, Clock: clock},
 		every:    enforcer.Config().BalancePass,
+		accounts: accounts, ledger: ledger, catalogue: catalogue,
 	}
 	if cfg.MetronomeWebhookSecret != "" {
-		parts.webhook = &metronome.Webhook{Accounts: accounts, Ledger: ledger, Clock: clock, Secret: cfg.MetronomeWebhookSecret}
+		parts.webhook = &metronome.Webhook{Accounts: accounts, Ledger: ledger, Clock: clock, Secret: cfg.MetronomeWebhookSecret.Reveal()}
 	} else {
 		slog.Warn("METRONOME_WEBHOOK_SECRET is not set: no Metronome webhook; the balance pass alone notices credit running out")
 	}

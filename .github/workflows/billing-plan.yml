@@ -1,0 +1,198 @@
+name: billing plan
+
+# Shows what a merge would change in Stripe and in Metronome. Changes
+# nothing in either.
+#
+# Two jobs. "check" needs no credentials: format, validate, and the offline
+# tests with both providers mocked. "plan" runs once for each mode against
+# the real accounts, with that mode's keys:
+#
+#   test   STRIPE_TEST_SETUP_KEY   METRONOME_SANDBOX_API_TOKEN
+#   live   STRIPE_LIVE_SETUP_KEY   METRONOME_PRODUCTION_API_TOKEN
+#
+# A mode whose keys are not set is skipped, and says so; that is every mode
+# for a pull request from a fork, which gets no secrets. The keys are read
+# from the environment by the providers and are never a variable, an
+# argument or an output. A secret is chosen by its NAME from the mode
+# (secrets[...]), never by "live && A || B": that form falls through to the
+# other mode's key when a secret is empty.
+#
+# The state is in the bucket of infra/main under billing/<mode>, read with
+# the tofu-plan service account (keyless, as infra-plan.yml).
+
+on:
+  pull_request:
+    paths:
+      - "infra/billing/**"
+      - "terraform-provider-metronome/**"
+      - "docs/contracts/billing/catalogue.yaml"
+      - ".github/workflows/billing-plan.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: billing-plan-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TOFU_VERSION: "1.10.7"
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  TOFU_STATE_BUCKET: ${{ vars.TOFU_STATE_BUCKET }}
+
+jobs:
+  check:
+    name: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+        working-directory: infra/billing
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: terraform-provider-metronome/go.mod
+          cache-dependency-path: terraform-provider-metronome/go.sum
+
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+          tofu_wrapper: false
+
+      - name: Format
+        run: tofu fmt -check -recursive -diff
+
+      # terraform-provider-metronome is in no registry: it is built from
+      # this repository into a filesystem mirror.
+      - name: Build the Metronome provider
+        run: echo "TF_CLI_CONFIG_FILE=$(./provider.sh)" >> "$GITHUB_ENV"
+
+      - name: Init
+        run: tofu init -backend=false
+
+      - name: Validate
+        run: tofu validate -no-color
+
+      # Mocked providers: checks what the configuration makes of the
+      # catalogue, contacts nothing.
+      - name: Test
+        run: tofu test -no-color
+
+  plan:
+    name: plan (${{ matrix.mode }})
+    needs: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [test, live]
+    defaults:
+      run:
+        shell: bash
+        working-directory: infra/billing
+    env:
+      MODE: ${{ matrix.mode }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Keys of the mode
+        id: keys
+        env:
+          STRIPE_API_KEY: ${{ secrets[matrix.mode == 'live' && 'STRIPE_LIVE_SETUP_KEY' || 'STRIPE_TEST_SETUP_KEY'] }}
+          METRONOME_BEARER_TOKEN: ${{ secrets[matrix.mode == 'live' && 'METRONOME_PRODUCTION_API_TOKEN' || 'METRONOME_SANDBOX_API_TOKEN'] }}
+        run: |
+          code=0
+          ./keys.sh "$MODE" > "${RUNNER_TEMP}/keys.txt" || code=$?
+          cat "${RUNNER_TEMP}/keys.txt"
+          if [ "$code" = 0 ] && [ -z "$TOFU_STATE_BUCKET" ]; then
+            echo "the repository variable TOFU_STATE_BUCKET is not set" | tee -a "${RUNNER_TEMP}/keys.txt"
+            code=3
+          fi
+          case "$code" in
+            0) echo "ready=true" >> "$GITHUB_OUTPUT" ;;
+            3)
+              echo "ready=false" >> "$GITHUB_OUTPUT"
+              echo "::notice::billing plan ($MODE) skipped: $(grep 'is not set' "${RUNNER_TEMP}/keys.txt" | paste -sd ';' -)"
+              {
+                echo "## billing plan ($MODE): skipped"
+                echo
+                echo "Nothing was planned, because:"
+                echo
+                grep 'is not set' "${RUNNER_TEMP}/keys.txt" | sed 's/^/- /'
+                echo
+                echo "The configuration itself was checked by the job \"check\". See docs/billing-iac.md for the keys."
+              } >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            *) exit "$code" ;;
+          esac
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: steps.keys.outputs.ready == 'true'
+        with:
+          go-version-file: terraform-provider-metronome/go.mod
+          cache-dependency-path: terraform-provider-metronome/go.sum
+
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        if: steps.keys.outputs.ready == 'true'
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+          tofu_wrapper: false
+
+      - name: Build the Metronome provider
+        if: steps.keys.outputs.ready == 'true'
+        run: echo "TF_CLI_CONFIG_FILE=$(./provider.sh)" >> "$GITHUB_ENV"
+
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        if: steps.keys.outputs.ready == 'true'
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.TOFU_PLAN_SA }}
+
+      - name: Init
+        if: steps.keys.outputs.ready == 'true'
+        run: tofu init -backend-config="bucket=${TOFU_STATE_BUCKET}" -backend-config="prefix=billing/${MODE}"
+
+      - name: Plan
+        if: steps.keys.outputs.ready == 'true'
+        env:
+          STRIPE_API_KEY: ${{ secrets[matrix.mode == 'live' && 'STRIPE_LIVE_SETUP_KEY' || 'STRIPE_TEST_SETUP_KEY'] }}
+          # "not-used" only where the mode's variables turn Metronome off:
+          # keys.sh has stopped the job otherwise.
+          METRONOME_BEARER_TOKEN: ${{ secrets[matrix.mode == 'live' && 'METRONOME_PRODUCTION_API_TOKEN' || 'METRONOME_SANDBOX_API_TOKEN'] || 'not-used' }}
+        run: |
+          set -o pipefail
+          tofu plan -var-file="${MODE}.tfvars" -lock-timeout=5m -no-color 2>&1 | tee "${RUNNER_TEMP}/plan.txt"
+
+      - name: Plan to job summary
+        if: ${{ !cancelled() && steps.keys.outputs.ready == 'true' }}
+        run: |
+          plan="${RUNNER_TEMP}/plan.txt"
+          {
+            echo "## billing plan ($MODE)"
+            echo
+            if [ -s "$plan" ]; then
+              echo '```'
+              # A job summary holds at most 1 MiB.
+              head -c 900000 "$plan"
+              echo
+              echo '```'
+              if [ "$(wc -c < "$plan")" -gt 900000 ]; then
+                echo "_Truncated; the full plan is in the job log._"
+              fi
+            else
+              echo "_No plan was produced; see the job log._"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

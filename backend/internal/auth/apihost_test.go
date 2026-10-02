@@ -198,6 +198,11 @@ func TestAPIHostScopes(t *testing.T) {
 		{"all", "POST", "/v1/sessions", 204},
 		{"all", "PATCH", "/v1/sessions/s-abcdefghij", 204},
 		{"all", "DELETE", "/v1/sessions/s-abcdefghij", 204},
+		{"read", "POST", "/v1/sessions/s-abcdefghij/sleep", 403},
+		{"read", "POST", "/v1/sessions/s-abcdefghij/wake", 403},
+		{"policy", "POST", "/v1/sessions/s-abcdefghij/sleep", 403},
+		{"all", "POST", "/v1/sessions/s-abcdefghij/sleep", 204},
+		{"all", "POST", "/v1/sessions/s-abcdefghij/wake", 204},
 		{"read", "GET", "/v1/sessions/s-abcdefghij/policy", 403},
 		{"policy", "GET", "/v1/sessions/s-abcdefghij/policy", 204},
 		{"policy", "PUT", "/v1/sessions/s-abcdefghij/policy", 403},
@@ -208,7 +213,6 @@ func TestAPIHostScopes(t *testing.T) {
 		{"all", "PUT", "/v1/sessions/s-abcdefghij/policy/management", 204},
 		{"read", "POST", "/v1/policies/validate", 204},
 		{"read", "POST", "/v1/policies/evaluate", 204},
-		{"read", "GET", "/v1/policy-schema.json", 204},
 		{"read", "GET", "/v1/policy-presets", 204},
 	} {
 		f := newAPIHostFixture("alice@example.com")

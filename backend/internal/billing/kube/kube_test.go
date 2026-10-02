@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,7 +97,7 @@ func (s *server) Update(_ context.Context, obj *unstructured.Unstructured, _ met
 
 func TestEnsureMakesTheAccountOnce(t *testing.T) {
 	api := newServer()
-	accounts := Over(api)
+	accounts := Over(api, Test)
 	ctx := t.Context()
 
 	acc, err := accounts.Ensure(ctx, " U@Example.com ")
@@ -125,7 +126,7 @@ func TestEnsureMakesTheAccountOnce(t *testing.T) {
 // server, and a change made there is seen by the next call.
 func TestEveryReadIsARead(t *testing.T) {
 	api := newServer()
-	accounts := Over(api)
+	accounts := Over(api, Test)
 	ctx := t.Context()
 	acc, _ := accounts.Ensure(ctx, "u@example.com")
 
@@ -159,7 +160,7 @@ func TestEveryReadIsARead(t *testing.T) {
 
 func TestUpdateRetriesOnConflictAndFindsByLabel(t *testing.T) {
 	api := newServer()
-	accounts := Over(api)
+	accounts := Over(api, Test)
 	ctx := t.Context()
 	acc, _ := accounts.Ensure(ctx, "u@example.com")
 	other, _ := accounts.Ensure(ctx, "v@example.com")
@@ -183,7 +184,7 @@ func TestUpdateRetriesOnConflictAndFindsByLabel(t *testing.T) {
 		t.Fatalf("after the conflicts: %+v", got.Spec)
 	}
 	obj := api.objects[acc.Name]
-	if obj.GetLabels()[LabelMetronomeCustomer] != "m-123" || obj.GetLabels()[sessions.LabelOwner] == "" {
+	if obj.GetLabels()["browserjs.dev/metronome-customer-sandbox"] != "m-123" || obj.GetLabels()[sessions.LabelOwner] == "" {
 		t.Fatalf("labels %v", obj.GetLabels())
 	}
 	// exhausted false is written, not left out: the CRD requires it.
@@ -193,7 +194,7 @@ func TestUpdateRetriesOnConflictAndFindsByLabel(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	credit := api.objects[acc.Name].Object["spec"].(map[string]any)["credit"].(map[string]any)
+	credit, _, _ := unstructured.NestedMap(api.objects[acc.Name].Object, "spec", "metronome", "sandbox", "credit")
 	if exhausted, ok := credit["exhausted"].(bool); !ok || exhausted {
 		t.Fatalf("credit %v", credit)
 	}
@@ -234,5 +235,83 @@ func TestUpdateRetriesOnConflictAndFindsByLabel(t *testing.T) {
 	}
 	if err := accounts.Check(ctx); err != nil {
 		t.Errorf("Check: %v", err)
+	}
+}
+
+// An Account keeps each mode's state apart: what is saved in test is not
+// there in live, nothing is cleared by the switch, and switching back
+// finds it as it was.
+func TestStateIsPerMode(t *testing.T) {
+	api := newServer()
+	test, live := Over(api, Test), Over(api, Live)
+	ctx := t.Context()
+	now := time.Date(2026, 10, 2, 11, 0, 0, 0, time.UTC)
+	acc, _ := test.Ensure(ctx, "u@example.com")
+	if _, err := test.Update(ctx, acc.Name, func(spec *billing.AccountSpec) error {
+		spec.StripeCustomerID, spec.MetronomeCustomerID = "cus_test", "m-sandbox"
+		spec.PaymentMethod = &billing.PaymentMethods{Present: true, IDs: []string{"pm_T1"}, ReadAt: now}
+		spec.SignupCredit = &billing.SignupCredit{State: billing.SignupGranted, At: now}
+		spec.Credit = &billing.AccountCredit{BalanceMicros: 5000000, CheckedAt: &now}
+		spec.Exempt = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// In live the same Account has no customer, no card, no credit: it
+	// goes through the gate again. What is not per mode is the same.
+	seen, err := live.Ensure(ctx, "u@example.com")
+	if err != nil || seen.Name != acc.Name {
+		t.Fatal(seen, err)
+	}
+	if s := seen.Spec; s.StripeCustomerID != "" || s.MetronomeCustomerID != "" || s.PaymentMethod != nil || s.SignupCredit != nil || s.Credit != nil || !s.Exempt {
+		t.Fatalf("in live: %+v", s)
+	}
+	for name, find := range map[string]func() (billing.Account, error){
+		"ByCustomer":          func() (billing.Account, error) { return live.ByCustomer(ctx, "cus_test") },
+		"ByMetronomeCustomer": func() (billing.Account, error) { return live.ByMetronomeCustomer(ctx, "m-sandbox") },
+		"ByPaymentMethod":     func() (billing.Account, error) { return live.ByPaymentMethod(ctx, "pm_T1") },
+	} {
+		if _, err := find(); !errors.Is(err, billing.ErrNotFound) {
+			t.Errorf("live %s found the test mode's: %v", name, err)
+		}
+	}
+	if with, _ := live.WithCustomer(ctx); len(with) != 0 {
+		t.Errorf("live WithCustomer: %+v", with)
+	}
+
+	// Live gets its own customers; the test ones are untouched.
+	if _, err := live.Update(ctx, acc.Name, func(spec *billing.AccountSpec) error {
+		spec.StripeCustomerID, spec.MetronomeCustomerID = "cus_live", "m-production"
+		spec.Credit = &billing.AccountCredit{Exhausted: true, ExhaustedAt: &now, CheckedAt: &now}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	spec := api.objects[acc.Name].Object["spec"].(map[string]any)
+	for path, want := range map[string]string{
+		"stripe.test.customerId": "cus_test", "stripe.live.customerId": "cus_live",
+		"metronome.sandbox.customerId": "m-sandbox", "metronome.production.customerId": "m-production",
+	} {
+		if got, _, _ := unstructured.NestedString(spec, strings.Split(path, ".")...); got != want {
+			t.Errorf("spec.%s = %q, want %q", path, got, want)
+		}
+	}
+	for _, flat := range []string{"stripeCustomerId", "metronomeCustomerId", "paymentMethod", "credit", "signupCredit"} {
+		if _, ok := spec[flat]; ok {
+			t.Errorf("spec.%s is written at the top of spec", flat)
+		}
+	}
+	labels := api.objects[acc.Name].GetLabels()
+	if labels["browserjs.dev/metronome-customer-sandbox"] != "m-sandbox" || labels["browserjs.dev/metronome-customer-production"] != "m-production" {
+		t.Errorf("labels %v", labels)
+	}
+	back, _ := test.Get(ctx, acc.Name)
+	if s := back.Spec; s.StripeCustomerID != "cus_test" || s.MetronomeCustomerID != "m-sandbox" || s.PaymentMethod == nil || !s.PaymentMethod.Present ||
+		s.SignupCredit == nil || s.Credit == nil || s.Credit.Exhausted || s.Credit.BalanceMicros != 5000000 {
+		t.Fatalf("back in test: %+v", s)
+	}
+	if ModeOf("live") != Live || ModeOf("test") != Test || ModeOf("") != Test {
+		t.Error("ModeOf")
 	}
 }
