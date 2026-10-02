@@ -31,6 +31,10 @@ type Config struct {
 	IdleAfter          time.Duration // idle time before a session is put to sleep
 	ReadyTimeout       time.Duration // how long a request waits for a waking session
 	MaxSessionsPerUser int
+	// MaxFileBytes is the largest file the session page may send to a
+	// session's browser. The browser image has the same limit of its own
+	// (FILES_MAX_BYTES).
+	MaxFileBytes int64
 
 	// Snapshots makes an idle session sleep to a GKE Pod Snapshot and wake
 	// from it. Off unless SNAPSHOTS is set: a cluster without Pod Snapshots
@@ -96,6 +100,9 @@ func FromEnv(get func(string) string) (Config, error) {
 	}
 	if c.MaxSessionsPerUser, err = strconv.Atoi(or("MAX_SESSIONS_PER_USER", "5")); err != nil {
 		return Config{}, fmt.Errorf("MAX_SESSIONS_PER_USER: %w", err)
+	}
+	if c.MaxFileBytes, err = strconv.ParseInt(or("MAX_FILE_BYTES", "104857600"), 10, 64); err != nil || c.MaxFileBytes < 1 {
+		return Config{}, fmt.Errorf("MAX_FILE_BYTES must be a positive number of bytes, got %q", get("MAX_FILE_BYTES"))
 	}
 	if c.Snapshots, err = strconv.ParseBool(or("SNAPSHOTS", "false")); err != nil {
 		return Config{}, fmt.Errorf("SNAPSHOTS: %w", err)

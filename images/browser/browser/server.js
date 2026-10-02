@@ -18,6 +18,14 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import puppeteer from 'puppeteer-core';
+import { createFiles, setDownloadDir } from './files.js';
+
+// `browser-mcp download-dir <profile> <folder>`: what the entrypoint runs
+// before each start of Chromium, instead of the server.
+if (process.argv[2] === 'download-dir') {
+  setDownloadDir(process.argv[3], process.argv[4]);
+  process.exit(0);
+}
 
 const CDP_URL = process.env.CDP_URL || 'http://127.0.0.1:9222';
 const PORT = Number(process.env.BROWSER_MCP_PORT || 8081);
@@ -26,6 +34,12 @@ const DEFAULT_WIDTH = 1280;
 const DEFAULT_HEIGHT = 800;
 const MAX_WIDTH = 3840;
 const MAX_HEIGHT = 2160;
+// The folder the session page moves files in and out of (files.js); none
+// unless FILES_DIR says where it is.
+const files = process.env.FILES_DIR
+  ? createFiles({ dir: process.env.FILES_DIR, maxBytes: Number(process.env.FILES_MAX_BYTES) || undefined })
+  : null;
+
 const MAX_WAIT_MS = 30000;
 const NAV_TIMEOUT_MS = 45000;
 
@@ -369,6 +383,7 @@ http
       }
       return;
     }
+    if (files && (await files(req, res))) return;
     if (!req.url.startsWith('/mcp')) {
       res.writeHead(404).end();
       return;

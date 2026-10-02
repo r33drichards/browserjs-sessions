@@ -19,6 +19,10 @@ spec:
           protocol: TCP
         - port: 8080 # mcp-js
           protocol: TCP
+        # The browser container's own server, for the session's files
+        # (/files). It has no login: the backend asks for the owner only.
+        - port: 8081
+          protocol: TCP
   egress:
     - to:
         - namespaceSelector:

@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react"
 import { api } from "../api"
 import { signedOutHandled } from "../auth/signedOut"
 import { reconnectDelay } from "./backoff"
+import { FilesBox } from "./FilesBox"
 import { ResizingRFB } from "./ResizingRFB"
 
 type Status = "connecting" | "connected" | "reconnecting" | "paused"
@@ -218,6 +219,7 @@ export function VncPane({ sessionId }: { sessionId: string }) {
             </Button>
             {note && <span className="wf-note">{note}</span>}
           </SpaceBetween>
+          <FilesBox sessionId={sessionId} />
         </SpaceBetween>
       </div>
     </div>

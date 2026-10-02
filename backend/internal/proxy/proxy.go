@@ -25,6 +25,7 @@ import (
 const (
 	mcpPort = 8080 // mcp-js
 	vncPort = 6080 // websockify in front of the VNC server
+	// browserPort (files.go) is the third.
 )
 
 // DefaultMaxUploadBytes is the largest upload body passed on to a pod:
@@ -55,6 +56,9 @@ type Proxy struct {
 	// MaxUploadBytes caps the body of the upload route, which has no login.
 	// DefaultMaxUploadBytes if unset.
 	MaxUploadBytes int64
+	// MaxFileBytes caps a file sent to a session's folder (files.go).
+	// DefaultMaxFileBytes if unset.
+	MaxFileBytes int64
 
 	setup   sync.Once
 	tickets *tickets
@@ -82,18 +86,22 @@ func (p *Proxy) init() {
 		if p.MaxUploadBytes <= 0 {
 			p.MaxUploadBytes = DefaultMaxUploadBytes
 		}
+		if p.MaxFileBytes <= 0 {
+			p.MaxFileBytes = DefaultMaxFileBytes
+		}
 		p.tickets = newTickets(time.Now)
 		p.quick = podTransport(uploadResponseTimeout)
 		p.patient = podTransport(mcpResponseTimeout)
 	})
 }
 
-// RegisterApp adds the proxy's one route on the app's host: the UI asks it
-// for a ticket to open a session's screen with. It goes on the API's mux,
-// behind auth.Middleware.
+// RegisterApp adds the proxy's routes on the app's host: the UI asks for a
+// ticket to open a session's screen with, and moves files to and from the
+// session's browser. They go on the API's mux, behind auth.Middleware.
 func (p *Proxy) RegisterApp(mux *http.ServeMux) {
 	p.init()
 	mux.HandleFunc("POST /api/sessions/{id}/vnc-ticket", p.vncTicket)
+	p.registerFiles(mux)
 }
 
 type sessionKey struct{}
@@ -192,6 +200,12 @@ func neuter(resp *http.Response) {
 // forward proxies the request to path on port of the session's pod, and
 // returns the status the pod answered with (0 if it did not answer).
 func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, s sessions.Session, port int, path string, transport http.RoundTripper) int {
+	return p.forwardWith(w, r, s, port, path, transport, nil)
+}
+
+// forwardWith is forward for a route that says more about the pod's answer
+// than neuter does: rewrite, if any, sees the response first.
+func (p *Proxy) forwardWith(w http.ResponseWriter, r *http.Request, s sessions.Session, port int, path string, transport http.RoundTripper, rewrite func(*http.Response)) int {
 	target := p.Target(s, port)
 	status := 0
 	rp := &httputil.ReverseProxy{
@@ -214,6 +228,9 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, s sessions.Sessi
 		FlushInterval: -1,
 		ModifyResponse: func(resp *http.Response) error {
 			status = resp.StatusCode
+			if rewrite != nil {
+				rewrite(resp)
+			}
 			neuter(resp)
 			return nil
 		},

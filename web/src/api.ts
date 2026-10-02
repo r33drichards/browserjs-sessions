@@ -21,6 +21,19 @@ export interface VncTicket {
   url: string // websocket URL on the session's own host, ticket included
 }
 
+// A file in the session's folder: where its browser downloads to, and where
+// its file chooser opens.
+export interface SessionFile {
+  name: string
+  size: number // bytes
+  modified: string
+}
+
+export interface SessionFiles {
+  files: SessionFile[]
+  max_bytes: number // the largest file that may be sent
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -93,6 +106,9 @@ export function createApi(fetchImpl: Fetch = fetch) {
       call<Session>("PATCH", await sessionPath(id), { action: running ? "resume" : "stop" }),
     deleteSession: async (id: string) => call<void>("DELETE", await sessionPath(id)),
     vncTicket: async (id: string) => call<VncTicket>("POST", await sessionPath(id, "/vnc-ticket")),
+    listFiles: async (id: string) => call<SessionFiles>("GET", await sessionPath(id, "/files")),
+    deleteFile: async (id: string, name: string) =>
+      call<void>("DELETE", await sessionPath(id, `/files/${encodeURIComponent(name)}`)),
   }
 }
 
