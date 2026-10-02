@@ -42,6 +42,15 @@ session_machine_type = "n2-standard-4"
 session_max_nodes    = 3
 session_spot         = false
 
+# us-west1-a alone had no n2-standard-4 capacity when the first session was
+# created ("GCE out of resources"), so session nodes may start in any zone of
+# the region. A session stays in the zone its disk was created in.
+session_node_zones = ["us-west1-a", "us-west1-b", "us-west1-c"]
+
+# Not pinned: the pin exists for Pod Snapshots, which are not in use, and it
+# narrows the hardware a node can be placed on.
+session_min_cpu_platform = null
+
 # Must match the Sandbox template and PodSnapshotStorageConfig in deploy/.
 sessions_namespace      = "browserjs-sessions"
 session_service_account = "session"

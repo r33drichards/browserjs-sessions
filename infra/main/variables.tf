@@ -259,6 +259,24 @@ variable "session_machine_type" {
   }
 }
 
+variable "session_node_zones" {
+  description = <<-EOT
+    Zones the session node pool may use. null means the same zones as
+    node_zones. More than one zone lets the autoscaler start a session node
+    elsewhere when a zone has no capacity for the machine type ("GCE out of
+    resources"). The cost: a session's disk is zonal, so a stopped session can
+    only resume in the zone it was first started in, and waits if that zone is
+    out of capacity at that moment. All zones must be in the cluster's region.
+  EOT
+  type        = list(string)
+  default     = null
+
+  validation {
+    condition     = var.session_node_zones == null ? true : length(var.session_node_zones) > 0
+    error_message = "session_node_zones is null or a non-empty list of zones."
+  }
+}
+
 variable "session_min_cpu_platform" {
   description = <<-EOT
     Minimum CPU platform of session nodes. A snapshot only restores on a CPU

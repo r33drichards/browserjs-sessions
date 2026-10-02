@@ -221,7 +221,7 @@ resource "google_container_node_pool" "sessions" {
   cluster  = google_container_cluster.this.name
   location = google_container_cluster.this.location
 
-  node_locations = local.node_zones
+  node_locations = var.session_node_zones != null ? var.session_node_zones : local.node_zones
 
   initial_node_count = 0
 
