@@ -20,7 +20,7 @@ date.
 | Code mode MCP | `run_js` | Live |
 | Code mode MCP | Browser: `browser_execute` | Live |
 | Code mode MCP | Desktop: `desktop_execute` (mouse, keyboard, screen, clipboard) | Live |
-| Code mode MCP | Shell: `exec` | Planned |
+| Code mode MCP | Shell: `exec` (a program and its arguments), `stream_logs`, `search_logs`, `kill` | Live |
 | Admin interface | List, create, watch and take over, stop, delete | Live |
 | Admin interface | Full screen; the desktop follows the viewer's size | Live |
 | Admin interface | Clipboard box; files in and out; paste or drop files anywhere on the page | Live |

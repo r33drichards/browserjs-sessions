@@ -2,11 +2,10 @@
   description = "Persistent, VNC-viewable Chromium exposed as MCP behind mcp-js";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-  # Commands for run_js. Pinned to the commit of
-  # https://github.com/r33drichards/mcp-exec/pull/7 (exec takes bin and args,
-  # the kill tool); move to master once it is merged.
+  # Commands for run_js: mcp-exec 0.2 (exec takes bin and args, the kill
+  # tool, --reject-browser-requests), pinned to a commit of its master.
   inputs.mcp-exec = {
-    url = "github:r33drichards/mcp-exec/a0688bf628e6b5662431c8e990b69e9cbfcb7ef3";
+    url = "github:r33drichards/mcp-exec/86a6aee684bae7db574473005c824f6602ef24ac";
     flake = false;
   };
 

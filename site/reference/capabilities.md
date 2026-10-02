@@ -6,7 +6,7 @@ What code in `run_js` can call, and what is on the desktop for it to act on.
 | --- | --- | --- |
 | Browser | `mcp.callTool("browser", "browser_execute", …)` | Live |
 | Desktop | `mcp.callTool("browser", "desktop_execute", …)` | Live |
-| Shell | `exec` | Planned |
+| Shell | `mcp.callTool("exec", "exec", …)` | Live |
 
 Use the browser capability for anything inside a web page: it finds elements
 by selector and does not depend on where things are on screen. Use the
@@ -91,7 +91,56 @@ How it behaves:
 
 ## Shell: `exec`
 
-::: info Planned
-Running commands on the desktop container from `run_js`. Not available: no
-call exists yet, and the container has no shell tools for it to run.
-:::
+Runs programs on the desktop, as the desktop's user, in its home directory
+and with its files. A program can open a window on the screen. The calls go to a second server, `"exec"`, and are asynchronous:
+`exec` starts a program and returns at once, the other three follow it.
+
+```js
+const call = async (tool, args) => JSON.parse((await mcp.callTool("exec", tool, args)).content[0].text);
+const { id } = await call("exec", { bin: "ls", args: ["-la", "/data/chrome/Downloads"], timeout: 60 });
+let logs = "", offset = 0, status = "running";
+while (status === "running") {
+  const r = await call("stream_logs", { id, offset });
+  logs += r.logs; offset = r.next_offset; status = r.status;
+  if (status === "running") await new Promise((resolve) => setTimeout(resolve, 250));
+}
+console.log(status, logs); // "completed:0" and the listing
+```
+
+| Tool | Arguments | Returns |
+| --- | --- | --- |
+| `exec` | `bin`, `args?`, `timeout`, `cwd?`, `env?` | `{ id, status: "started" }` |
+| `stream_logs` | `id`, `offset` | `{ logs, next_offset, status }`: the output from that byte on |
+| `search_logs` | `id`, `pattern` | `{ matches: [{ line, offset }] }` for a regular expression |
+| `kill` | `id` | `{ id, status }`; stops the command and everything it started |
+
+| `exec` argument | Type | Meaning |
+| --- | --- | --- |
+| `bin` | string, required | The program: a name found on `PATH`, or a path |
+| `args` | array of strings, optional | Its arguments, each passed exactly as written |
+| `timeout` | integer, required | Seconds. Then the command and everything it started are killed |
+| `cwd` | string, optional | Working directory, an absolute path. Default: the home directory |
+| `env` | object of strings, optional | Variables added to the desktop's environment |
+
+`status` is `running`, `completed:<exit code>`, `timeout`, `cancelled` or
+`failed:<reason>`.
+
+How it behaves:
+
+- **No shell.** The program is run directly. Nothing in `args` is split,
+  expanded or interpreted: `"*.csv"` and `"$HOME"` arrive as those
+  characters. For pipes, redirection and globs, run a shell as the program:
+  `{ bin: "sh", args: ["-c", "ls *.csv | wc -l"], timeout: 10 }`.
+- **Nothing else is accepted.** A call with a field not in the table, such
+  as a command line in `cmd`, is refused.
+- **Output.** stdout and stderr share one log, line by line. It is kept on
+  the session's disk for 7 days and survives sleep. A command that was
+  running when the session slept reads `failed:interrupted` afterwards.
+- **Exit codes.** A program that fails is a result, not an error of the
+  call. Check for `completed:0`.
+- **No terminal.** Programs get no keyboard input and cannot prompt.
+- **What is installed.** `bash` and the standard Unix tools (`ls`, `cat`,
+  `cp`, `sed`, `find`, `ps`). No `git`, `curl` or language runtimes yet; they come with the planned XFCE desktop. There
+  is no `sudo` and no way to install system packages.
+- **Limits.** Commands run as an unprivileged user inside the session's
+  sandbox and reach the network the browser reaches.
