@@ -2,6 +2,7 @@ package stripe_test
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -430,4 +431,68 @@ func TestKeyMode(t *testing.T) {
 			t.Errorf("the error says the key: %v", err)
 		}
 	}
+}
+
+func TestAPIChangePlan(t *testing.T) {
+	f := newFakeAPI(t)
+	api := stripe.NewAPI(fakeKey, "usd", f.url)
+	const sub = `{"id":"sub_1","object":"subscription","status":"active","customer":"cus_1","schedule":%s,
+		"items":{"data":[{"id":"si_1","current_period_start":2000,"current_period_end":3000,"price":{"id":"price_old","lookup_key":"cu_starter_monthly_v1"}}]}}`
+	f.on("GET /v1/subscriptions/sub_1", 200, fmt.Sprintf(sub, "null"))
+	f.on("POST /v1/subscriptions/sub_1", 200, fmt.Sprintf(sub, "null"))
+
+	// An upgrade: the item's price, a new period now, paid now or not at all.
+	if err := api.UpgradeSubscription(ctx, "sub_1", "price_new"); err != nil {
+		t.Fatal(err)
+	}
+	r := f.last("POST /v1/subscriptions/sub_1")
+	wantForm(t, r, map[string]string{
+		"items[0][id]": "si_1", "items[0][price]": "price_new", "proration_behavior": "always_invoice",
+		"billing_cycle_anchor": "now", "payment_behavior": "error_if_incomplete",
+	})
+	if got := r.header.Get("Idempotency-Key"); got != "upgrade-sub_1-price_new-2000" {
+		t.Errorf("Idempotency-Key = %q", got)
+	}
+	// The card refuses.
+	f.on("POST /v1/subscriptions/sub_1", 402, `{"error":{"type":"card_error","code":"card_declined","decline_code":"insufficient_funds","message":"declined"}}`)
+	if err := api.UpgradeSubscription(ctx, "sub_1", "price_new"); !errors.Is(err, stripe.ErrPaymentFailed) {
+		t.Errorf("err = %v, want ErrPaymentFailed", err)
+	}
+
+	// A downgrade: a schedule made from the subscription, the paid period
+	// as it is, then the new price.
+	f.on("POST /v1/subscription_schedules", 200, `{"id":"sub_sched_1","object":"subscription_schedule"}`)
+	f.on("POST /v1/subscription_schedules/sub_sched_1", 200, `{"id":"sub_sched_1","object":"subscription_schedule"}`)
+	if err := api.SchedulePrice(ctx, "sub_1", "price_new"); err != nil {
+		t.Fatal(err)
+	}
+	wantForm(t, f.last("POST /v1/subscription_schedules/sub_sched_1"), map[string]string{
+		"end_behavior": "release", "proration_behavior": "none",
+		"phases[0][items][0][price]": "price_old", "phases[0][items][0][quantity]": "1",
+		"phases[0][start_date]": "2000", "phases[0][end_date]": "3000",
+		"phases[1][items][0][price]": "price_new", "phases[1][items][0][quantity]": "1",
+	})
+	if n := f.count("POST /v1/subscription_schedules"); n != 1 {
+		t.Errorf("%d schedules made, want 1", n)
+	}
+	// With a schedule already there it is changed, not made again; and
+	// dropping the change releases it.
+	f.on("GET /v1/subscriptions/sub_1", 200, fmt.Sprintf(sub, `"sub_sched_1"`))
+	if err := api.SchedulePrice(ctx, "sub_1", "price_other"); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.count("POST /v1/subscription_schedules"); n != 1 {
+		t.Errorf("%d schedules made, want still 1", n)
+	}
+	f.on("POST /v1/subscription_schedules/sub_sched_1/release", 200, `{"id":"sub_sched_1","object":"subscription_schedule"}`)
+	if err := api.SchedulePrice(ctx, "sub_1", ""); err != nil {
+		t.Fatal(err)
+	}
+	f.last("POST /v1/subscription_schedules/sub_sched_1/release")
+	// Nothing scheduled, nothing to drop: no write.
+	f.on("GET /v1/subscriptions/sub_1", 200, fmt.Sprintf(sub, "null"))
+	if err := api.SchedulePrice(ctx, "sub_1", ""); err != nil {
+		t.Fatal(err)
+	}
+	f.last("GET /v1/subscriptions/sub_1")
 }

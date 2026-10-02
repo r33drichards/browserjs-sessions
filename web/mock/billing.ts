@@ -437,6 +437,18 @@ export function createBillingMock(options: BillingMockOptions) {
         ...(c.kind === "setup" ? { signupCredit: c.signup } : {}),
       })
     }
+    if (route === "POST /billing/subscription") {
+      const plan = PLANS.find(p => p.lookupKey === body.item)
+      if (!plan) return refusal(400, "unknown_item", "That plan is not available.")
+      if (!b.subscription) return refusal(409, "not_subscribed", "You have no subscription to change. Subscribe to a plan instead.")
+      if (stripeDown) return refusal(502, "stripe_unavailable", "The payment service did not answer.")
+      if (plan.key === b.plan.key) return json(200, { change: "kept", item: plan.lookupKey })
+      if (plan.amount > (b.plan.amount ?? 0)) {
+        subscribe(plan)
+        return json(200, { change: "upgraded", item: plan.lookupKey, effectiveAt: new Date().toISOString() })
+      }
+      return json(200, { change: "scheduled", item: plan.lookupKey, effectiveAt: b.period.end })
+    }
     if (route === "POST /billing/portal") {
       if (!b.hasCustomer) return refusal(409, "no_customer", "There is nothing to manage yet.")
       if (stripeDown) return refusal(502, "stripe_unavailable", "The payment service did not answer.")

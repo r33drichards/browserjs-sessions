@@ -11,7 +11,7 @@ import type { Session } from "../api"
 import { ApiError, api } from "../api"
 import { signedOutHandled } from "../auth/signedOut"
 import type { Banner, Billing, BillingAction, Catalogue } from "../billingApi"
-import { billingApi, browser, checkoutMessage, followCheckout, isCheckoutId } from "../billingApi"
+import { billingApi, browser, checkoutMessage, followCheckout, isCheckoutId, planChangeMessage } from "../billingApi"
 import { usePolling } from "../usePolling"
 import { AddCreditModal } from "./AddCreditModal"
 
@@ -25,6 +25,7 @@ export interface BillingContext {
   busy: BillingAction | null
   run: (action: BillingAction) => void
   subscribe: (lookupKey: string) => void
+  changePlan: (lookupKey: string, name: string) => void // for a subscriber: no Checkout, no portal
   notices: Banner[] // the checkout's outcome, and a payment page that would not open
   dismiss: (id: string) => void
 }
@@ -38,6 +39,7 @@ const OFF: BillingContext = {
   busy: null,
   run: () => {},
   subscribe: () => {},
+  changePlan: () => {},
   notices: [],
   dismiss: () => {},
 }
@@ -163,6 +165,32 @@ export function BillingProvider({ children }: { children: React.ReactNode }) {
 
   const subscribe = useCallback((lookupKey: string) => void leave("plans", () => billingApi.checkout(lookupKey)), [leave])
 
+  // A subscriber changes plan here: the portal cannot (docs/billing-stripe.md).
+  const changePlan = useCallback(
+    async (lookupKey: string, name: string) => {
+      setBusy("plans")
+      dismiss("stripe")
+      try {
+        const done = await billingApi.changePlan(lookupKey)
+        notice({ id: "stripe", type: "success", text: planChangeMessage(done, name), actions: [], dismissible: true })
+        load()
+      } catch (e) {
+        if (signedOutHandled(e)) return
+        const down = e instanceof ApiError && e.status === 502
+        notice({
+          id: "stripe",
+          type: "error",
+          text: down ? STRIPE_DOWN : `Your plan was not changed: ${e instanceof Error ? e.message : e}`,
+          actions: e instanceof ApiError && e.status === 402 ? [{ action: "portal", label: "Update card" }] : [],
+          dismissible: true,
+        })
+      } finally {
+        setBusy(null)
+      }
+    },
+    [dismiss, notice, load],
+  )
+
   // Back from Checkout: /billing?checkout=<id>.
   const checkoutId = location.pathname === "/billing" ? new URLSearchParams(location.search).get("checkout") : null
   useEffect(() => {
@@ -209,8 +237,8 @@ export function BillingProvider({ children }: { children: React.ReactNode }) {
   }, [checkoutId])
 
   const value = useMemo<BillingContext>(
-    () => ({ billing, catalogue, sessions, refused, reload: load, busy, run, subscribe, notices, dismiss }),
-    [billing, catalogue, sessions, refused, load, busy, run, subscribe, notices, dismiss],
+    () => ({ billing, catalogue, sessions, refused, reload: load, busy, run, subscribe, changePlan, notices, dismiss }),
+    [billing, catalogue, sessions, refused, load, busy, run, subscribe, changePlan, notices, dismiss],
   )
 
   return (

@@ -376,7 +376,10 @@ describe("the billing page", () => {
     expect(text()).toContain("10 sessions")
     expect(text()).toContain("4 awake at once")
     expect(screen.getAllByText("Current plan")).toHaveLength(1)
-    expect(screen.getAllByRole("button", { name: /^Change or cancel plan/ })).toHaveLength(2)
+    // A subscriber changes plan here, and cancels in the portal.
+    expect(button("Downgrade to Starter").textContent).toBe("Downgrade at the period's end")
+    expect(button("Cancel plan")).toBeTruthy()
+    expect(screen.queryByRole("button", { name: /^Change or cancel plan/ })).toBeNull()
     expect(text()).toMatch(/Renews \d+ \w+ \d{4}/)
 
     expect(text()).toContain("Visa ···· 4242, expires 08/28")
@@ -388,6 +391,21 @@ describe("the billing page", () => {
     expect(rows).toHaveLength(6)
     expect(rows[0].textContent).toMatch(/^research\d+ h \d\d\$\d+\.\d\d\$\d+\.\d\d\$\d+\.\d\d$/)
     expect(screen.getByRole("figure").querySelectorAll(".wf-chart-day").length).toBeGreaterThan(5)
+  })
+
+  it("a subscriber changes plan without leaving: a downgrade waits, and Cancel plan is the portal", async () => {
+    const { sent } = open("/billing", "active")
+    await screen.findByTestId("plan-pro")
+    fireEvent.click(button("Downgrade to Starter"))
+    await waitFor(() => expect(sent.find(r => r.path === "/api/billing/subscription")?.body).toEqual({ item: "cu_starter_monthly_v1" }))
+    expect((await banner()).textContent).toMatch(/Your plan changes to Starter on \d+ \w+\. Until then it is as it is\./)
+    // Not Checkout, not the portal: the browser went nowhere.
+    expect(went).toEqual([])
+    expect(sent.some(r => r.path === "/api/billing/checkout" || r.path === "/api/billing/portal")).toBe(false)
+    expect(screen.getByTestId("plan-pro").textContent).toBe("Pro ●")
+
+    fireEvent.click(button("Cancel plan"))
+    await waitFor(() => expect(went).toEqual(["/billing?portal=mock"]))
   })
 
   it("pay as you go: Subscribe goes to Checkout with the plan", async () => {

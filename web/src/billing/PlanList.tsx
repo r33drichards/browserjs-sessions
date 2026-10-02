@@ -17,9 +17,11 @@ interface Option {
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
-// With `choose`, each card ends in its button: Subscribe, Current plan, or the portal.
+// With `choose`, each card ends in its button: Subscribe, or Current plan;
+// for a subscriber, Upgrade or Downgrade (done here: Stripe's portal cannot
+// change a plan), and on pay as you go, Cancel plan (the portal).
 export function PlanList({ choose = false }: { choose?: boolean }) {
-  const { billing, catalogue, run, subscribe, busy } = useBilling()
+  const { billing, catalogue, run, subscribe, changePlan, busy } = useBilling()
   if (!billing || !catalogue) return null
   const options: Option[] = [
     { key: "payg", name: "Pay as you go", ...catalogue.payg },
@@ -27,6 +29,8 @@ export function PlanList({ choose = false }: { choose?: boolean }) {
   ]
   const subscribed = billing.plan.key !== "payg"
   const canPay = billing.payments !== "off"
+  const ending = !!billing.subscription?.cancelsAt
+  const dearer = (o: Option) => (o.item?.amount ?? 0) > (billing.plan.amount ?? 0)
 
   return (
     <div className="wf-plain">
@@ -59,9 +63,17 @@ export function PlanList({ choose = false }: { choose?: boolean }) {
                   content: (o: Option) =>
                     o.key === billing.plan.key ? (
                       <Box fontWeight="bold">Current plan</Box>
-                    ) : !canPay ? null : subscribed ? (
-                      <Button loading={busy === "portal"} onClick={() => run("portal")} ariaLabel={`Change or cancel plan: ${o.name}`}>
-                        Change or cancel plan
+                    ) : !canPay ? null : subscribed && !o.item ? (
+                      <Button loading={busy === "portal"} onClick={() => run("portal")} ariaLabel="Cancel plan">
+                        Cancel plan
+                      </Button>
+                    ) : subscribed && ending ? null : subscribed ? (
+                      <Button
+                        loading={busy === "plans"}
+                        onClick={() => changePlan(o.item!.lookupKey, o.name)}
+                        ariaLabel={`${dearer(o) ? "Upgrade" : "Downgrade"} to ${o.name}`}
+                      >
+                        {dearer(o) ? "Upgrade now" : "Downgrade at the period's end"}
                       </Button>
                     ) : o.item ? (
                       <Button loading={busy === "plans"} onClick={() => subscribe(o.item!.lookupKey)} ariaLabel={`Subscribe to ${o.name}`}>

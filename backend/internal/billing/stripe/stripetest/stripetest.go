@@ -84,6 +84,8 @@ type Stripe struct {
 	errOn map[string]error
 
 	rechargeCards []string
+	// scheduled is the price each subscription moves to at its period's end.
+	scheduled map[string]string
 
 	customers    map[string]*customer
 	customerKeys map[string]string
@@ -103,6 +105,7 @@ func NewStripe(clock billing.Clock) *Stripe {
 		methods: map[string]billing.PaymentMethod{}, checkouts: map[string]billing.CheckoutSession{},
 		subs: map[string]billing.Subscription{}, intents: map[string]billing.PaymentIntent{},
 		intentKeys: map[string]string{}, periods: map[string]stripe.PaidPeriod{}, prices: map[string]string{},
+		scheduled: map[string]string{},
 	}
 }
 
@@ -667,4 +670,88 @@ func (s *Stripe) RechargeCards() []string {
 var (
 	_ billing.Stripe      = (*Stripe)(nil)
 	_ stripe.PeriodFinder = (*Stripe)(nil)
+	_ stripe.PlanChanger  = (*Stripe)(nil)
 )
+
+// lookupOf is the lookup key of a price SetPrices made.
+func lookupOf(price string) string { return strings.TrimPrefix(price, "price_") }
+
+// newPeriod starts a period of the subscription now, on a price, its
+// invoice paid.
+func (s *Stripe) newPeriod(sub *billing.Subscription, price string) {
+	now := s.clock.Now()
+	sub.PriceLookupKey = lookupOf(price)
+	sub.CurrentPeriodStart, sub.CurrentPeriodEnd = now, now.AddDate(0, 1, 0)
+	sub.LatestInvoice, sub.LatestInvoiceStatus = s.id("in"), "paid"
+	pi := billing.PaymentIntent{ID: s.id("pi"), Customer: sub.Customer, Status: "succeeded", Created: now}
+	s.intents[pi.ID] = pi
+	s.periods[pi.ID] = stripe.PaidPeriod{Subscription: sub.ID, Invoice: sub.LatestInvoice, Start: now}
+}
+
+// UpgradeSubscription starts a new period on price now, and drops what was
+// scheduled. With Decline set the card refuses and nothing changes.
+func (s *Stripe) UpgradeSubscription(_ context.Context, id, price string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.call("UpgradeSubscription"); err != nil {
+		return err
+	}
+	sub, ok := s.subs[id]
+	if !ok {
+		return billing.ErrNotFound
+	}
+	if s.Decline != "" {
+		return fmt.Errorf("%w: %s", stripe.ErrPaymentFailed, s.Decline)
+	}
+	delete(s.scheduled, id)
+	s.newPeriod(&sub, price)
+	s.subs[id] = sub
+	return nil
+}
+
+// SchedulePrice notes the price the subscription moves to at its period's
+// end; "" drops it.
+func (s *Stripe) SchedulePrice(_ context.Context, id, price string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.call("SchedulePrice"); err != nil {
+		return err
+	}
+	if _, ok := s.subs[id]; !ok {
+		return billing.ErrNotFound
+	}
+	if price == "" {
+		delete(s.scheduled, id)
+	} else {
+		s.scheduled[id] = price
+	}
+	return nil
+}
+
+// Scheduled is the lookup key of the price the subscription moves to at its
+// period's end, "" for none.
+func (s *Stripe) Scheduled(id string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return lookupOf(s.scheduled[id])
+}
+
+// EndPeriod is the subscription's period ending (the test has moved the
+// clock): it renews, paid, on the price that was scheduled if one was.
+// customer.subscription.updated.
+func (s *Stripe) EndPeriod(id string) Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sub, ok := s.subs[id]
+	if !ok {
+		panic("no subscription " + id)
+	}
+	price := "price_" + sub.PriceLookupKey
+	if next, ok := s.scheduled[id]; ok {
+		price = next
+		delete(s.scheduled, id)
+	}
+	s.newPeriod(&sub, price)
+	s.subs[id] = sub
+	return s.event("customer.subscription.updated", map[string]any{"id": id, "object": "subscription", "customer": sub.Customer, "status": sub.Status})
+}

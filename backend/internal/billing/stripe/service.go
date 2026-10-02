@@ -291,7 +291,20 @@ func (s *Service) EnsureSubscription(ctx context.Context, id string) error {
 		return nil
 	}
 	defer s.lock(acct.Name)()
+	return s.ensureSubscription(ctx, acct, sub)
+}
 
+// subscription is EnsureSubscription for an account whose lock is held.
+func (s *Service) subscription(ctx context.Context, acct billing.Account, id string) error {
+	sub, err := s.stripe.Subscription(ctx, id)
+	if err != nil {
+		return err
+	}
+	return s.ensureSubscription(ctx, acct, sub)
+}
+
+func (s *Service) ensureSubscription(ctx context.Context, acct billing.Account, sub billing.Subscription) error {
+	var err error
 	// The account has one subscription. If it names another that is still
 	// going, the one made later is kept.
 	kept := true

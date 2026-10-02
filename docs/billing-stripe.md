@@ -28,6 +28,7 @@ webhook, no call to Stripe, and the server's handler is the very one it was
 |---|---|
 | `backend/internal/billing/stripe/types.go` | `PeriodFinder`, and this side's constants; what it depends on is `internal/billing`'s (`Accounts`, `Ledger`, `Stripe`, `Clock`, the catalogue) |
 | `.../service.go` | `Service`; `EnsurePaymentMethods` with the sign-up credit decision, `EnsureSubscription`, `EnsurePurchase` |
+| `.../plan.go` | `POST /api/billing/subscription`: a subscriber's change of plan; `PlanChanger` |
 | `.../recharge.go` | auto-recharge: `Recharge` (the attempt) and `EnsureRecharge` |
 | `.../webhook.go` | `POST /stripe/webhook`: raw body, signature, mode, the event table |
 | `.../handlers.go` | the checkout, checkout state, portal and auto-recharge routes |
@@ -69,6 +70,7 @@ token gets `403 ui_only`; a blocked or deleted account `403 account_blocked`.
 | `POST /api/billing/checkout` `{"item": "<lookupKey>"}` | a Checkout that subscribes to a plan or buys a pack. `400 unknown_item` for what is not in the catalogue, not enabled, or has no price at Stripe; `409 already_subscribed` while the account's subscription is `active`, `trialing`, `past_due` or `incomplete`. |
 | `GET /api/billing/checkout/{id}` | what became of a Checkout the caller started, and fulfils it (a late webhook does not keep the user waiting). `404` for another account's. |
 | `POST /api/billing/portal` | a link to Stripe's Customer Portal, with the configuration `infra/billing` made: its ID from the file `BILLING_IDS` (the ConfigMap `billing-iac`, key `ids.json`, if it is mounted and of this mode), else found at Stripe by `metadata.managed_by = stripe-setup`. One made through the API is never the account's default. `409 no_customer` before the account has been to Stripe. |
+| `POST /api/billing/subscription` | a subscriber changes plan: "Changing plan", below |
 | `PUT /api/billing/auto-recharge` | the caller's automatic top-up. `404 auto_recharge_off` while `AUTO_RECHARGE` is off; turning it on needs `agree: true` and a saved card (`402 payment_method_required`). |
 
 Any call to Stripe that fails is `502 stripe_unavailable`: nothing was
@@ -87,14 +89,37 @@ with the idempotency key `customer-<ownerHash>`, and written to
 
 ### Changing plan
 
-**A subscriber cannot change plan in place yet.** The portal's plan
-switching is off (the Stripe provider cannot set its products;
-`docs/billing-iac.md`), and this side has no route that changes a
-subscription. What a subscriber can do: cancel in the portal (it ends at the
-period's end, and the period's credit runs to its expiry), then subscribe to
-another plan once it has ended; and buy credit packs at any time.
-`409 already_subscribed` says so. An in-place change through our own API
-would be a new call on `billing.Stripe` and a contract change.
+Stripe's portal cannot change a plan for now (the provider cannot set its
+products; `docs/billing-iac.md`), so a subscriber changes plan here:
+`POST /api/billing/subscription` `{"item": "<lookupKey>"}`. Cancelling stays
+in the portal.
+
+| Asked for | Done | Answer |
+|---|---|---|
+| a dearer plan | now: the subscription's price is changed with `proration_behavior: always_invoice`, `billing_cycle_anchor: now`, `payment_behavior: error_if_incomplete`. A new period starts, charged at once less the unused time of the old one. The new period's Grant is made in the same request and the old period's is superseded; the events that follow find it done. | `upgraded`, `effectiveAt` now |
+| a cheaper plan | a subscription schedule: the paid period as it is, then the new price. Nothing changes now; at the period's end Stripe renews on the new price and `ensureSubscription` grants its credit. | `scheduled`, `effectiveAt` the period's end |
+| the plan it is on | a scheduled change, if there is one, is dropped | `kept` |
+
+Which is dearer is the catalogue's `amount`. Stripe is read first, so the
+same request twice is done once; the upgrade also carries an idempotency key
+of the subscription, the price and the period it was made in. An upgrade
+drops a downgrade that was waiting.
+
+Refused: `409 not_subscribed` with no subscription or one that has ended
+(subscribe at a Checkout); `409 subscription_ending` for one cancelled at
+the period's end; `402 payment_failed` when the card refuses the upgrade
+(the plan is as it was) or the subscription is `past_due`; `400
+unknown_item` for what is not a plan on sale.
+
+The run-time key therefore also writes Subscriptions (update) and
+Subscription schedules.
+
+**Not verified against Stripe**: that an update with `billing_cycle_anchor:
+now` and `always_invoice` charges at once and fails whole with
+`error_if_incomplete`; that a schedule made `from_subscription` and given
+those two phases renews on the new price with no proration; that releasing
+a schedule leaves the subscription as it is. `checks/3-test-clock.sh` is the
+place to see them.
 
 Nothing here reads a Stripe product by its ID: prices are found by lookup
 key, and a subscription's plan by its price's lookup key. The catalogue's
