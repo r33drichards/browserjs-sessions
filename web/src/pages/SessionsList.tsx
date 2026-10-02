@@ -48,11 +48,12 @@ export function SessionsList() {
   }
 
   async function create() {
-    if (busy || !name.trim()) return
+    if (busy) return
     setBusy(true)
     setCreateError("")
     try {
-      const session = await api.createSession(name)
+      // An empty name asks the server to make one up.
+      const session = await api.createSession(name.trim())
       navigate(`/sessions/${session.id}`)
     } catch (e) {
       if (!signedOutHandled(e)) setCreateError(String((e as Error).message))
@@ -142,16 +143,24 @@ export function SessionsList() {
           <Box float="right">
             <SpaceBetween direction="horizontal" size="xs">
               <Button onClick={() => setCreating(false)}>Cancel</Button>
-              <Button variant="primary" loading={busy} disabled={!name.trim()} onClick={create}>
+              <Button variant="primary" loading={busy} onClick={create}>
                 Create
               </Button>
             </SpaceBetween>
           </Box>
         }
       >
-        <FormField label="Name" errorText={createError}>
+        <FormField
+          label={
+            <>
+              Name - <i>optional</i>
+            </>
+          }
+          errorText={createError}
+        >
           <Input
             value={name}
+            placeholder="Leave empty for a generated name, like brave-otter"
             onChange={e => setName(e.detail.value)}
             onKeyDown={e => {
               if (e.detail.key === "Enter") void create()
