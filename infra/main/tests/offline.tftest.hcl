@@ -66,13 +66,14 @@ run "defaults_pomerium_nlb" {
 
   assert {
     condition = toset([for record in google_dns_record_set.public : record.name]) == toset([
+      "api.browserjs.com.",
       "app.browserjs.com.",
       "authenticate.browserjs.com.",
       "dex.browserjs.com.",
       "sessions.browserjs.com.",
       "*.sessions.browserjs.com.",
     ])
-    error_message = "Expected A records for the five public names."
+    error_message = "Expected A records for the six public names."
   }
 
   assert {
@@ -177,8 +178,8 @@ run "gateway_alb" {
   }
 
   assert {
-    condition     = length(google_certificate_manager_dns_authorization.this) == 4 && length(google_dns_record_set.dns_authorization) == 4
-    error_message = "Expected a DNS authorisation and its CNAME for each of the four names (the sessions' host and its wildcard share one)."
+    condition     = length(google_certificate_manager_dns_authorization.this) == 5 && length(google_dns_record_set.dns_authorization) == 5
+    error_message = "Expected a DNS authorisation and its CNAME for each of the five names (the sessions' host and its wildcard share one)."
   }
 
   assert {
@@ -187,12 +188,12 @@ run "gateway_alb" {
   }
 
   assert {
-    condition     = toset(google_certificate_manager_certificate.this[0].managed[0].domains) == toset(["app.browserjs.com", "authenticate.browserjs.com", "dex.browserjs.com", "sessions.browserjs.com", "*.sessions.browserjs.com"])
-    error_message = "The certificate must cover the four hosts and the session wildcard."
+    condition     = toset(google_certificate_manager_certificate.this[0].managed[0].domains) == toset(["api.browserjs.com", "app.browserjs.com", "authenticate.browserjs.com", "dex.browserjs.com", "sessions.browserjs.com", "*.sessions.browserjs.com"])
+    error_message = "The certificate must cover the five hosts and the session wildcard."
   }
 
   assert {
-    condition     = length(google_certificate_manager_certificate_map_entry.this) == 5
+    condition     = length(google_certificate_manager_certificate_map_entry.this) == 6
     error_message = "Expected a certificate map entry per public name."
   }
 
@@ -233,7 +234,7 @@ run "federated_tokens_and_regional_cluster" {
   }
 
   assert {
-    condition     = length(output.dns_records) == 5
+    condition     = length(output.dns_records) == 6
     error_message = "The records to create by hand must still be listed."
   }
 }

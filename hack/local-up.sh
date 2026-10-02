@@ -83,7 +83,7 @@ if [ ! -f "$tls/tls.crt" ]; then
   openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
     -subj "/CN=localtest.me" -keyout "$tls/tls.key" -out "$tls/tls.csr" 2>/dev/null
   printf 'subjectAltName=%s\nextendedKeyUsage=serverAuth\nkeyUsage=critical,digitalSignature\nbasicConstraints=critical,CA:FALSE\nauthorityKeyIdentifier=keyid\n' \
-    "DNS:app.localtest.me,DNS:authenticate.localtest.me,DNS:sessions.localtest.me,DNS:*.sessions.localtest.me,DNS:pomerium.$NS.svc.cluster.local,DNS:pomerium.$NS.svc" >"$tls/ext.cnf"
+    "DNS:app.localtest.me,DNS:api.localtest.me,DNS:authenticate.localtest.me,DNS:sessions.localtest.me,DNS:*.sessions.localtest.me,DNS:pomerium.$NS.svc.cluster.local,DNS:pomerium.$NS.svc" >"$tls/ext.cnf"
   openssl x509 -req -in "$tls/tls.csr" -CA "$tls/ca.crt" -CAkey "$tls/ca.key" -CAcreateserial \
     -days 365 -extfile "$tls/ext.cnf" -out "$tls/tls.crt" 2>/dev/null
   chmod 600 "$tls"/*.key

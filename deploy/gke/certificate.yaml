@@ -12,6 +12,7 @@ spec:
     name: letsencrypt-production
   dnsNames:
     - app.browserjs.com
+    - api.browserjs.com
     - authenticate.browserjs.com
     - dex.browserjs.com
     # Every session is under this one name.

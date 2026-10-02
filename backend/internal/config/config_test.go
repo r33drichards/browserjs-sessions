@@ -207,3 +207,70 @@ func TestSessionURLTemplates(t *testing.T) {
 		t.Errorf("a host per session: %v", err)
 	}
 }
+
+func TestAPITokens(t *testing.T) {
+	base := func() map[string]string {
+		return map[string]string{
+			"PUBLIC_URL":           "https://app.example.com",
+			"SESSION_URL_TEMPLATE": "https://{id}.sessions.example.com",
+			"POMERIUM_JWKS_URL":    "https://app.example.com/.well-known/pomerium/jwks.json",
+		}
+	}
+	// Off unless asked for.
+	c, err := FromEnv(env(base()))
+	if err != nil || c.APIURL != "" || len(c.AllowedEmails) != 0 || c.APITokens() {
+		t.Fatalf("defaults: %+v %v", c, err)
+	}
+	// The list alone turns nothing on.
+	m := base()
+	m["ALLOWED_EMAILS"] = "alice@example.com"
+	if c, err := FromEnv(env(m)); err != nil || c.APITokens() {
+		t.Errorf("ALLOWED_EMAILS alone: %v %v", c.APITokens(), err)
+	}
+	// The host alone is reserved, with nobody to use it.
+	m = base()
+	m["API_URL"] = "https://api.example.com/"
+	if c, err := FromEnv(env(m)); err != nil || c.APIURL != "https://api.example.com" || c.APITokens() {
+		t.Errorf("API_URL alone: %+v %v", c, err)
+	}
+	m["ALLOWED_EMAILS"] = " Alice@Example.com , ,bob@example.com,"
+	c, err = FromEnv(env(m))
+	if err != nil || !c.APITokens() || !slices.Equal(c.AllowedEmails, []string{"alice@example.com", "bob@example.com"}) {
+		t.Errorf("both: %+v %v", c, err)
+	}
+	for _, bad := range []string{
+		"api.example.com", "ftp://api.example.com", "https://", "https://api.example.com/v1",
+		"https://api.example.com?x=1", "https://app.example.com", "https://APP.example.com",
+		"https://s-abcdefg234.sessions.example.com", "https://x.sessions.example.com",
+	} {
+		m["API_URL"] = bad
+		if _, err := FromEnv(env(m)); err == nil || !strings.Contains(err.Error(), "API_URL") {
+			t.Errorf("API_URL %q: %v", bad, err)
+		}
+	}
+}
+
+func TestAPISigningKey(t *testing.T) {
+	m := map[string]string{
+		"PUBLIC_URL":           "https://app.example.com",
+		"SESSION_URL_TEMPLATE": "https://sessions.example.com/{id}",
+		"POMERIUM_JWKS_URL":    "https://app.example.com/.well-known/pomerium/jwks.json",
+	}
+	if c, err := FromEnv(env(m)); err != nil || c.APISigningKey != nil {
+		t.Fatalf("no key: %v %v", c.APISigningKey, err)
+	}
+	// 32 bytes, as `openssl rand -base64 32` and as base64url print them.
+	for _, key := range []string{"MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY", " MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=\n"} {
+		m["API_SIGNING_KEY"] = key
+		if c, err := FromEnv(env(m)); err != nil || string(c.APISigningKey) != "0123456789abcdef0123456789abcdef" {
+			t.Errorf("%q: %q %v", key, c.APISigningKey, err)
+		}
+	}
+	for _, bad := range []string{"c2hvcnQ=", "not base64 at all!", "0123456789abcdef"} {
+		m["API_SIGNING_KEY"] = bad
+		_, err := FromEnv(env(m))
+		if err == nil || !strings.Contains(err.Error(), "API_SIGNING_KEY") || strings.Contains(err.Error(), bad) {
+			t.Errorf("%q: %v", bad, err)
+		}
+	}
+}

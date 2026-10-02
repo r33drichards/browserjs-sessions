@@ -451,8 +451,9 @@ variable "domain" {
 }
 
 variable "hostnames" {
-  description = "Left-hand labels of the public names under domain. sessions is the host every session is under, <sessions>.<domain>/<id>, and the parent of the older per-session wildcard, *.<sessions>.<domain>."
+  description = "Left-hand labels of the public names under domain. api is the API host, where API tokens are the credential. sessions is the host every session is under, <sessions>.<domain>/<id>, and the parent of the older per-session wildcard, *.<sessions>.<domain>."
   type = object({
+    api          = optional(string, "api")
     app          = optional(string, "app")
     authenticate = optional(string, "authenticate")
     dex          = optional(string, "dex")

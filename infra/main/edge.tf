@@ -6,6 +6,7 @@ locals {
   edge_alb = var.edge_mode == "gateway_alb"
 
   fqdn = {
+    api          = "${var.hostnames.api}.${var.domain}"
     app          = "${var.hostnames.app}.${var.domain}"
     authenticate = "${var.hostnames.authenticate}.${var.domain}"
     dex          = "${var.hostnames.dex}.${var.domain}"
@@ -18,6 +19,7 @@ locals {
   # "sessions" entry (and rename nothing: a new key would replace a record)
   # once deploy/gke has dropped its legacy-session-* routes.
   public_names = {
+    api           = local.fqdn.api
     app           = local.fqdn.app
     authenticate  = local.fqdn.authenticate
     dex           = local.fqdn.dex

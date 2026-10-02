@@ -25,6 +25,12 @@ spec:
               value: /etc/local-ca/ca.crt
             - name: ADMIN_EMAILS
               value: admin@example.com
+            # API tokens (docs/api-tokens.md). ALLOWED_EMAILS is the policy
+            # of pomerium-config.yaml, address for address.
+            - name: API_URL
+              value: https://api.localtest.me
+            - name: ALLOWED_EMAILS
+              value: alice@example.com,bob@example.com,admin@example.com,rwendt1337@gmail.com,browserjs06@gmail.com
           volumeMounts:
             - name: local-ca
               mountPath: /etc/local-ca
