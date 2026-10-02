@@ -49,6 +49,17 @@ routes:
     allow_websockets: true
     preserve_host_header: true
 
+  # OAuth discovery for the MCP endpoint. Pomerium v0.33.3 serves these two
+  # documents itself only on hosts with an exact route, not on wildcard
+  # hosts, so the backend answers them (backend/internal/proxy/metadata.go).
+  # Remove this route when Pomerium does.
+  - name: session-oauth-metadata
+    from: https://*.sessions.example.com
+    prefix: /.well-known/oauth-
+    to: http://backend
+    allow_public_unauthenticated_access: true
+    preserve_host_header: true
+
   # The session's MCP endpoint. Pomerium signs the MCP client's user in and
   # says who it is; the backend decides whether the session is theirs.
   - name: session-mcp
