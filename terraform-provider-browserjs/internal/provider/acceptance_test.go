@@ -16,7 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 
-	"github.com/r33drichards/browserjs-sessions/terraform-provider-browserjs/internal/fakeapi"
+	"github.com/r33drichards/computer-use/terraform-provider-browserjs/internal/fakeapi"
 )
 
 // Acceptance tests run real plans and applies with a terraform or tofu

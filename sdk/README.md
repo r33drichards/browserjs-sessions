@@ -10,7 +10,7 @@ JavaScript and Go get the same client through
 | Rust | [`computeruse-sdk`](crates/computeruse) on crates.io (the library is `computeruse`) | `cargo add computeruse-sdk` |
 | Python | [`computeruse`](python) on PyPI | `pip install computeruse` |
 | JavaScript, TypeScript | [`computeruse`](js) on npm, for Node 20+ | `npm install computeruse` |
-| Go | [`sdk/go`](go), a module in this repository; needs cgo and a prebuilt library | `go get github.com/r33drichards/browserjs-sessions/sdk/go` |
+| Go | [`sdk/go`](go), a module in this repository; needs cgo and a prebuilt library | `go get github.com/r33drichards/computer-use/sdk/go` |
 
 Nothing is published yet: see [Publishing](#publishing).
 
@@ -79,7 +79,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/r33drichards/browserjs-sessions/sdk/go/computeruse"
+	"github.com/r33drichards/computer-use/sdk/go/computeruse"
 )
 
 func main() {
@@ -229,7 +229,7 @@ Names, checked on 2026-10-02:
 | crates.io | `computeruse-sdk`, `computeruse-sdk-macros` | free. `computeruse` is taken by an unrelated placeholder (0.0.1), which is why the crate has a suffix and the library does not |
 | PyPI | `computeruse` | free |
 | npm | `computeruse` | free |
-| Go | `github.com/r33drichards/browserjs-sessions/sdk/go` | the repository's path; nothing to reserve |
+| Go | `github.com/r33drichards/computer-use/sdk/go` | the repository's path; nothing to reserve |
 
 Before the first release, once:
 
@@ -238,7 +238,7 @@ Before the first release, once:
    `CARGO_REGISTRY_TOKEN`.
 2. **PyPI**: on <https://pypi.org/manage/account/publishing/> add a pending
    trusted publisher: project `computeruse`, owner `r33drichards`, repository
-   `browserjs-sessions` (the new name after the rename), workflow
+   `computer-use`, workflow
    `sdk-release.yml`, environment `pypi`. No secret is needed. To use a token
    instead, save it as `PYPI_API_TOKEN`.
 3. **npm**: make a granular access token that may publish, and save it as
@@ -262,14 +262,14 @@ A release that fails part-way can be run again for npm and the GitHub
 release. crates.io and PyPI refuse a version that exists: fix forward with a
 new version.
 
-### When the repository is renamed
+### If the repository is renamed again
 
-To `r33drichards/computer-use`. The lines that name the repository (each is
-marked `RENAME` where a comment is possible):
+The repository was `r33drichards/browserjs-sessions` until October 2026. The
+lines that name it:
 
 | File | Line |
 | --- | --- |
-| `sdk/go/go.mod` | `module github.com/r33drichards/browserjs-sessions/sdk/go` |
+| `sdk/go/go.mod` | `module github.com/r33drichards/computer-use/sdk/go` |
 | `sdk/crates/computeruse/uniffi.toml` | `go_mod = ...` |
 | `sdk/go/computeruse/smoke_test.go` | the import |
 | `sdk/go/install-lib.sh` | `REPO=` |
@@ -278,16 +278,8 @@ marked `RENAME` where a comment is possible):
 | `sdk/js/package.json` | `repository.url` |
 | `sdk/README.md`, `sdk/go/README.md`, `site/reference/sdk.md`, `site/guides/use-from-code.md` | the Go import path in the examples |
 
-One command does it:
-
-```bash
-grep -rl 'r33drichards/browserjs-sessions' sdk site/reference/sdk.md site/guides/use-from-code.md \
-  | xargs sed -i '' 's#r33drichards/browserjs-sessions#r33drichards/computer-use#g'
-```
-
-Then run `scripts/bindings.sh go` (the generated Go does not contain the
-path, so nothing should change) and the smoke tests. Do it before the first
-Go release: a module path is part of every import of it.
+A Go module path is part of every import of it: after the first Go release,
+a rename breaks everyone who imports the module.
 
 ## Licence
 

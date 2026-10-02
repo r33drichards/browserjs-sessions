@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/hosts"
+	"github.com/r33drichards/computer-use/backend/internal/hosts"
 )
 
 // idPlaceholder is where a URL template names the session.

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/proxy"
+	"github.com/r33drichards/computer-use/backend/internal/proxy"
 )
 
 func listen(t *testing.T) net.Listener {

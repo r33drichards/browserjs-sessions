@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/r33drichards/browserjs-sessions/terraform-provider-browserjs/internal/fakeapi"
+	"github.com/r33drichards/computer-use/terraform-provider-browserjs/internal/fakeapi"
 )
 
 func TestProviderNeedsAToken(t *testing.T) {

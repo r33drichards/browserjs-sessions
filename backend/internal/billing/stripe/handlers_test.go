@@ -3,14 +3,14 @@ package stripe_test
 import (
 	"errors"
 	"fmt"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing/stripe/stripetest"
+	"github.com/r33drichards/computer-use/backend/internal/billing/stripe/stripetest"
 	"net/http"
 	"testing"
 	"time"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/auth"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing/stripe"
+	"github.com/r33drichards/computer-use/backend/internal/auth"
+	"github.com/r33drichards/computer-use/backend/internal/billing"
+	"github.com/r33drichards/computer-use/backend/internal/billing/stripe"
 )
 
 func wantError(t *testing.T, what string, code int, out map[string]any, status int, errCode string) {

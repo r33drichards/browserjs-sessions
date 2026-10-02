@@ -9,7 +9,7 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/r33drichards/browserjs-sessions/terraform-provider-metronome/internal/fakeapi"
+	"github.com/r33drichards/computer-use/terraform-provider-metronome/internal/fakeapi"
 )
 
 func main() {

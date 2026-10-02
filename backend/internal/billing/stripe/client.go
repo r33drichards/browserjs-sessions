@@ -14,7 +14,7 @@ import (
 
 	sdk "github.com/stripe/stripe-go/v86"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing"
+	"github.com/r33drichards/computer-use/backend/internal/billing"
 )
 
 // Every call to Stripe has this long, and the SDK tries a call that failed

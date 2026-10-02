@@ -15,7 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"github.com/r33drichards/browserjs-sessions/terraform-provider-metronome/internal/client"
+	"github.com/r33drichards/computer-use/terraform-provider-metronome/internal/client"
 )
 
 var (

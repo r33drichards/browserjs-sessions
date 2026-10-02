@@ -9,8 +9,8 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/auth"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing"
+	"github.com/r33drichards/computer-use/backend/internal/auth"
+	"github.com/r33drichards/computer-use/backend/internal/billing"
 )
 
 // The limits on saving cards (enforcement.md): the setup Checkout checks a

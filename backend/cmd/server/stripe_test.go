@@ -11,13 +11,13 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/auth"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing/billingtest"
-	bstripe "github.com/r33drichards/browserjs-sessions/backend/internal/billing/stripe"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing/stripe/stripetest"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/config"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions/sessionstest"
+	"github.com/r33drichards/computer-use/backend/internal/auth"
+	"github.com/r33drichards/computer-use/backend/internal/billing"
+	"github.com/r33drichards/computer-use/backend/internal/billing/billingtest"
+	bstripe "github.com/r33drichards/computer-use/backend/internal/billing/stripe"
+	"github.com/r33drichards/computer-use/backend/internal/billing/stripe/stripetest"
+	"github.com/r33drichards/computer-use/backend/internal/config"
+	"github.com/r33drichards/computer-use/backend/internal/sessions/sessionstest"
 )
 
 // A made-up secret: the tests sign their own events with it.

@@ -2,12 +2,12 @@ package stripe_test
 
 import (
 	"errors"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing/stripe/stripetest"
+	"github.com/r33drichards/computer-use/backend/internal/billing/stripe/stripetest"
 	"testing"
 	"time"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing/stripe"
+	"github.com/r33drichards/computer-use/backend/internal/billing"
+	"github.com/r33drichards/computer-use/backend/internal/billing/stripe"
 )
 
 func (w *world) recharge(owner string) {

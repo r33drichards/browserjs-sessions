@@ -246,7 +246,7 @@ Never in a file or a command's arguments. From the Keychain items the local
 setup uses (`gh secret set` reads the value from stdin):
 
 ```sh
-cd ~/browserjs-sessions
+cd ~/computer-use
 for pair in google-client-id:DEX_GOOGLE_CLIENT_ID google-client-secret:DEX_GOOGLE_CLIENT_SECRET \
             github-client-id:DEX_GITHUB_CLIENT_ID github-client-secret:DEX_GITHUB_CLIENT_SECRET; do
   security find-generic-password -s "browserjs-sessions-${pair%%:*}" -w | gh secret set "${pair##*:}"

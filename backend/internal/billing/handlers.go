@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/auth"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
+	"github.com/r33drichards/computer-use/backend/internal/auth"
+	"github.com/r33drichards/computer-use/backend/internal/sessions"
 )
 
 // Handlers is the read side of billing and the deletion of an account

@@ -10,8 +10,7 @@ license = "Apache-2.0"
 rust-version = "1.91"
 authors = ["Robert Wendt"]
 homepage = "https://computeruse.site"
-# RENAME: the repository is about to become r33drichards/computer-use.
-repository = "https://github.com/r33drichards/browserjs-sessions"
+repository = "https://github.com/r33drichards/computer-use"
 
 [workspace.dependencies]
 # Pinned: uniffi-bindgen-go and uniffi-bindgen-react-native each follow one

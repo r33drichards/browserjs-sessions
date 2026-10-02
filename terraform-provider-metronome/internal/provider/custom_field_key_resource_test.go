@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/r33drichards/browserjs-sessions/terraform-provider-metronome/internal/client"
+	"github.com/r33drichards/computer-use/terraform-provider-metronome/internal/client"
 )
 
 const fieldKeyRes = "metronome_custom_field_key"

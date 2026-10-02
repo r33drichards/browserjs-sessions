@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/auth"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing/billingtest"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing/stripe"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing/stripe/stripetest"
+	"github.com/r33drichards/computer-use/backend/internal/auth"
+	"github.com/r33drichards/computer-use/backend/internal/billing"
+	"github.com/r33drichards/computer-use/backend/internal/billing/billingtest"
+	"github.com/r33drichards/computer-use/backend/internal/billing/stripe"
+	"github.com/r33drichards/computer-use/backend/internal/billing/stripe/stripetest"
 )
 
 // A made-up secret: no test has, or needs, a real one.

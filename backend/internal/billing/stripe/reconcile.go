@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing"
+	"github.com/r33drichards/computer-use/backend/internal/billing"
 )
 
 // How often the two reconciles run.
