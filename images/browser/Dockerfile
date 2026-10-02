@@ -14,17 +14,24 @@ RUN nix --extra-experimental-features "nix-command flakes" --option filter-sysca
  && ln -s "$(readlink -f /result)/bin/browser-entrypoint" /rootfs/entrypoint \
  && mkdir -p /rootfs/bin /rootfs/usr/bin \
  && ln -s "$(readlink -f /result/bin/browser-entrypoint | xargs grep -o '/nix/store/[^/]*-bash-[^/]*/bin/bash' | head -1)" /rootfs/bin/sh \
- && printf 'root:x:0:0:root:/root:/bin/sh\nbrowser:x:1000:1000:browser:/home/browser:/bin/sh\n' > /rootfs/etc/passwd \
+ && printf 'root:x:0:0:root:/root:/bin/bash\nbrowser:x:1000:1000:browser:/data/chrome/home:/bin/bash\n' > /rootfs/etc/passwd \
  && printf 'root:x:0:\nbrowser:x:1000:\n' > /rootfs/etc/group \
- && mkdir -p /rootfs/home/browser \
- && chown 1000:1000 /rootfs/home/browser \
- && chmod 700 /rootfs/home/browser \
  && chmod 1777 /rootfs/tmp
+# For the desktop's terminal: an interactive bash at the usual path, and env
+# where a script's first line looks for it. The session bus wants a machine
+# ID; it is the same in every session, which tells a site nothing.
+RUN shell="$(grep -o '/nix/store/[^/]*-bash-interactive-[^/]*/bin/bash' "$(readlink -f /result/bin/browser-entrypoint)" | head -1)" \
+ && env="$(grep -o '/nix/store/[^/:]*-coreutils-[^/:]*/bin' "$(readlink -f /result/bin/browser-entrypoint)" | head -1)/env" \
+ && test -x "$shell" && test -x "$env" \
+ && ln -s "$shell" /rootfs/bin/bash \
+ && ln -s "$env" /rootfs/usr/bin/env \
+ && echo 6272736a732d73657373696f6e2d3031 > /rootfs/etc/machine-id
 
 # The image runs as root unless told otherwise, which is what the standalone
 # (Railway) deployment does: its volume at /data belongs to root. A browserjs
 # session pod runs it as the user "browser" (runAsUser: 1000), which the
-# entrypoint supports equally; openbox needs that uid to be in /etc/passwd.
+# entrypoint supports equally. Either user's home is on the volume
+# ($DATA_DIR/chrome/home, set by the entrypoint).
 FROM scratch
 COPY --from=build /rootfs /
 EXPOSE 8080 8081

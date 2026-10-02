@@ -164,6 +164,15 @@ display, in the browser container, and you call it from here. Each operation
 is the nut.js call of the same name (`mouse.click`, `keyboard.type`,
 `screen.grab`, …):
 
+The desktop is XFCE: Chromium's window, and a panel along the bottom edge
+with an applications menu, launchers and the open windows. Besides Chromium
+it has a terminal (`xfce4-terminal`: bash with git, curl, python3, node and
+the usual Unix tools, as an unprivileged user, with nothing to install
+packages with), a file manager (Thunar), a text editor (Mousepad) and an
+image viewer (Ristretto). The home directory, `/data/chrome/home`, is kept
+with the session; `~/Downloads` is the folder of the session's files. Open a
+program from the panel or the menu, or with Alt+F2 and its name.
+
 ```js
 // A screenshot. It comes back to your code, not to the model.
 const r = await mcp.callTool("browser", "desktop_execute", {

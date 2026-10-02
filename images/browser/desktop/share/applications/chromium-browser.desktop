@@ -1,0 +1,15 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Chromium
+GenericName=Web Browser
+Comment=The session's browser
+# `chromium` is the image's wrapper (flake.nix): a new window or tab in the
+# Chromium that is already running, with the session's profile.
+Exec=chromium %U
+Icon=chromium
+Terminal=false
+Categories=Network;WebBrowser;
+MimeType=text/html;application/xhtml+xml;application/pdf;x-scheme-handler/http;x-scheme-handler/https;
+StartupNotify=false
+StartupWMClass=chromium-browser
