@@ -272,8 +272,9 @@ operator). One session, asleep, a balance of $1.
 Its seconds function runs every vector of `metering-vectors.json`
 (`awakeSeconds`, `diskGBSeconds`), and the property tests of the tracks
 document that are about seconds. Its sender is tested against a fake
-ingest endpoint: the same tick sent twice has the same `transaction_id`s;
-batches hold at most 100 events; a 5xx is retried with the same keys and
+ingest endpoint: five ticks of 60 awake seconds make one event of 300; a
+session that falls asleep mid-window is sent at once; the same window sent
+twice has the same `transaction_id`; batches hold at most 100 events; a 5xx is retried with the same keys and
 given up after an hour; a 4xx is dropped and logged; a restart charges
 nothing for the time it was down beyond `MAX_GAP`. The Go port of the step
 in `billingtest` runs the whole file, money included.

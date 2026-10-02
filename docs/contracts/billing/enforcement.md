@@ -192,7 +192,9 @@ is removed, the session stays up and new calls are accepted again.
 
 Awake time after the credit is gone (until Metronome's alert or the
 balance pass, then the grace and the drain) is rated at zero and owed by
-nobody. The most a user gets this way is about 20 minutes per exhaustion,
+nobody. The most a user gets this way is about 25 minutes per exhaustion
+(up to 5 for the window that is being added up, some minutes for the
+alert, 5 of grace, 10 of drain),
 and each exhaustion needs a purchase to recover from.
 
 **Afterwards.** A session stopped for `credit` or `payment-method` shows as

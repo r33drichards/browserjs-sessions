@@ -94,21 +94,21 @@ Sent by the observer to `POST /v1/ingest`, at most 100 events a request.
 
 ```json
 {
-  "transaction_id": "awake/<session id>/<tick, unix seconds>",
+  "transaction_id": "awake/<session id>/<window start, unix seconds>",
   "customer_id": "<Account name>",
   "event_type": "session.awake",
-  "timestamp": "2026-10-02T10:01:00Z",
-  "properties": { "session_id": "<session id>", "seconds": "60" }
+  "timestamp": "2026-10-02T10:05:00Z",
+  "properties": { "session_id": "<session id>", "seconds": "300" }
 }
 ```
 
 ```json
 {
-  "transaction_id": "kept/<session id>/<hour start, unix seconds>",
+  "transaction_id": "kept/<session id>/<window start, unix seconds>",
   "customer_id": "<Account name>",
   "event_type": "session.kept",
-  "timestamp": "2026-10-02T11:00:00Z",
-  "properties": { "session_id": "<session id>", "gb_seconds": "18000" }
+  "timestamp": "2026-10-02T12:00:00Z",
+  "properties": { "session_id": "<session id>", "gb_seconds": "108000" }
 }
 ```
 
@@ -117,31 +117,42 @@ Sent by the observer to `POST /v1/ingest`, at most 100 events a request.
   the awake seconds and GB-seconds of each tick exactly as the step does
   and as `metering-vectors.json` expects (`awakeSeconds`, `diskGBSeconds`).
   It does no arithmetic in money.
-- `session.awake`: one event per awake session per tick (60 s) that
-  charged more than zero seconds.
-- `session.kept`: the GB-seconds of each session are added up in the
-  observer and sent once an hour, at the hour, with the hour's start in the
-  key. A session deleted mid-hour is sent at its last sight.
+- The observer still **observes every 60 s** (`TICK`); the gap rule needs
+  that. What it **sends** is added up over a window, to keep the number of
+  events (which is what Metronome charges for) low.
+- `session.awake`: the awake seconds of each session added up over a
+  5-minute window (`AWAKE_WINDOW`, aligned to the clock: :00, :05, ...),
+  sent at the window's end with the window's start in the key and its end
+  as the timestamp. A window with zero seconds sends nothing. A session
+  that stops being awake is sent at once, without waiting for the window.
+- `session.kept`: the GB-seconds of each session added up over a 6-hour
+  window (`KEPT_WINDOW`, aligned to the clock in UTC: 00:00, 06:00, ...),
+  sent at the window's end with the window's start in the key. A session
+  deleted mid-window is sent at its last sight. Nothing in enforcement
+  waits on the disk charge, so the window is long to keep events few; it
+  is a setting.
 - `transaction_id` is the idempotency key; Metronome ignores a repeat for
   34 days. A retry sends the same key.
-- The observer's state (each session's `lastSeen` and `awake`, the hour's
-  GB-seconds) is in its memory. Losing it (a restart) can only lose
+- The observer's state (each session's `lastSeen` and `awake`, the open
+  windows' sums) is in its memory. Losing it (a restart) can only lose
   charges: a session met again with no `lastSeen` is charged from
-  `readySince` if that is within `MAX_GAP`, otherwise nothing, and the
-  hour's unsent GB-seconds are gone.
+  `readySince` if that is within `MAX_GAP`, otherwise nothing; the open
+  windows' unsent sums (at most 5 minutes awake, 6 hours of disk: about a cent a session) are
+  gone; and what the restarted observer sends for the same window has the
+  same key and is ignored by Metronome.
 - **Delivery.** A 429 or 5xx is retried with backoff, the batch kept in
   memory for at most one hour (events may be backdated 34 days); after
   that, or on a restart, it is dropped and that time is free. A 4xx other
   than 429 is logged with the batch's keys and dropped.
-- After each tick that was delivered, the observer renews the Lease
+- After each window that was delivered, the observer renews the Lease
   `billing-observer`. A Lease older than 10 minutes is logged by the
   backend every sweep and shown as `ledger: stale` in `GET /api/billing`.
   It refuses nobody.
 
 Every error still falls in the user's favour (`metering.md`, "Which way
 errors fall"), with "operator" read as "observer" and two additions:
-Metronome unreachable for more than an hour, and a lost hour of disk on a
-restart, are free.
+Metronome unreachable for more than an hour, and the open windows lost on
+a restart, are free.
 
 ## Credit (grants)
 

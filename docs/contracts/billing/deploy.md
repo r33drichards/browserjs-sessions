@@ -116,11 +116,12 @@ prune with the key's request log):
 | Service | none: nothing calls it |
 | Scheduling (GKE) | the system pool |
 | Resources (requests) | 50m CPU, 128Mi |
-| Config | `BILLING`, `TICK` (60s), `MAX_GAP` (150s), `BILLING_CATALOGUE` (for `sessionDiskGB` only), `METRONOME_API_TOKEN`, `METRONOME_URL` |
+| Config | `BILLING`, `TICK` (60s), `MAX_GAP` (150s), `AWAKE_WINDOW` (5m), `KEPT_WINDOW` (6h), `BILLING_CATALOGUE` (for `sessionDiskGB` only), `METRONOME_API_TOKEN`, `METRONOME_URL` |
 | Egress | the API server, DNS, and TCP 443 to the internet for Metronome's API (NetworkPolicy `billing-operator`; a NetworkPolicy cannot name a host); no ingress |
 
 It is the **observer**: it lists Sandboxes each tick, computes seconds
-(`metering.md`), sends events to Metronome and renews the Lease
+(`metering.md`), adds them up, sends one event per session per window to
+Metronome and renews the Lease
 `billing-observer` (`metronome.md`, "Usage events"). It reads and writes no
 Account.
 

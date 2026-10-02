@@ -29,10 +29,11 @@ be the product owner's first ten minutes after signing up (section 8).
 
 | Question | Answer | Source |
 |---|---|---|
-| Can a new self-serve account get sandbox API access now? | **Yes, by the documentation**: "Access your sandbox API token via Developer, API tokens" after signing up at signup.metronome.com; "the environment is determined entirely by your API token". The sign-up page itself could not be read by a tool (it renders in the browser), and whether **production** access is equally self-serve is UNVERIFIED. | api-quickstart |
-| What does it cost? | Startup plan: **0.8% of billing volume + $0.04 per 1,000 ingested events**, "Start free". No monthly minimum is stated; that there is none is UNVERIFIED. | metronome.com/pricing |
-| At two users | about 17,000 events a month: **under $1**. | arithmetic below |
-| At 1,000 accounts | about 2.9M events: **$116 a month**, plus 0.8% of billing volume (at most about $160 on $20,000 of monthly sales). Whether the 0.8% applies to credit we grant ourselves, with Metronome invoicing nothing, is UNVERIFIED; assume it does. So **$116 to $280 a month**, against revenue of about $20,000. | arithmetic below |
+| Can a new self-serve account get sandbox API access now? | **Yes** (verified, next row). Stripe's documentation says the same: "create a Metronome sandbox" at signup.metronome.com; Metronome's: the sandbox API token is under "Developer, API tokens in the dashboard", and "the environment is determined entirely by your API token". | Stripe compare-metronome; api-quickstart |
+| Is it reached from inside Stripe (the "Metronome" shortcut in the owner's Stripe sidebar)? | **Yes, and it is self-serve. Verified by the product owner on 2026-10-02**: the shortcut opens a page with "Open Metronome to get started", which leads to https://signup.metronome.com/?source=stripe-app, a "Create your sandbox" form: work email, first and last name, company, country, number of employees. **No card, no password, no sales call**; the login details are emailed. It is still a separate Metronome account with its own sandbox (not Stripe's), and the API token is issued in Metronome's dashboard. Whether **production** access is equally self-serve is UNVERIFIED. | the product owner; api-quickstart |
+| What does it cost? | Startup plan, from the pricing page's own text (fetched directly, not summarised): "**Billing volume billed at 0.8%**", "**Events volume billed at $0.04/1k ingest events**", "Start free, scale confidently", button "Start now". The other plan is "Contact sales". No monthly minimum appears on the page; that there is none is UNVERIFIED. Stripe's pages give no different price for using it through Stripe. | metronome.com/pricing |
+| At two users | about 3,400 events a month: **about $0.15**. | arithmetic below |
+| At 1,000 accounts | about 530,000 events: **$21 a month**, plus 0.8% of billing volume (at most about $160 on $20,000 of monthly sales). Whether the 0.8% applies to credit we grant ourselves, with Metronome invoicing nothing, is UNVERIFIED; assume it does. So **$21 to $180 a month**, against revenue of about $20,000. | arithmetic below |
 | Prepaid credits with expiry and priority | **Yes.** Credits have an access schedule (`starting_at`, `ending_before`) and a `priority` (lower is used first); order is priority, then free before paid, then earliest end. | prioritization-rules, create-a-credit |
 | Recurring credits for the $5/$20/$100 tiers | **Yes** (`recurring_credits`: `MONTHLY`, `commit_duration` of one period, `rollover_fraction`). **Not used** in this design: see decision 2. | create-a-contract, hybrid-business-models |
 | Balance never negative, nothing ever owed | **Yes, by a documented pattern**: a list rate of 0 and the real price as the commit rate; "usage burns down the commit at the real prices while balance exists, and falls back to 0 USD after the commit is exhausted". The net balance treats a negative segment as zero. Check M2. | guarantee-zero-overages, getNetBalance |
@@ -40,17 +41,31 @@ be the product owner's first ten minutes after signing up (section 8).
 | Alerts by webhook at a threshold or at zero | **Yes**: `low_remaining_contract_credit_and_commit_balance_reached`, for every customer when no `customer_id` is given, signed with HMAC-SHA256, retried for about two days. Sent "within minutes of that condition being met". Metronome's own prepaid guide shows it firing at `remaining_balance: 0`; that a threshold of 0 is accepted, and whether it fires on expiry, is M4. | threshold-notifications, setup-webhooks, prepaid-credits guide |
 | Auto-recharge of prepaid credit through Stripe | **Yes, natively** (`prepaid_balance_threshold_configuration` with a Stripe payment gate), but with limits that do not fit ours: the threshold is at least $5 and the recharge at least $10 above it; it needs Metronome connected to Stripe, a default payment method, a stored address and a tax provider; a failed payment switches it off; no monthly cap is documented. **Not used**: decision 3. | prepaid-balance-thresholds |
 
-**Events, the arithmetic.** One `session.awake` event per awake session per
-minute; one `session.kept` event per existing session per hour.
+**Events, the arithmetic.** Metronome charges per event, so the observer
+adds up what it sees and sends one `session.awake` event per awake session
+per **5 minutes**, and one `session.kept` event per existing session per
+**6 hours**. It still looks every 60 s; only the sending is grouped.
 
-- Two users, two sessions awake 4 hours a day, four sessions kept: 2 x 240
-  x 30 = 14,400, plus 4 x 730 = 2,920: 17,320 events, $0.69.
+- Two users, two sessions awake 4 hours a day, four sessions kept: 2 x 48
+  x 30 = 2,880, plus 4 x 122 = 488: about 3,400 events, $0.13.
 - 1,000 accounts, 200 sessions awake on average 4 hours a day, 2,000 kept:
-  200 x 240 x 30 = 1.44M, plus 2,000 x 730 = 1.46M: 2.9M events, $116.
-  Sending disk once a day instead of once an hour would make it $60.
+  200 x 48 x 30 = 288,000 ($11.52), plus 2,000 x 122 = 243,000 ($9.73):
+  about 530,000 events, **$21**.
 
-**This is dearer than building it** (the storage alone was about $5 a
-month on Firestore), and it is the right trade: no ledger of ours to get
+| Awake window | Awake events at 1,000 accounts | Cost | Added delay before "out of credit" is known |
+|---|---|---|---|
+| 1 minute | 1.44M | $57.60 | none |
+| **5 minutes (chosen)** | 288,000 | $11.52 | up to 5 minutes |
+| 15 minutes | 96,000 | $3.84 | up to 15 minutes |
+
+Five minutes saves $46 a month over one; fifteen saves another $8 and
+gives away ten more minutes of use at zero each time. Disk is sent every
+6 hours because nothing in enforcement waits on it: hourly would cost $58
+a month for the disk events alone, against $10. Both windows are settings
+of the observer (`AWAKE_WINDOW`, `KEPT_WINDOW`).
+
+**This is dearer than building it** (the storage was about $5 a month on
+Firestore), and it is the right trade: no ledger of ours to get
 wrong, no store to run or back up, and the money logic is a vendor's
 tested product owned by the company that already takes our payments.
 
@@ -102,9 +117,10 @@ falling back costs one implementation, not a redesign.
   `signup/<card fingerprint>`). Metronome refuses a key it has seen (409),
   which is the whole idempotency, as the Grant's name was.
 - **The observer sends what it saw.** It keeps the seconds half of the
-  metering step (the gap rule: time not observed is never charged) and
-  sends one event per awake session per minute with those seconds, and one
-  per kept session per hour with its GB-seconds. Metronome turns seconds
+  metering step (the gap rule: time not observed is never charged). It
+  looks every 60 s and sends one event per awake session per 5 minutes
+  with the seconds it counted, and one per kept session per 6 hours with
+  its GB-seconds. Metronome turns seconds
   into money and draws the credit down: plan credit first, then sign-up,
   then purchased.
 - **No copy of the ledger in the backend's memory, and no local ledger.**
@@ -169,8 +185,12 @@ Contract: "Usage events". In short:
 
 - `POST /v1/ingest`, up to 100 events a request, 34-day deduplication on
   `transaction_id`, events may be backdated 34 days.
-- `transaction_id` is `awake/<session>/<tick>` or `kept/<session>/<hour>`:
-  a retry or a replay is the same key and is ignored by Metronome.
+- The observer looks every 60 s and adds up: awake seconds per session
+  over a 5-minute window, GB-seconds per session over 6 hours. A session
+  that falls asleep is sent at once.
+- `transaction_id` is `awake/<session>/<window start>` or
+  `kept/<session>/<window start>`: a retry or a replay is the same key and is
+  ignored by Metronome.
 - The seconds in an event are computed by the **unchanged** gap rule of
   `metering.md`; the 18 vectors still pin them. The observer does no money
   arithmetic.
@@ -180,8 +200,10 @@ Contract: "Usage events". In short:
   front of ingest; we do not add one, because an hour of lost usage costs
   us cents and a queue is another thing to run.
 - The observer's state is in its own memory (each session's last sight,
-  the hour's disk seconds). That is not a copy of the ledger: losing it
-  loses charges and nothing else.
+  the open windows' sums). That is not a copy of the ledger: losing it
+  loses at most 5 minutes of awake time and 6 hours of disk (about a cent
+  a session), in the
+  user's favour.
 
 ---
 
@@ -206,9 +228,9 @@ per decision.** Recommended, for three reasons:
 3. It is not an in-memory copy: it is one stored boolean with one writer
    (`ensureCredit`), on the resource the owner agreed to keep.
 
-What it costs: the flag can be late. Credit gone, to the alert or the
-balance pass (minutes), plus the 5-minute grace and the drain: about 20
-minutes of use at most, rated at zero and owed by nobody. The other way
+What it costs: the flag can be late. The window being added up (up to 5
+minutes), the alert or the balance pass (minutes), the 5-minute grace and
+the drain: about 25 minutes of use at most, rated at zero and owed by nobody. The other way
 round cannot happen: credit only arrives through our own `EnsureGrant`,
 which clears the flag in the same call.
 
@@ -282,7 +304,7 @@ the fake's `Tick` and posts the alert event it returns.
 
 | Track | Now | Change | Size |
 |---|---|---|---|
-| **A, operator** | not yet a pull request | Becomes the **observer**: the pass, the observation, the **seconds** function (vectors: `awakeSeconds`, `diskGBSeconds`), the hourly disk sum, the sender to Metronome with keys, batching, retry and give-up, the Lease. **Drops**: money, debit, grants, `Account.status`, periods, `UsagePeriod`, retention, conditions, and reading Accounts at all. Needs the Metronome token and egress on 443. | Smaller |
+| **A, operator** | not yet a pull request | Becomes the **observer**: the pass, the observation, the **seconds** function (vectors: `awakeSeconds`, `diskGBSeconds`), the 6-hourly disk sum, the sender to Metronome with keys, batching, retry and give-up, the Lease. **Drops**: money, debit, grants, `Account.status`, periods, `UsagePeriod`, retention, conditions, and reading Accounts at all. Needs the Metronome token and egress on 443. | Smaller |
 | **B, deployment** (#79) | open | **Drops** the `Grant` and `UsagePeriod` CRDs and their rights and CEL tests. **Adds** the Secret `metronome` from the GitHub secrets (sandbox or production by `STRIPE_MODE`), the route `api-metronome-webhook` in every `pomerium-config.yaml`, the operator's new egress and its smaller Role with the Lease, `metronome-setup.yml`, the backend's Role without `watch`. The export CronJob exports Accounts only. The Account CRD is re-copied. | About the same |
 | **C, Stripe** | not yet a pull request | **Nothing in what it calls**: it creates and revokes credit only through `Ledger.EnsureGrant` and `Revoke`. Three small things: `decideSignupCredit` reads "another account's" as an `existing` with an empty Account; the checkout return no longer waits for a tick; `ensureRecharge`'s trigger is called from D's balance pass, not the sweep. | Very small |
 | **D, enforcement** (#80 open: interfaces and fakes) | in review | #80: replace `Ledger` as above, add `Metronome`, replace the fake ledger with the fake Metronome (the Go step moves inside it). Then, new: `backend/internal/billing/metronome/` (the HTTP client; `Ledger` over it; the webhook handler; the balance pass), `backend/cmd/metronome-setup`, `Accounts` on direct reads with label selectors and **no informer**, the decision reading `spec.credit.exhausted`, `GET /api/billing` and `/usage` from `Ledger.Balance` and `Usage`, scenario 5 and `TestNoLedgerCopy`. The decision table, the sweep, the drain and the answers are as planned. | The most change: one new package, the informer removed |
@@ -303,11 +325,11 @@ contract; then A, B and D's new package together.
 | 2 | Who owns subscriptions: Stripe Billing, or Metronome contracts with recurring credits | **Stripe stays**; plan credit is granted by us per paid invoice | Credit must follow a **payment**; a Metronome recurring credit is granted on schedule whether or not Stripe collected. It also keeps Checkout and the portal, which Stripe lists as "requires custom integration" with Metronome's own invoicing, and leaves track C and the merged UI untouched. |
 | 3 | Auto-recharge: Metronome's, or ours | **Ours** (already designed, off by default), triggered from the balance pass | Metronome's needs a $5 threshold and $10 steps, a tax provider and stored addresses, has no monthly cap, and switches itself off on a failed payment |
 | 4 | Connect Metronome to Stripe at all | **No**, for now | Nothing is invoiced by Metronome. Revisit if we ever want post-paid or enterprise contracts: that is what the connection is for. |
-| 5 | How often disk usage is sent | **Hourly** | $58 a month at 1,000 accounts; daily would be $2 and delays the disk charge by up to a day. Free to change later. |
+| 5 | How often usage is sent | **Awake: every 5 minutes. Disk: every 6 hours.** | $21 a month at 1,000 accounts ($12 awake, $10 disk). Hourly disk would add $48 for no enforcement benefit. Both are settings of the observer and free to change later. |
 | 6 | Usage period shown to a subscriber | **The calendar month**, like everyone | It is Metronome's statement period; the plan's credit still follows Stripe's billing period. One sentence changes on the billing page. |
 | 7 | Do exempt accounts (admins) get Metronome customers | **Yes** | "Metered for the record"; their usage rates at zero and counts toward the event fee (cents) |
 | 8 | Send the email address to Metronome | **No**: the customer's name is the owner hash | Less personal data with a processor; support looks an account up by hash |
-| 9 | Pull request 83 (the storage options) | **Close it**, keeping its link here as the fallback | Superseded by this decision |
+| 9 | Pull request 83 (the storage options) | **Keep it open** as the fallback until step 1 of the to-do list has passed | It is the plan if Metronome turns out unusable |
 
 **What would change the recommendation back to our own service**: sandbox
 or production access turns out to need a sales call or a minimum fee; M2
@@ -324,12 +346,22 @@ No agent creates the account, sees a token, or types one anywhere. Tokens
 and secrets go from Metronome's dashboard into GitHub's secret form and
 nowhere else: not a chat, not a file, not a log.
 
-1. **Sign up** at https://signup.metronome.com/ with the company address.
-   Note whether it asks for a card or a sales call, and whether the
-   pricing shown is still 0.8% + $0.04 per 1,000 events with no minimum.
-   If it is sales-gated or has a minimum that matters, stop and say so:
-   the fallback is section 1's.
-2. In the **sandbox**: Developer, API tokens, create a token. Put it in
+1. **Create the Metronome sandbox** (verified to be self-serve):
+   a. In the Stripe Dashboard ("Computer Use sandbox"), click
+      **Metronome** in the sidebar, then "Open Metronome to get started".
+      It opens https://signup.metronome.com/?source=stripe-app.
+   b. Fill in "Create your sandbox": work email, first and last name,
+      company, country, number of employees. No card and no password are
+      asked for; the login details arrive by email.
+   c. Sign in at app.metronome.com with them. If anything there asks for
+      a sales call or shows a minimum fee, stop and say so: the fallback
+      is section 1's.
+   d. **Do not** install or sign in to the Metronome Stripe App and **do
+      not** enable "Stripe" under Metronome's Developer, Integrations
+      (decision 4): both are for Metronome invoicing through Stripe,
+      which this design does not use.
+2. In Metronome's **sandbox** (app.metronome.com): Developer, API tokens,
+   create a token. This is the only place a token is issued. Put it in
    the GitHub Actions secret **`METRONOME_SANDBOX_API_TOKEN`**.
 3. Run the workflow **`metronome-setup`** with `environment: sandbox`,
    `apply: false`; read the plan; run it again with `apply: true`. (Exists
@@ -348,7 +380,7 @@ nowhere else: not a chat, not a file, not a log.
    `environment: production`.
 8. Add Metronome to the privacy page's list of processors (track F drafts
    the line) and check its data processing terms.
-9. **Do not** enable Metronome's Stripe integration (decision 4).
+9. Keep PR 83's fallback in mind only if step 1c fails.
 
 The Stripe steps of the first design's to-do list are unchanged.
 
@@ -358,10 +390,15 @@ The Stripe steps of the first design's to-do list are unchanged.
 
 Read 2026-10-02.
 
-- Stripe: https://docs.stripe.com/billing/how-metronome-works-with-stripe.md
-- Pricing: https://metronome.com/pricing (0.8%, $0.04 per 1,000 events,
-  "Start free"; read through a summariser, so check the page). That the
-  acquisition by Stripe closed on 2026-01-14 is from a secondary source.
+- Stripe: https://docs.stripe.com/billing/how-metronome-works-with-stripe.md ;
+  https://docs.stripe.com/billing/usage-based.md ;
+  https://docs.stripe.com/billing/subscriptions/usage-based/compare-metronome.md ;
+  https://docs.stripe.com/billing/subscriptions/usage-based/migrate-to-metronome/set-up.md
+- The Metronome Stripe App:
+  https://docs.metronome.com/guides/get-started/stripe-marketplace-app.md
+- Pricing: https://metronome.com/pricing (the page's HTML fetched and its
+  text read directly). That the acquisition by Stripe closed on
+  2026-01-14 is from a secondary source.
 - Getting started and tokens:
   https://docs.metronome.com/guides/get-started/api-quickstart.md
 - Ingest: https://docs.metronome.com/api-reference/usage/ingest-events.md ;
