@@ -17,11 +17,8 @@ that reaches the network is a coroutine.
     asyncio.run(main())
 """
 
-# The generated module (maturin writes it next to this file at build time).
-from . import computeruse as _generated
+# The generated bindings. maturin writes them, with the native library, next
+# to this file when it builds the wheel.
 from .computeruse import *  # noqa: F401,F403
 
-__all__ = list(_generated.__all__)
-__version__ = _generated.sdk_version()
-
-del _generated
+__version__ = sdk_version()  # noqa: F405

@@ -156,6 +156,12 @@ jobs:
           tar -C stage -czf "dist/go/libcomputeruse-$VERSION-$GO_PLATFORM.tar.gz" libcomputeruse.a computeruse.h LICENSE
           ls -lR dist
 
+      # stage/ holds only the static library, so this is the link a user of
+      # the Go module makes.
+      - name: Smoke-test the Go module against the static library
+        working-directory: sdk/go
+        run: CGO_LDFLAGS="-L$GITHUB_WORKSPACE/stage" go test -count=1 ./...
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sdk-${{ matrix.platform }}

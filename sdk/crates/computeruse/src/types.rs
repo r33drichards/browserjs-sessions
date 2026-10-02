@@ -40,8 +40,9 @@ pub struct ClientOptions {
     /// The time limit of one API request, in milliseconds. Default 60 000.
     #[uniffi(default = None)]
     pub timeout_ms: Option<u64>,
-    /// The time limit of one MCP request, in milliseconds. Default 330 000:
-    /// `run_js` may run for 300 seconds.
+    /// The time limit of one MCP request, in milliseconds. Default 630 000:
+    /// the service holds a call for up to 300 seconds while a session
+    /// wakes, and `run_js` may then run for 300 more.
     #[uniffi(default = None)]
     pub mcp_timeout_ms: Option<u64>,
     /// How many times a request is tried again after `429`, `502`, `503`,
@@ -53,7 +54,7 @@ pub struct ClientOptions {
     #[uniffi(default = None)]
     pub retry_base_delay_ms: Option<u64>,
     /// How long an MCP call keeps trying while the session is waking
-    /// (`504` with `Retry-After`), in milliseconds. Default 180 000.
+    /// (`504` with `Retry-After`), in milliseconds. Default 600 000.
     #[uniffi(default = None)]
     pub wake_timeout_ms: Option<u64>,
     /// Added in front of the SDK's own `User-Agent`.

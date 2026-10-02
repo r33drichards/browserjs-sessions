@@ -132,10 +132,11 @@ Behaviour that is the same everywhere, because it is one implementation:
   is tried again only after `429`, `503` or a connection that was never
   made, so that it cannot make two sessions. An MCP call that finds the
   session still waking (`504` with `Retry-After`) is tried again for up to
-  three minutes.
-- **Timeouts.** 60 seconds for an API request, 330 for an MCP request
-  (`run_js` may run for 300), three minutes at least for `sleep`, which
-  answers when the snapshot is taken.
+  ten minutes.
+- **Timeouts.** 60 seconds for an API request; 630 for an MCP request (the
+  service holds a call for up to 300 while a session wakes, and `run_js` may
+  then run for 300); three minutes at least for `sleep`, which answers when
+  the snapshot is taken.
 - **Typed errors.** `Unauthorized` (401), `PaymentRequired` (402, with the
   `code` and the billing URL), `Forbidden` (403), `NotFound` (404),
   `Conflict` (409, with `managed_url` for a policy managed elsewhere),

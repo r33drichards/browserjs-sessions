@@ -15,10 +15,10 @@ use tokio::sync::Mutex;
 use url::Url;
 
 const DEFAULT_TIMEOUT_MS: u64 = 60_000;
-const DEFAULT_MCP_TIMEOUT_MS: u64 = 330_000;
+const DEFAULT_MCP_TIMEOUT_MS: u64 = 630_000;
 const DEFAULT_MAX_RETRIES: u32 = 3;
 const DEFAULT_RETRY_BASE_DELAY_MS: u64 = 500;
-const DEFAULT_WAKE_TIMEOUT_MS: u64 = 180_000;
+const DEFAULT_WAKE_TIMEOUT_MS: u64 = 600_000;
 /// No pause between tries is longer than this, whatever `Retry-After` says.
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 /// An access token is replaced this long before it expires.

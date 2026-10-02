@@ -24,6 +24,7 @@ const reference = [
   { text: "Policy format", link: "/reference/policy" },
   { text: "Limits", link: "/reference/limits" },
   { text: "HTTP API", link: "/reference/api" },
+  { text: "SDK: Rust, Python, JavaScript, Go", link: "/reference/sdk" },
   { text: "Live, coming and planned", link: "/reference/status" },
 ]
 

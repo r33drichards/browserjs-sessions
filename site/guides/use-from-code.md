@@ -69,6 +69,71 @@ write policies lets the agent rewrite its own limits.
 A token can also be exchanged for an access token of one hour, with the
 OAuth client-credentials grant at `https://api.computeruse.site/oauth/token`.
 
+## From a program: the SDK
+
+::: warning Coming, not yet published
+The SDK is built and tested, needs API tokens, and is in no package registry
+yet. Until it is, build it from `sdk/` in the repository.
+:::
+
+One client in four languages. It exchanges the token, retries, waits for a
+session that is waking, and calls `run_js` for you.
+
+::: code-group
+
+```rust [Rust]
+use computeruse::Client;
+
+let client = Client::builder()
+    .api_token(std::env::var("COMPUTERUSE_API_TOKEN").unwrap())
+    .build()?;
+
+let session = client.sessions().create().name("demo").send().await?;
+let result = session.run_js("console.log(6 * 7)".into()).await?;
+println!("{}", result.output);
+session.sleep().await?;
+```
+
+```python [Python]
+import os
+from computeruse import Client, CreateSessionRequest
+
+client = Client.with_token(os.environ["COMPUTERUSE_API_TOKEN"])
+
+session = await client.create_session(CreateSessionRequest(name="demo"))
+result = await session.run_js("console.log(6 * 7)")
+print(result.output)
+await session.sleep()
+```
+
+```ts [JavaScript]
+import { Client } from "computeruse";
+
+const client = Client.withToken(process.env.COMPUTERUSE_API_TOKEN!);
+
+const session = await client.createSession({ name: "demo" });
+const result = await session.runJs("console.log(6 * 7)");
+console.log(result.output);
+await session.sleep();
+```
+
+```go [Go]
+import "github.com/r33drichards/browserjs-sessions/sdk/go/computeruse"
+
+client, err := computeruse.ClientWithToken(os.Getenv("COMPUTERUSE_API_TOKEN"))
+
+name := "demo"
+session, err := client.CreateSession(computeruse.CreateSessionRequest{Name: &name})
+result, err := session.RunJs("console.log(6 * 7)")
+fmt.Print(result.Output)
+_, err = session.Sleep()
+```
+
+:::
+
+The token needs `sessions:write` to create and sleep, and `sessions:connect`
+to run code. See the [SDK reference](/reference/sdk) for every call.
+
 ## As infrastructure: Terraform
 
 ::: warning Coming, not yet enabled

@@ -67,7 +67,7 @@ impl ClientBuilder {
         self
     }
 
-    /// The time limit of one MCP request. Default 330 seconds.
+    /// The time limit of one MCP request. Default 630 seconds.
     pub fn mcp_timeout(mut self, timeout: Duration) -> Self {
         self.options().mcp_timeout_ms = Some(as_millis(timeout));
         self
@@ -86,7 +86,7 @@ impl ClientBuilder {
     }
 
     /// How long an MCP call keeps trying while the session wakes. Default
-    /// 180 seconds.
+    /// 600 seconds.
     pub fn wake_timeout(mut self, timeout: Duration) -> Self {
         self.options().wake_timeout_ms = Some(as_millis(timeout));
         self

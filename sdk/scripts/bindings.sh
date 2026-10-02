@@ -116,7 +116,8 @@ case "$language" in
   javascript)
     build_library
     (cd "$sdk/js" && npm ci --no-audit --no-fund)
-    (cd "$sdk/js" && npx --yes --package "$UBRN_PACKAGE" ubrn \
+    # From the workspace: ubrn asks cargo about the crate behind the library.
+    (cd "$sdk" && npx --yes --package "$UBRN_PACKAGE" ubrn \
       generate napi bindings "$library" --library --no-format \
       --ts-dir "$work/js" --lib-package-base computeruse/prebuilds/ --lib-node-triple)
     install "$work/js" "$sdk/js/src/generated" computeruse.ts computeruse-ffi.ts
