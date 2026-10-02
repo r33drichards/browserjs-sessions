@@ -208,3 +208,25 @@ func TestPoliciesWithAPITokens(t *testing.T) {
 		}
 	}
 }
+
+// The API host lists the policy routes whether or not there are policies.
+// With policies off they are still not there: the 404 is the API's own.
+func TestAPIHostHasNoPolicyRoutesWithPoliciesOff(t *testing.T) {
+	s, _ := tokenServer(t, alice)
+	mine := s.session(alice)
+	_, token := s.newToken(alice, auth.Scopes...)
+	for _, c := range []struct{ method, path string }{
+		{"GET", "/v1/sessions/" + mine.ID + "/policy"}, {"PUT", "/v1/sessions/" + mine.ID + "/policy"},
+		{"DELETE", "/v1/sessions/" + mine.ID + "/policy"}, {"PUT", "/v1/sessions/" + mine.ID + "/policy/management"},
+		{"POST", "/v1/policies/validate"}, {"POST", "/v1/policies/evaluate"},
+		{"GET", "/v1/policy-schema.json"}, {"GET", "/v1/policy-presets"},
+	} {
+		if rec := s.bearer(c.method, apiHost, c.path, token, `{}`); rec.Code != http.StatusNotFound {
+			t.Errorf("%s %s with policies off: %d %s", c.method, c.path, rec.Code, rec.Body)
+		}
+	}
+	rec := s.bearer("GET", apiHost, "/v1/sessions/"+mine.ID, token, "")
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "policy") {
+		t.Errorf("a session with policies off: %d %s", rec.Code, rec.Body)
+	}
+}
