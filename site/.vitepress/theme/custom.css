@@ -1,0 +1,158 @@
+/* The app's wireframe look (web/src/wireframe.css): black on white,
+   outlined boxes, nothing filled or shadowed. */
+:root {
+  --ink: #111;
+  --pencil: #6b6b6b;
+  /* An uneven radius reads as hand-drawn. */
+  --wobble: 255px 15px 225px 15px / 15px 225px 15px 255px;
+
+  --vp-font-family-base: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --vp-font-family-mono: ui-monospace, Menlo, Consolas, monospace;
+
+  --vp-c-bg: #fff;
+  --vp-c-bg-alt: #fff;
+  --vp-c-bg-soft: #f4f4f4;
+  --vp-c-bg-elv: #fff;
+  --vp-c-text-1: var(--ink);
+  --vp-c-text-2: #444;
+  --vp-c-text-3: var(--pencil);
+  --vp-c-divider: var(--ink);
+  --vp-c-gutter: var(--ink);
+  --vp-c-border: var(--ink);
+
+  --vp-c-brand-1: var(--ink);
+  --vp-c-brand-2: var(--ink);
+  --vp-c-brand-3: var(--ink);
+  --vp-c-brand-soft: #eee;
+
+  --vp-home-hero-name-color: var(--ink);
+  --vp-sidebar-bg-color: #fff;
+  --vp-code-color: var(--ink);
+  --vp-code-block-bg: #fff;
+  --vp-code-block-color: var(--ink);
+
+  --vp-button-brand-bg: #fff;
+  --vp-button-brand-text: var(--ink);
+  --vp-button-brand-border: var(--ink);
+  --vp-button-brand-hover-bg: #eee;
+  --vp-button-brand-hover-text: var(--ink);
+  --vp-button-brand-hover-border: var(--ink);
+  --vp-button-brand-active-bg: #ddd;
+  --vp-button-brand-active-text: var(--ink);
+  --vp-button-brand-active-border: var(--ink);
+  --vp-button-alt-bg: #fff;
+  --vp-button-alt-text: var(--ink);
+  --vp-button-alt-border: var(--ink);
+  --vp-button-alt-hover-bg: #eee;
+  --vp-button-alt-hover-text: var(--ink);
+  --vp-button-alt-hover-border: var(--ink);
+  --vp-button-alt-active-bg: #ddd;
+  --vp-button-alt-active-text: var(--ink);
+  --vp-button-alt-active-border: var(--ink);
+
+  --vp-custom-block-tip-bg: #fff;
+  --vp-custom-block-tip-border: var(--ink);
+  --vp-custom-block-tip-text: var(--ink);
+  --vp-custom-block-info-bg: #fff;
+  --vp-custom-block-info-border: var(--ink);
+  --vp-custom-block-warning-bg: #fff;
+  --vp-custom-block-warning-border: var(--ink);
+  --vp-custom-block-warning-text: var(--ink);
+
+  --vp-shadow-1: none;
+  --vp-shadow-2: none;
+  --vp-shadow-3: none;
+}
+
+.vp-doc a {
+  color: var(--ink);
+  text-decoration: underline;
+}
+
+/* Boxes: the home page's use cases, notes, code, blog posts. */
+.VPFeature,
+.wf-box,
+.vp-doc .custom-block,
+.vp-doc div[class*="language-"] {
+  border: 2px solid var(--ink) !important;
+  border-radius: var(--wobble) !important;
+  background: #fff !important;
+  box-shadow: none !important;
+}
+.vp-doc .custom-block.warning {
+  border-style: double !important;
+  border-width: 4px !important;
+}
+/* Code keeps its corners: a wobble would clip the first line. */
+.vp-doc div[class*="language-"] {
+  border-radius: 4px !important;
+}
+.vp-doc :not(pre) > code {
+  background: #fff;
+  border: 1px solid var(--pencil);
+  border-radius: 2px;
+}
+
+.VPButton {
+  border-width: 2px !important;
+  border-radius: var(--wobble) !important;
+}
+
+.VPNavBar,
+.VPNavBar .content-body,
+.VPNavBar.has-sidebar .title {
+  background: #fff !important;
+}
+.VPNavBar .divider-line {
+  background: none;
+  border-bottom: 2px dashed var(--ink);
+  height: 0;
+}
+.VPSidebar {
+  border-right: 2px dashed var(--ink);
+}
+.VPLocalSearchBox .shell {
+  border: 2px solid var(--ink);
+  box-shadow: none;
+}
+
+.vp-doc table {
+  border-collapse: collapse;
+}
+.vp-doc th,
+.vp-doc td,
+.vp-doc tr {
+  background: #fff !important;
+  border-color: var(--ink) !important;
+}
+
+/* A state as the app shows it: text in a box, not a coloured badge. */
+.wf-state {
+  display: inline-block;
+  padding: 0 8px;
+  border: 1.5px solid var(--ink);
+  border-radius: var(--wobble);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.wf-posts {
+  list-style: none;
+  padding: 0 !important;
+}
+.wf-posts li {
+  padding: 12px 16px;
+  margin-top: 16px;
+}
+.wf-posts a {
+  font-size: 18px;
+  font-weight: 600;
+}
+.wf-posts time {
+  display: block;
+  color: var(--pencil);
+  font-size: 13px;
+}
+.wf-posts p {
+  margin: 4px 0 0;
+}
