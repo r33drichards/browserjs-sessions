@@ -5,3 +5,4 @@ backend/bin/
 result
 *.log
 .worktrees/
+.local/
