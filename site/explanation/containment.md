@@ -11,6 +11,11 @@ Each session runs in its own sandboxed container, with its own disk.
 - It cannot reach your computer. Files move only when you send or save them
   in the app, or when the agent uploads one from its own environment.
 - Deleting the session removes everything in it.
+- Programs the agent runs with `exec` run inside this sandbox, as an
+  unprivileged user. They can reach what the browser can reach, including
+  the session's files and saved logins, and nothing outside the session.
+  The server that runs them listens only inside the session and refuses
+  requests from web pages.
 
 ## 2. The network
 
@@ -38,8 +43,9 @@ session what you would not trust the operator with.
 
 ## 4. The code's own limits
 
-A `run_js` program can do four things: call the desktop's capabilities,
-read and write `/data/memory/`, handle artifacts, and print. It has a time
+A `run_js` program can do four things: call the desktop's capabilities
+(browser, desktop, and running programs), read and write `/data/memory/`,
+handle artifacts, and print. It has a time
 limit and a memory limit. It cannot create, stop or delete sessions.
 
 ## 5. Policy
@@ -69,10 +75,18 @@ difference.
   where the agent may send the browser. A link on that site, or a redirect,
   can still lead elsewhere. Policy is not a network filter.
 - **A second way to do the same thing.** The desktop capability can do what
-  a person can, including things a rule on browser operations refused. A
-  policy that restricts the browser must also refuse or restrict
-  `desktop_execute`. The JSON form refuses it; in Rego it is yours to
-  decide.
+  a person can, including things a rule on browser operations refused. So
+  can a program started with `exec`: inside the session it can drive the
+  browser directly, without passing the checkpoint. A policy that restricts
+  the browser must also refuse `desktop_execute` and `exec`, and a policy
+  that restricts programs must refuse `desktop_execute`, which can type into
+  any terminal on the desktop. The ready-made restrictive policies do, and
+  saving a policy that does not gives a warning.
+- **What an allowed program does next.** A policy reads the program and its
+  arguments, and decides that one call. It does not follow the program.
+  Shells, `env`, `xargs`, interpreters and many ordinary tools given the
+  right arguments run other programs. Allow specific programs with specific
+  arguments, not a shell, when it matters.
 - **What the session is signed in to.** An allowed click acts with the
   session's logins. If the session is signed in to your email, an agent
   allowed to click can send email.

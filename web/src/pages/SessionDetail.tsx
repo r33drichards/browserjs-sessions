@@ -10,23 +10,15 @@ import { ApiError, isSessionId } from "../api"
 import { useMe } from "../auth/MeProvider"
 import { signedOutHandled } from "../auth/signedOut"
 import { BlockedWake, DrainingNote, SessionState, useWakeBlock } from "../billing/SessionBilling"
-import { WAKE_BLOCK_LABEL } from "../billingApi"
+import { LifecycleActions, stateSentence } from "../components/SessionLifecycle"
 import { VncPane } from "../components/VncPane"
 import type { PolicySession as Session } from "../policyApi"
 import { isManagedAsCode, policySummaryLine } from "../policyApi"
 import { Shell, api } from "../shell"
-import { usePolling } from "../usePolling"
+import { HIDDEN_POLL_MS, usePolling } from "../usePolling"
 
 // Only a deployment with policies shows the tab, so only it loads the code.
 const PolicyTab = lazy(() => import("../components/PolicyTab").then(m => ({ default: m.PolicyTab })))
-
-const PLACEHOLDER: Record<string, string> = {
-  starting: "Starting the browser…",
-  stopping: "Stopping…",
-  asleep: "Asleep. It wakes when you or an agent uses it.",
-  stopped: "Stopped.",
-  failed: "The session failed to start.",
-}
 
 // Mounted with key={id}, so every piece of state below starts fresh per session.
 export function SessionDetail({ id }: { id: string }) {
@@ -58,7 +50,9 @@ export function SessionDetail({ id }: { id: string }) {
       })
   }, [id])
 
-  usePolling(load, !missing) // a 404 is final: stop asking
+  // A 404 is final: stop asking. Behind another tab it still asks, slowly, so
+  // a session that became ready meanwhile is not still "starting" on return.
+  usePolling(load, !missing, 3000, HIDDEN_POLL_MS)
   const blocked = useWakeBlock(session) // billing keeps it asleep: no credit, or no card
 
   if (missing) {
@@ -69,8 +63,6 @@ export function SessionDetail({ id }: { id: string }) {
     )
   }
   if (!session) return <Shell>{error || "Loading…"}</Shell>
-
-  const awake = session.state === "running" || session.state === "starting"
 
   // Runs an action and reports whether it succeeded; a failure stays on screen
   // until the next action.
@@ -127,7 +119,7 @@ export function SessionDetail({ id }: { id: string }) {
       <div className="wf-placeholder">
         <div>
           {session.state === "starting" && <span className="wf-spinner" aria-hidden="true" />}
-          <p>{PLACEHOLDER[session.state]}</p>
+          <p>{stateSentence(session)}</p>
           {session.message && <p className="wf-mono">{session.message}</p>}
         </div>
       </div>
@@ -136,6 +128,8 @@ export function SessionDetail({ id }: { id: string }) {
   return (
     <Shell breadcrumbs={[{ text: session.name, href: `/sessions/${session.id}` }]}>
       <SpaceBetween size="l">
+        {/* The class keeps the actions on the title's line (wireframe.css). */}
+        <div className="wf-session-head">
         <Header
           variant="h1"
           actions={
@@ -148,18 +142,7 @@ export function SessionDetail({ id }: { id: string }) {
               </Button>
               {/* The viewer puts its Full screen button here. */}
               <span ref={setViewerControls} />
-              {awake ? (
-                <Button onClick={() => actAndReload(() => api.setRunning(session.id, false))}>Stop</Button>
-              ) : (
-                <Button
-                  variant="primary"
-                  disabled={!!blocked}
-                  disabledReason={blocked ? WAKE_BLOCK_LABEL[blocked] : undefined}
-                  onClick={() => actAndReload(() => api.setRunning(session.id, true))}
-                >
-                  {session.state === "asleep" ? "Wake" : "Resume"}
-                </Button>
-              )}
+              <LifecycleActions session={session} blocked={blocked} run={actAndReload} primary />
               <Button loading={deleting} onClick={() => remove(session)}>
                 Delete
               </Button>
@@ -203,6 +186,7 @@ export function SessionDetail({ id }: { id: string }) {
             </SpaceBetween>
           )}
         </Header>
+        </div>
 
         {actionError ? <Box>⚠ {actionError}</Box> : null}
         {error ? <Box>⚠ {error}</Box> : null}

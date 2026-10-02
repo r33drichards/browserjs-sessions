@@ -110,14 +110,32 @@ func run() error {
 	tracker := idle.New(cfg.IdleAfter, time.Now)
 	go idle.Run(ctx, store, tracker, time.Minute)
 
-	handler, px := newHandler(cfg, verifier, store, tracker)
+	// Metering and billing (BILLING): billing.go. Nil while it is off.
+	bill, err := newBilling(ctx, cfg, dyn, store)
+	if err != nil {
+		return err
+	}
+	// Stripe (STRIPE_MODE): stripe.go. Nil without it. Before billing runs:
+	// its balance pass asks Stripe's side for auto-recharge.
+	payments, err := newStripe(ctx, cfg, bill)
+	if err != nil {
+		return err
+	}
+	handler, px := newHandlerWith(cfg, verifier, store, tracker, bill)
+	bill.run(ctx, px)
 	// API tokens and the API host (API_URL): tokens.go.
 	if cfg.APIURL != "" {
-		if handler, err = withAPITokens(cfg, verifier, tokens.NewStore(dyn, cfg.Namespace), handler); err != nil {
+		tokenStore := tokens.NewStore(dyn, cfg.Namespace)
+		bill.revokeTokensWith(tokenStore)
+		if handler, err = withAPITokens(cfg, verifier, tokenStore, handler); err != nil {
 			return err
 		}
 		slog.Info("API host", "url", cfg.APIURL, "tokens", cfg.APITokens(), "signingKeyKept", len(cfg.APISigningKey) > 0)
 	}
+	// In front of the API host, which knows nothing of Stripe's webhook.
+	handler = withStripe(cfg, verifier, payments, handler)
+
+	handler = bill.withWebhooks(cfg, handler)
 
 	srv := &http.Server{
 		Handler:           handler,
@@ -165,6 +183,11 @@ func serve(ctx context.Context, srv *http.Server, ln net.Listener, grace time.Du
 // Pomerium, for the app's host or for the sessions'; the proxy tells them
 // apart and serves the sessions' itself.
 func newHandler(cfg config.Config, verifier auth.Verifier, store *sessions.Store, tracker *idle.Tracker) (http.Handler, *proxy.Proxy) {
+	return newHandlerWith(cfg, verifier, store, tracker, nil)
+}
+
+// newHandlerWith is newHandler with metering and billing (nil for none).
+func newHandlerWith(cfg config.Config, verifier auth.Verifier, store *sessions.Store, tracker *idle.Tracker, bill *billingParts) (http.Handler, *proxy.Proxy) {
 	owners := authz.NewOwners(store, ownerTTL)
 	px := &proxy.Proxy{
 		Verifier: verifier,
@@ -181,6 +204,7 @@ func newHandler(cfg config.Config, verifier auth.Verifier, store *sessions.Store
 	sessionAPI := api.New(store, owners, cfg.SessionURLs, cfg.MaxSessionsPerUser)
 	// Nil, and so no policy routes, unless the store has policies enabled.
 	sessionAPI.EnablePolicies(policy.New(store, policy.NewOperator(cfg.PolicyOperatorURL, cfg.OperatorAPIToken)))
+	bill.enable(sessionAPI, px, apiMux)
 	sessionAPI.Register(apiMux)
 	px.RegisterApp(apiMux)
 

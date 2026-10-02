@@ -101,10 +101,10 @@ the decision already reads. Neither is a copy of anyone's credit.
 | Entry point | Code today | Check | Refusal reaches the user as |
 |---|---|---|---|
 | `POST /api/sessions`, `POST /v1/sessions` (UI, API token, Terraform) | `api.create`, before `Store.CreateWithPolicy` and so before any warm-pool claim | Create | the HTTP answer below |
-| `PATCH .../sessions/{id}` with `action: resume` | `api.patch` | Resume | the HTTP answer below |
+| `PATCH .../sessions/{id}` with `action: resume`, `POST .../sessions/{id}/wake` | `api.patch`, `api.wake` | Resume | the HTTP answer below |
 | Any proxied request to a session that is not running: MCP on the sessions host and on the API host, the upload URL, the VNC websocket | `proxy.Waker.EnsureAwake`, before `Store.Wake` | Wake | MCP: below. VNC and upload: the HTTP answer. |
 | A **new** proxied request to a running session that is draining (stop sequence) | `proxy`, before forwarding | refused with the reason of the drain | the same |
-| Session policy routes, token routes, list, get, delete, rename, stop | | never refused for billing | |
+| Session policy routes, token routes, list, get, delete, rename, stop, sleep (`POST /api/sessions/{id}/sleep`) | | never refused for billing | |
 
 Reading, stopping and deleting always work, in any state and at any
 balance, so that a user with no card or no credit can still see their

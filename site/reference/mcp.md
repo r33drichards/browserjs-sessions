@@ -45,8 +45,22 @@ No state carries from one call to the next. The desktop and the disk do.
 
 ### Not available in the code
 
-`fetch` and any other network access, timers (`setTimeout`, `setInterval`),
-environment variables, DOM APIs.
+`fetch` and any other network access, environment variables, DOM APIs,
+`child_process`. Timers (`setTimeout`, `setInterval`) are available.
+
+### Running programs
+
+`mcp.callTool("exec", "exec", { bin: "ls", args: ["-la"], timeout: 60 })`
+runs a program on the session's desktop, as the desktop's user and with its
+files, and returns an id at once. The program is run
+directly, with its arguments as given: no shell reads them. `timeout` is in
+seconds; `cwd` and `env` are optional.
+`mcp.callTool("exec", "stream_logs", { id, offset: 0 })` returns
+`{ logs, next_offset, status }`: poll it, passing `next_offset`, until
+`status` is no longer `"running"` (`"completed:0"` is success).
+`search_logs { id, pattern }` returns the lines matching a regular
+expression, and `kill { id }` stops a command. See
+[Capabilities](/reference/capabilities#shell-exec).
 
 ### Memory
 

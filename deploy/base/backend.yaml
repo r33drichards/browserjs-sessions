@@ -32,6 +32,17 @@ rules:
   - apiGroups: ["browserjs.dev"]
     resources: ["apitokens/status"]
     verbs: ["patch"]
+  # Billing (docs/contracts/billing/deploy.md). Accounts are the backend's
+  # and nobody else's; usage and credit are in Metronome. No watch: there is
+  # no informer, every decision reads the Account.
+  - apiGroups: ["browserjs.dev"]
+    resources: ["accounts"]
+    verbs: ["get", "list", "create", "update", "patch"]
+  # The observer's heartbeat, to say when metering is stale.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    resourceNames: ["billing-observer"]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -117,6 +128,84 @@ spec:
                   name: api-tokens
                   key: signing-key
                   optional: true
+            # Metering and billing (docs/contracts/billing/deploy.md). OFF:
+            # BILLING is not set here, and with it unset the backend is as
+            # it was before the feature, whatever the variables below say.
+            # An overlay's patch-billing-meter.yaml sets it
+            # (hack/billing-stage.sh, docs/billing-deployment.md). Two are
+            # left to their defaults by not being named: BILLING_EXEMPT_EMAILS
+            # (the value of ADMIN_EMAILS) and TERMS_VERSION (none asked).
+            - name: BILLING_GRACE
+              value: 5m
+            - name: BILLING_DRAIN_TIMEOUT
+              value: 10m
+            # How often the balance pass reads Metronome.
+            - name: BILLING_BALANCE_PASS
+              value: 5m
+            # Metronome: the meter and the credit ledger
+            # (docs/contracts/billing/metronome.md). The Secret is written by
+            # the deploy workflow whenever billing is not off
+            # (hack/billing-secrets.sh); with BILLING set the backend refuses
+            # to start without the two.
+            - name: METRONOME_URL
+              value: https://api.metronome.com
+            - name: METRONOME_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: metronome
+                  key: METRONOME_API_TOKEN
+                  optional: true
+            - name: METRONOME_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: metronome
+                  key: METRONOME_WEBHOOK_SECRET
+                  optional: true
+            - name: MAX_AWAKE_SESSIONS
+              value: "10"
+            - name: WAKES_PER_HOUR
+              value: "30"
+            - name: ZERO_BALANCE_DELETE
+              value: "off"
+            - name: ZERO_BALANCE_DELETE_AFTER
+              value: 336h
+            - name: SIGNUP_CREDIT
+              value: "on"
+            - name: AUTO_RECHARGE
+              value: "off"
+            - name: BILLING_CATALOGUE
+              value: /etc/browserjs/catalogue.yaml
+            # Stripe. The mode and the two keys are written together by the
+            # deploy workflow (hack/billing-secrets.sh), and are absent until
+            # the repository variable STRIPE_MODE is set: no checkout, no
+            # webhook route.
+            - name: STRIPE_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: billing-mode
+                  key: STRIPE_MODE
+                  optional: true
+            - name: STRIPE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: stripe
+                  key: STRIPE_API_KEY
+                  optional: true
+            # The signing secret of the webhook endpoint OpenTofu makes
+            # (infra/billing): the billing-apply workflow copies it from
+            # its state into this Secret. Nobody enters it.
+            - name: STRIPE_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: stripe-webhook
+                  key: STRIPE_WEBHOOK_SECRET
+                  optional: true
+            - name: OPEN_SIGNUP
+              value: "false"
+            - name: SIGNUPS_PER_DAY
+              value: "200"
+            - name: SIGNUPS_PER_IP_PER_DAY
+              value: "5"
           ports:
             - name: http
               containerPort: 8080
@@ -146,9 +235,27 @@ spec:
               mountPath: /etc/browserjs
               readOnly: true
       volumes:
+        # One directory, two ConfigMaps: the session blueprint
+        # (blueprint.yaml) and the billing catalogue (catalogue.yaml). Whole
+        # ConfigMaps, not files by subPath, so a changed catalogue reaches
+        # the pod without a restart.
         - name: blueprint
-          configMap:
-            name: session-blueprint
+          projected:
+            sources:
+              - configMap:
+                  name: session-blueprint
+              - configMap:
+                  name: billing-catalogue
+              # The IDs of what OpenTofu made in Stripe and Metronome
+              # (infra/billing), as billing-iac/ids.json: the "billing
+              # apply" workflow writes this ConfigMap, so it is absent
+              # until that has run. BILLING_IDS defaults to this path.
+              - configMap:
+                  name: billing-iac
+                  optional: true
+                  items:
+                    - key: ids.json
+                      path: billing-iac/ids.json
 ---
 apiVersion: v1
 kind: Service

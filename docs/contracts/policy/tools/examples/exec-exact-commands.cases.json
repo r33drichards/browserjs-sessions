@@ -12,7 +12,7 @@
           "--ff-only"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": true
@@ -29,7 +29,7 @@
           "test"
         ],
         "timeout": 600,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": true
@@ -101,7 +101,7 @@
           "status"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -120,7 +120,7 @@
           "--force"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -137,7 +137,7 @@
           "pull"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -155,7 +155,7 @@
           "pull"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -172,7 +172,7 @@
           "pull --ff-only"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -187,7 +187,7 @@
         "bin": "git pull --ff-only",
         "args": [],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -205,7 +205,7 @@
           "--ff-only"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/other"
+        "cwd": "/data/chrome/home/work/other"
       }
     },
     "allow": false
@@ -258,7 +258,7 @@
           "--ff-only"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -276,7 +276,7 @@
           "git pull --ff-only"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -294,7 +294,7 @@
           "--ff-only"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -312,7 +312,7 @@
           "--ff-only"
         ],
         "timeout": 601,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -362,7 +362,7 @@
           "--ff-only"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app",
+        "cwd": "/data/chrome/home/work/app",
         "env": {
           "PATH": "/tmp/evil"
         }
@@ -383,7 +383,7 @@
           "--ff-only"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app",
+        "cwd": "/data/chrome/home/work/app",
         "env": {
           "LD_PRELOAD": "/tmp/x.so"
         }
@@ -404,7 +404,7 @@
           "--ff-only"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app",
+        "cwd": "/data/chrome/home/work/app",
         "env": {}
       }
     },
@@ -444,7 +444,7 @@
             "--ff-only"
           ],
           "timeout": 60,
-          "cwd": "/home/browser/work/app"
+          "cwd": "/data/chrome/home/work/app"
         }
       ]
     },
@@ -462,7 +462,7 @@
           "--ff-only"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -482,7 +482,7 @@
           "--ff-only"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -502,7 +502,7 @@
           "--ff-only"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -517,7 +517,7 @@
         "bin": "git",
         "args": "pull --ff-only",
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -538,7 +538,7 @@
           }
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -558,7 +558,7 @@
           ]
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -589,7 +589,7 @@
           "--ff-only"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app",
+        "cwd": "/data/chrome/home/work/app",
         "cmd": "id"
       }
     },
@@ -608,7 +608,7 @@
           "--ff-only"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app",
+        "cwd": "/data/chrome/home/work/app",
         "shell": true
       }
     },
@@ -626,7 +626,7 @@
           "pull",
           "--ff-only"
         ],
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -644,7 +644,7 @@
           "--ff-only"
         ],
         "timeout": "60",
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -662,7 +662,7 @@
           "--ff-only"
         ],
         "timeout": 0,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -680,7 +680,7 @@
           "--ff-only"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false
@@ -698,7 +698,7 @@
           "--ff-only"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": false

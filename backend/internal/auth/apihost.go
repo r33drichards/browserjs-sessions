@@ -118,13 +118,14 @@ var apiRoutes = []struct {
 	{pattern: "GET /v1/sessions/{id}", scope: ScopeSessionsRead},
 	{pattern: "PATCH /v1/sessions/{id}", scope: ScopeSessionsWrite},
 	{pattern: "DELETE /v1/sessions/{id}", scope: ScopeSessionsWrite},
+	{pattern: "POST /v1/sessions/{id}/sleep", scope: ScopeSessionsWrite},
+	{pattern: "POST /v1/sessions/{id}/wake", scope: ScopeSessionsWrite},
 	{pattern: "GET /v1/sessions/{id}/policy", scope: ScopePoliciesRead},
 	{pattern: "PUT /v1/sessions/{id}/policy", scope: ScopePoliciesWrite},
 	{pattern: "DELETE /v1/sessions/{id}/policy", scope: ScopePoliciesWrite},
 	{pattern: "PUT /v1/sessions/{id}/policy/management", scope: ScopePoliciesWrite},
 	{pattern: "POST /v1/policies/validate"},
 	{pattern: "POST /v1/policies/evaluate"},
-	{pattern: "GET /v1/policy-schema.json"},
 	{pattern: "GET /v1/policy-presets"},
 }
 

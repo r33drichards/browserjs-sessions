@@ -23,7 +23,10 @@ Requests and answers are JSON. An error is `{"error": "<message>"}`.
 ```
 
 `state` is one of the [lifecycle states](/reference/lifecycle). `message`
-is added when there is something to say about `starting` or `failed`. An ID
+is added when there is something to say about `starting` or `failed`.
+`stateSaved` is added, as `true`, when a session that is asleep (or on its
+way there) has a snapshot to wake from; without it the session starts fresh
+from its disk. An ID
 is `s-` and five or ten lower-case characters.
 
 ## Sessions
@@ -37,10 +40,22 @@ Paths are under `/api` on the app's host and under `/v1` on the API host.
 | `POST /sessions` | Creates one. Body `{"name": "..."}`, optional | `201` session. `409` at the limit. `400` for a bad name |
 | `GET /sessions/{id}` | Reads one | `200` session |
 | `PATCH /sessions/{id}` | Renames, stops or resumes. Body `{"name": "...", "action": "stop" \| "resume"}`, both optional | `200` session. `400` for a bad name or action |
+| `POST /sessions/{id}/sleep` | Puts a running session to sleep: takes a snapshot, then removes the desktop. Answers when the snapshot is done, which takes seconds. No body | `200` session. `409` if it is starting, stopping, stopped or failed |
+| `POST /sessions/{id}/wake` | Starts a session that is asleep (from its snapshot) or stopped (fresh). Does not wait for it to run. No body | `200` session. `402` or `403` if billing refuses |
 | `DELETE /sessions/{id}` | Deletes it and its disk | `204` |
 
 A session that is not yours answers `404`, like one that does not exist.
-`resume` on a sleeping session wakes it.
+With a token, every route that changes a session needs the scope
+`sessions:write`; without it the answer is `403`.
+
+`sleep` is what happens to an idle session, asked for. It answers `200` and
+changes nothing if the session is already asleep. If the snapshot could not
+be taken the session sleeps all the same, and the answer has no
+`stateSaved`. A session you put to sleep wakes on the next MCP call, like
+one that went idle; `stop` is the way to keep one off.
+
+`wake` and the `resume` action of `PATCH` do the same thing. On a session
+that is already awake they change nothing.
 
 ## Screen and files (the app's API only)
 

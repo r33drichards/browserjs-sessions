@@ -1,0 +1,183 @@
+# The billing operator (images/billing-operator), the OBSERVER: every TICK it
+# lists the session Sandboxes, counts the seconds each was awake and the
+# GB-seconds each kept on disk, and sends them to Metronome, which prices
+# them and keeps the credit (docs/contracts/billing/metronome.md). It reads
+# and writes no Account. Nothing calls it.
+#
+# BILLING IS OFF here: no pods, and no BILLING variable. An overlay turns it
+# on with its patch-billing-meter.yaml, which hack/billing-stage.sh lists
+# (docs/billing-deployment.md).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: billing-operator
+---
+# Pomerium's and Dex's ConfigMaps and every Secret are in this namespace
+# too. The observer reads none of them through the API (its Metronome token
+# is handed to it by the kubelet), and has no right on Accounts: it sees
+# the Sandboxes it counts, keeps one Lease as its heartbeat, and makes
+# events.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: billing-operator
+rules:
+  - apiGroups: ["agents.x-k8s.io"]
+    resources: ["sandboxes"]
+    verbs: ["get", "list", "watch"]
+  # The Lease billing-observer, renewed after each delivered tick. RBAC
+  # cannot hold a create to a name, so that verb is a rule of its own.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    resourceNames: ["billing-observer"]
+    verbs: ["get", "update"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: billing-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: billing-operator
+subjects:
+  - kind: ServiceAccount
+    name: billing-operator
+---
+# The contract's rule for kopf, which watches the definitions of the
+# resources it handles.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: browserjs-billing-operator
+rules:
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: browserjs-billing-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: browserjs-billing-operator
+subjects:
+  - kind: ServiceAccount
+    name: billing-operator
+    namespace: browserjs-sessions
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: billing-operator
+  labels:
+    app: billing-operator
+spec:
+  # Off. On, it is exactly one and never two at once (kopf runs standalone,
+  # and two observers would send every second twice). While it is away
+  # nothing is sent: the time is lost in the users' favour.
+  replicas: 0
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: billing-operator
+  template:
+    metadata:
+      # The NetworkPolicy selects on this label: nothing else may carry it.
+      labels:
+        app: billing-operator
+    spec:
+      serviceAccountName: billing-operator
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: billing-operator
+          image: browserjs/billing-operator
+          command:
+            - kopf
+            - run
+            - --standalone
+            - --namespace=browserjs-sessions
+            - --liveness=http://0.0.0.0:8081/healthz
+            - -m
+            - billing_operator
+          env:
+            # kopf asks who it runs as, and uid 65532 has no entry in the
+            # image's /etc/passwd (as for the policy operator).
+            - name: USER
+              value: billing-operator
+            # BILLING is not here: patch-billing-meter.yaml of an overlay
+            # adds it, with the pods.
+            - name: TICK
+              value: 60s
+            # The longest stretch one tick may charge for: what a restart
+            # or a missed tick costs the product, not the user.
+            - name: MAX_GAP
+              value: 150s
+            # One event a session for each window: awake time every five
+            # minutes, kept disk every six hours.
+            - name: AWAKE_WINDOW
+              value: 5m
+            - name: KEPT_WINDOW
+              value: 6h
+            # For sessionDiskGB only: the prices are Metronome's.
+            - name: BILLING_CATALOGUE
+              value: /etc/browserjs/catalogue.yaml
+            - name: METRONOME_URL
+              value: https://api.metronome.com
+            # The token only, not the webhook secret. Optional so that the
+            # manifest applies before the Secret exists; the deploy workflow
+            # writes it whenever billing is not off.
+            - name: METRONOME_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: metronome
+                  key: METRONOME_API_TOKEN
+                  optional: true
+          ports:
+            - name: liveness
+              containerPort: 8081
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: liveness
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # The whole ConfigMap as a directory, not one file by subPath: a
+            # changed catalogue then reaches the pod without a restart.
+            - name: catalogue
+              mountPath: /etc/browserjs
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: catalogue
+          configMap:
+            name: billing-catalogue
+        - name: tmp
+          emptyDir: {}

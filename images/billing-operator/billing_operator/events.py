@@ -14,6 +14,11 @@ because Metronome charges by the event.
 
 The transaction_id is the idempotency key: the same window always has the
 same one, and Metronome ignores a repeat.
+
+A window that was sent early and then goes on (the session woke again
+inside the same five minutes) is sent in parts: the later part has the
+time of its first tick added to the key, awake/<session>/<window
+start>/<first tick>, so that it is neither ignored (free) nor counted twice.
 """
 from __future__ import annotations
 
@@ -39,12 +44,17 @@ class Event:
                 "event_type": self.event_type, "timestamp": self.timestamp, "properties": dict(self.properties)}
 
 
-def awake_event(session: str, customer: str, window_start: int, at: int, secs: int) -> Event:
-    return Event(f"awake/{session}/{window_start}", customer, AWAKE, iso(at), {"session_id": session, "seconds": str(secs)})
+def _key(kind: str, session: str, window_start: int, part: int | None) -> str:
+    return f"{kind}/{session}/{window_start}" + (f"/{part}" if part is not None else "")
 
 
-def kept_event(session: str, customer: str, window_start: int, at: int, gb_seconds: int) -> Event:
-    return Event(f"kept/{session}/{window_start}", customer, KEPT, iso(at),
+def awake_event(session: str, customer: str, window_start: int, at: int, secs: int, part: int | None = None) -> Event:
+    return Event(_key("awake", session, window_start, part), customer, AWAKE, iso(at),
+                 {"session_id": session, "seconds": str(secs)})
+
+
+def kept_event(session: str, customer: str, window_start: int, at: int, gb_seconds: int, part: int | None = None) -> Event:
+    return Event(_key("kept", session, window_start, part), customer, KEPT, iso(at),
                  {"session_id": session, "gb_seconds": str(gb_seconds)})
 
 
@@ -61,6 +71,7 @@ class _Sum:
     start: int
     total: int = 0
     last: int = 0  # the last tick that added to it
+    part: int | None = None  # its first tick, when an earlier part of the same window was sent
 
 
 class Windows:
@@ -71,6 +82,7 @@ class Windows:
         self.size = size
         self._make = make  # awake_event or kept_event
         self._open: dict[str, _Sum] = {}
+        self._early: dict[str, int] = {}  # session -> the window of which a part was sent early
 
     def __len__(self) -> int:
         return len(self._open)
@@ -87,7 +99,10 @@ class Windows:
             if w.total > 0:
                 # At the window's end when it ran to its end; otherwise at its last sight.
                 over = now >= w.start + self.size
-                due.append(self._make(session, w.customer, w.start, w.start + self.size if over else w.last, w.total))
+                due.append(self._make(session, w.customer, w.start, w.start + self.size if over else w.last, w.total,
+                                      w.part))
+                if not over:
+                    self._early[session] = w.start
 
         for session in sorted(counted):
             start = window_of(now, self.size)
@@ -96,10 +111,15 @@ class Windows:
                 close(session)
                 w = None
             if w is None:
-                w = self._open[session] = _Sum(customers[session], start)
+                # The window's key is taken if a part of it was sent early:
+                # this part is keyed by its first tick as well.
+                w = self._open[session] = _Sum(customers[session], start,
+                                               part=now if self._early.get(session) == start else None)
             w.total += counted[session]
             w.last = now
         for session in sorted(self._open):
             if now >= self._open[session].start + self.size or session not in going:
                 close(session)
+        current = window_of(now, self.size)
+        self._early = {s: start for s, start in self._early.items() if start == current}
         return due

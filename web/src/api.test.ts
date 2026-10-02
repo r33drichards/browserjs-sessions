@@ -39,6 +39,19 @@ describe("api", () => {
     for (const [, init] of fetch.mock.calls) expect(new Headers(init?.headers).has("Authorization")).toBe(false)
   })
 
+  it("posts to the sleep and wake routes of a session", async () => {
+    const fetch = fakeFetch(200, { ...session, state: "asleep", stateSaved: true })
+    const api = createApi(fetch)
+    await expect(api.sleepSession(session.id)).resolves.toMatchObject({ state: "asleep", stateSaved: true })
+    await api.wakeSession(session.id)
+    expect(fetch.mock.calls.map(c => [c[0], (c[1] as RequestInit).method, (c[1] as RequestInit).body])).toEqual([
+      [`/api/sessions/${session.id}/sleep`, "POST", undefined],
+      [`/api/sessions/${session.id}/wake`, "POST", undefined],
+    ])
+    await expect(api.sleepSession("../me")).rejects.toMatchObject({ status: 404 })
+    expect(fetch.mock.calls).toHaveLength(2)
+  })
+
   it("fetches the signed-in user", async () => {
     const fetch = fakeFetch(200, { email: "u@example.com", name: "U", admin: true })
     await expect(createApi(fetch).me()).resolves.toEqual({ email: "u@example.com", name: "U", admin: true })

@@ -1,6 +1,7 @@
 // The desktop_execute tool against a real X display: the packaged nut.js
 // addon, the worker process, xdpyinfo and xsel. Run by the flake's
-// `desktop-smoke` check (Xvnc and openbox already up on $DISPLAY), which the
+// `desktop-smoke` check (Xvnc and openbox already up on $DISPLAY; the image's
+// own window manager is xfwm4, see desktop-image-smoke.sh), which the
 // image build depends on. Not a `node --test` file: it needs that display.
 //
 //   DESKTOP_JS=<path to the installed desktop.js> node desktop-smoke.mjs

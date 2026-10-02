@@ -2,19 +2,14 @@
 // is fetched only by the pages that edit a policy.
 import { useEffect, useRef } from "react"
 import type { Marker } from "../policy/markers"
-import { JSON_MODEL_PATH, THEME, setPolicySchema, setupMonaco } from "../policy/monaco"
+import { THEME, setupMonaco } from "../policy/monaco"
 import { REGO_LANGUAGE_ID } from "../policy/rego"
-import type { Diagnostic, PolicyKind } from "../policyApi"
 
 export interface MonacoEditorProps {
-  kind: PolicyKind
   value: string
   onChange: (value: string) => void
   markers: Marker[] // from the server's validation
-  schema?: Record<string, unknown> | null // of the JSON form
   onCursor?: (line: number, column: number) => void
-  // What the editor found by itself (JSON syntax and schema), as it changes.
-  onLocalProblems?: (problems: Diagnostic[]) => void
   ariaLabel: string
   height?: number
 }
@@ -22,19 +17,18 @@ export interface MonacoEditorProps {
 const SERVER = "server"
 
 export default function MonacoEditor(props: MonacoEditorProps) {
-  const { kind, value, markers, schema, ariaLabel, height = 320 } = props
+  const { value, markers, ariaLabel, height = 320 } = props
   const host = useRef<HTMLDivElement>(null)
   const editorRef = useRef<ReturnType<ReturnType<typeof setupMonaco>["editor"]["create"]> | null>(null)
   // The latest callbacks, so the editor is not rebuilt when a parent re-renders.
   const callbacks = useRef(props)
   callbacks.current = props
 
-  // One editor per format: the model's language and name belong to it.
   useEffect(() => {
     const monaco = setupMonaco()
-    const uri = monaco.Uri.parse(`inmemory://policy/${kind === "json" ? JSON_MODEL_PATH : "session.policy.rego"}`)
+    const uri = monaco.Uri.parse("inmemory://policy/session.policy.rego")
     monaco.editor.getModel(uri)?.dispose()
-    const model = monaco.editor.createModel(callbacks.current.value, kind === "json" ? "json" : REGO_LANGUAGE_ID, uri)
+    const model = monaco.editor.createModel(callbacks.current.value, REGO_LANGUAGE_ID, uri)
     const editor = monaco.editor.create(host.current!, {
       model,
       theme: THEME,
@@ -44,8 +38,8 @@ export default function MonacoEditor(props: MonacoEditorProps) {
       scrollBeyondLastLine: false,
       fontFamily: "ui-monospace, Menlo, monospace",
       fontSize: 13,
-      tabSize: kind === "json" ? 2 : 4,
-      insertSpaces: kind === "json", // Rego is written with tabs (opa fmt)
+      tabSize: 4,
+      insertSpaces: false, // Rego is written with tabs (opa fmt)
       renderLineHighlight: "line",
       fixedOverflowWidgets: true,
       bracketPairColorization: { enabled: false }, // the wireframe has no colour
@@ -58,39 +52,21 @@ export default function MonacoEditor(props: MonacoEditorProps) {
     const subscriptions = [
       model.onDidChangeContent(() => callbacks.current.onChange(model.getValue())),
       editor.onDidChangeCursorPosition(e => callbacks.current.onCursor?.(e.position.lineNumber, e.position.column)),
-      monaco.editor.onDidChangeMarkers(uris => {
-        if (!uris.some(u => u.toString() === uri.toString())) return
-        const local = monaco.editor
-          .getModelMarkers({ resource: uri })
-          .filter(m => m.owner !== SERVER && m.severity >= monaco.MarkerSeverity.Warning)
-          .map(m => ({
-            row: m.startLineNumber,
-            col: m.startColumn,
-            code: m.severity === monaco.MarkerSeverity.Error ? "json_error" : "json_warning",
-            message: m.message,
-          }))
-        callbacks.current.onLocalProblems?.(local)
-      }),
     ]
     return () => {
       subscriptions.forEach(s => s.dispose())
       editor.dispose()
       model.dispose()
       editorRef.current = null
-      callbacks.current.onLocalProblems?.([])
     }
-  }, [kind])
+  }, [])
 
-  // A value set from outside (a copied policy, a reload) replaces the text;
-  // the editor's own edits arrive here unchanged and are left alone.
+  // A value set from outside (a preset, a copied policy, a reload) replaces
+  // the text; the editor's own edits arrive here unchanged and are left alone.
   useEffect(() => {
     const model = editorRef.current?.getModel()
     if (model && model.getValue() !== value) model.setValue(value)
-  }, [value, kind])
-
-  useEffect(() => {
-    if (schema) setPolicySchema(schema)
-  }, [schema])
+  }, [value])
 
   useEffect(() => {
     const monaco = setupMonaco()
@@ -104,7 +80,7 @@ export default function MonacoEditor(props: MonacoEditorProps) {
         severity: m.severity === "error" ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
       })),
     )
-  }, [markers, kind])
+  }, [markers])
 
   return <div ref={host} className="wf-editor" style={{ height }} aria-label={ariaLabel} />
 }

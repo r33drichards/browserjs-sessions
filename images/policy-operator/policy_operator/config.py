@@ -55,10 +55,6 @@ class Config:
     def decision_template(self) -> Path:
         return self.contract_dir / "decision-module.rego.tmpl"
 
-    @property
-    def schema(self) -> Path:
-        return self.contract_dir / "json-policy.schema.json"
-
     @classmethod
     def from_env(cls) -> "Config":
         env = os.environ

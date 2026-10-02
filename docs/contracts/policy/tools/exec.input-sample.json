@@ -6,7 +6,7 @@
     "bin": "git",
     "args": ["clone", "--depth", "1", "https://github.com/octocat/Hello-World", "hello"],
     "timeout": 120,
-    "cwd": "/home/browser/work",
+    "cwd": "/data/chrome/home/work",
     "env": { "GIT_TERMINAL_PROMPT": "0" }
   }
 }

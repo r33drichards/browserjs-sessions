@@ -23,6 +23,9 @@ const (
 	StateUnsupported = "unsupported"
 )
 
+// KindRego is the only kind of policy.
+const KindRego = "rego"
+
 // Management modes.
 const (
 	ModeEditor = "editor"
@@ -55,7 +58,8 @@ type PolicySummary struct {
 }
 
 // Diagnostic is one error or warning about a policy's source. Row and Col
-// are 1-based, and zero when the API gave none.
+// are 1-based, and zero when the API gave none: the warnings about a tool
+// that undoes another's rules are about the policy as a whole.
 type Diagnostic struct {
 	Row     int    `json:"row,omitempty"`
 	Col     int    `json:"col,omitempty"`
@@ -104,11 +108,20 @@ type APIError struct {
 	Errors     []Diagnostic
 	Warnings   []Diagnostic
 	ManagedURL string
+	// Code and BillingURL are set when billing refused the request (a 402
+	// for want of a payment method or of credit, a plan's limit): what was
+	// refused, and where its owner puts it right.
+	Code       string
+	BillingURL string
 }
 
 func (e *APIError) Error() string {
 	if e.Message == "" {
 		return fmt.Sprintf("the API answered %d %s", e.Status, http.StatusText(e.Status))
+	}
+	if e.BillingURL != "" {
+		// What a person running terraform needs: the sentence, and the link.
+		return fmt.Sprintf("the API answered %d: %s See %s", e.Status, e.Message, e.BillingURL)
 	}
 	return fmt.Sprintf("the API answered %d: %s", e.Status, e.Message)
 }
@@ -187,9 +200,12 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) (int,
 			Errors     []Diagnostic `json:"errors"`
 			Warnings   []Diagnostic `json:"warnings"`
 			ManagedURL string       `json:"managed_url"`
+			Code       string       `json:"code"`
+			BillingURL string       `json:"billingUrl"`
 		}
 		_ = json.Unmarshal(raw, &e)
-		return resp.StatusCode, &APIError{Status: resp.StatusCode, Message: e.Error, Errors: e.Errors, Warnings: e.Warnings, ManagedURL: e.ManagedURL}
+		return resp.StatusCode, &APIError{Status: resp.StatusCode, Message: e.Error, Errors: e.Errors, Warnings: e.Warnings,
+			ManagedURL: e.ManagedURL, Code: e.Code, BillingURL: e.BillingURL}
 	}
 	if out != nil && len(bytes.TrimSpace(raw)) > 0 {
 		if err := json.Unmarshal(raw, out); err != nil {
@@ -256,9 +272,9 @@ func (c *Client) ResetPolicy(ctx context.Context, id string) error {
 	return err
 }
 
-// ValidatePolicy checks a policy without saving it.
-func (c *Client) ValidatePolicy(ctx context.Context, kind, source string) (*Validation, error) {
+// ValidatePolicy checks a Rego policy without saving it.
+func (c *Client) ValidatePolicy(ctx context.Context, source string) (*Validation, error) {
 	var v Validation
-	_, err := c.do(ctx, http.MethodPost, "/policies/validate", PolicyInput{Kind: kind, Source: source}, &v)
+	_, err := c.do(ctx, http.MethodPost, "/policies/validate", PolicyInput{Kind: KindRego, Source: source}, &v)
 	return &v, err
 }

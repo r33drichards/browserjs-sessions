@@ -56,11 +56,14 @@ if [ -f images/policy-operator/Dockerfile ]; then
   docker build --provenance=false -t browserjs/policy-operator:dev -f images/policy-operator/Dockerfile .
 fi
 
+# The billing operator, from the repository root too.
+docker build --provenance=false -t browserjs/billing-operator:dev -f images/billing-operator/Dockerfile .
+
 # kind does not recognise an image it already has when Docker uses the
 # containerd image store, and would copy all of them (4 GB) every time. What
 # was loaded is noted on the node itself, so the note goes with the cluster.
 node="$CLUSTER-control-plane"
-for image in backend mcp-js browser ${have_operator:+policy-operator}; do
+for image in backend mcp-js browser ${have_operator:+policy-operator} billing-operator; do
   id=$(image_id "browserjs/$image:dev")
   if [ "$(docker exec "$node" cat "/kind/loaded-$image" 2>/dev/null)" = "$id" ]; then
     echo "browserjs/$image:dev is already on the node"
@@ -161,6 +164,8 @@ unset client_secret
 kubectl apply -k deploy/local
 # The policy operator looks its resource up once, when it starts.
 kubectl wait --for=condition=Established crd/sessionpolicies.browserjs.dev --timeout=60s
+# Billing: the backend, in any stage but off, wants it served.
+kubectl wait --for=condition=Established --timeout=60s crd/accounts.browserjs.dev
 [ -z "$backend_changed" ] || kubectl -n "$NS" rollout restart deploy/backend
 # A new CA: Pomerium must serve the new certificate and the backend trust it.
 [ -z "$new_certificate" ] || kubectl -n "$NS" rollout restart statefulset/pomerium deploy/backend
@@ -173,6 +178,9 @@ kubectl -n agent-sandbox-system rollout status deploy/agent-sandbox-controller -
 # returns at once; OPA is ready only once it has the operator's bundle.
 kubectl -n "$NS" rollout status deploy/policy-operator --timeout=300s
 kubectl -n "$NS" rollout status deploy/opa --timeout=300s
+# Billing (hack/billing-stage.sh). Off, as deploy/local is by default, the
+# operator has no pods and this returns at once.
+kubectl -n "$NS" rollout status deploy/billing-operator --timeout=300s
 
 cat <<EOF
 

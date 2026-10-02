@@ -4,7 +4,7 @@ from policy_operator.operator import Loaded, Outcome
 from policy_operator.status import after_loaded_check, after_reconcile
 
 T0, T1, T2 = "2026-10-02T00:00:00Z", "2026-10-02T00:01:00Z", "2026-10-02T00:02:00Z"
-OK = Validation(ok=True, rego="R1", hash="sha256:1", warnings=[{"code": "allow_empty", "message": "w"}])
+OK = Validation(ok=True, rego="R1", hash="sha256:1", warnings=[{"code": "browser_bypass_shell", "message": "w"}])
 BAD = Validation(ok=False, errors=[{"row": 3, "col": 1, "code": "rego_parse_error", "message": "unexpected eof token"},
                                    {"code": "policy_guard_error", "message": "x"}])
 
@@ -17,7 +17,7 @@ def test_compiled_and_loaded_is_ready():
     s = after_reconcile({}, 4, Outcome(OK, Tenant("M", "sha256:1"), [], "17-2"), Loaded(2, 2), T0)
     assert s["observedGeneration"] == 4 and s["regoGeneration"] == 4
     assert s["rego"] == "R1" and s["hash"] == "sha256:1" and s["errors"] == []
-    assert s["warnings"] == [{"code": "allow_empty", "message": "w"}]
+    assert s["warnings"] == [{"code": "browser_bypass_shell", "message": "w"}]
     assert s["loaded"] == {"replicas": 2, "total": 2, "revision": "17-2"} and s["lastAppliedTime"] == T0
     c = conditions(s)
     assert [c[t]["status"] for t in ("Compiled", "Loaded", "Ready")] == ["True", "True", "True"]

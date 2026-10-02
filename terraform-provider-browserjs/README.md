@@ -6,14 +6,23 @@ Provider type `browserjs`, source address `r33drichards/browserjs`.
 | | |
 |---|---|
 | `browserjs_session` (resource) | a session: one persistent browser, driven over MCP |
-| `browserjs_session_policy` (resource) | a session's policy, managed as code, in JSON or Rego |
+| `browserjs_session_policy` (resource) | a session's policy, managed as code: a Rego module |
 | `browserjs_session`, `browserjs_sessions` (data sources) | sessions that already exist |
-| `browserjs_policy_document` (data source) | builds a JSON policy from HCL blocks |
 
 Reference for every argument: [`docs/`](docs/index.md), generated from the
 schema. A complete configuration: [`examples/session-policies/`](examples/session-policies/main.tf).
 How it behaves and why: [`../docs/terraform-provider.md`](../docs/terraform-provider.md).
 The contract it is built to: [`../docs/contracts/policy/terraform-provider.md`](../docs/contracts/policy/terraform-provider.md).
+
+A policy is Rego, and decides every tool call an agent makes: the browser
+(`browser_execute`), desktop control (`desktop_execute`) and the shell (the
+`exec` server). What a policy is asked is in
+[`../docs/contracts/policy/rego-contract.md`](../docs/contracts/policy/rego-contract.md);
+seven ready-made ones are in
+[`../docs/contracts/policy/examples/`](../docs/contracts/policy/examples/).
+A policy that restricts `browser_execute` must deny `desktop_execute` and the
+`exec` server, since either can drive the browser around the rules; the API
+answers with a warning when it does not, and the plan and the apply show it.
 
 It is its own Go module, so none of its dependencies reach `backend/`.
 
@@ -102,9 +111,10 @@ nix develop -c make fakeapi      # http://127.0.0.1:18080, token bjs_fake_token
 export BROWSERJS_ENDPOINT=http://127.0.0.1:18080 BROWSERJS_TOKEN=bjs_fake_token
 ```
 
-Its policy check is rough (JSON syntax, top-level keys, operation names; a
-Rego module's package line and brace balance). The real check is the policy
-operator's.
+Its policy check is rough: it reads a Rego module's text (the package line,
+brace balance, that `allow_tool_call` is defined) and guesses the warnings
+from which tools the module names. The real check is the policy operator's,
+which compiles the module and asks it.
 
 ## Develop
 
@@ -124,7 +134,10 @@ nix shell nixpkgs#opentofu -c nix develop -c make docs      # regenerate docs/
   production. For Terraform instead of OpenTofu:
   `TF_ACC=1 TF_ACC_TERRAFORM_PATH="$(command -v terraform)" go test ./internal/provider -run TestAcc -v`.
 - **`hack/e2e.sh`** takes `examples/session-policies` through plan, apply, a
-  policy edit, a policy that does not validate, and destroy, with
-  `dev_overrides` and the fake.
+  policy edit, a policy the API warns about, a policy that does not validate,
+  and destroy, with `dev_overrides` and the fake.
+- The `.rego` files under `examples/` are copies of the contract's
+  (`../docs/contracts/policy/examples/`); a test fails when one drifts. Copy
+  the file again rather than editing the copy.
 - CI (`.github/workflows/terraform-provider.yml`) runs all three on pull
   requests that touch this directory, and fails if `docs/` is stale.

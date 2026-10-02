@@ -59,7 +59,7 @@ def test_documented_command_then_a_second_opa_answers_the_cases(cfg, tmp_path, c
     monkeypatch.setenv("OPA_BIN", cfg.opa_bin)
     monkeypatch.setenv("POLICY_CONTRACT_DIR", str(cfg.contract_dir))
     assert cli.main(["example-resources", str(tmp_path / "policies")]) == 0
-    assert len(list((tmp_path / "policies").glob("*.yaml"))) == 5
+    assert len(list((tmp_path / "policies").glob("*.yaml"))) == 7
     out = tmp_path / "browserjs.tar.gz"
     assert cli.main(["bundle", str(tmp_path / "policies"), "-o", str(out)]) == 0
     printed = capsys.readouterr().out
@@ -74,7 +74,7 @@ def test_documented_command_then_a_second_opa_answers_the_cases(cfg, tmp_path, c
         assert wait_until(lambda: http(url + "/health")[0] == 200)
         buffer = io.StringIO()
         assert cli.run_cases(cfg, url, buffer) == 0, buffer.getvalue()
-        assert buffer.getvalue().strip() == "86/86 cases pass"
+        assert buffer.getvalue().strip() == "264/264 cases pass"
         assert cli.main(["run-cases", url]) == 0
         # A session that is not in the bundle: no result, which mcp-js denies.
         assert decide(url, "s-zzzzz", CALL) == {}

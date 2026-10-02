@@ -1,0 +1,99 @@
+# What test/billing/run.sh applies to a kind cluster: deploy/base with
+# billing metering, and stand-ins (stub.py) for the two programs, which are
+# other tracks' work. The CRDs, the Roles, the NetworkPolicies, the
+# catalogue's ConfigMap and how the two pods mount it, and the backend's
+# Stripe variables are deploy/base's own, unchanged.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: browserjs-sessions
+
+resources:
+  - ../../deploy/base
+
+images:
+  - name: browserjs/backend
+    newName: python
+    digest: sha256:2dd78ad5cf13a0b68f5134dc49aa9950203a8cf4b7463431b9f3b398287c5059 # 3.13-alpine
+  # The placeholder for the operator's image until track A's exists.
+  - name: browserjs/billing-operator
+    newName: python
+    digest: sha256:2dd78ad5cf13a0b68f5134dc49aa9950203a8cf4b7463431b9f3b398287c5059
+
+configMapGenerator:
+  - name: billing-test-stub
+    files:
+      - stub.py
+
+patches:
+  # The edge and session policies are not part of this test, and would need
+  # their Secrets.
+  - patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: pomerium
+      $patch: delete
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: dex
+      $patch: delete
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: opa
+      $patch: delete
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: policy-operator
+      $patch: delete
+  # The stage "meter", as an overlay's patch-billing-meter.yaml makes it.
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: billing-operator
+      spec:
+        replicas: 1
+        template:
+          spec:
+            containers:
+              - name: billing-operator
+                command: ["python3", "/stub/stub.py", "operator"]
+                env:
+                  - name: BILLING
+                    value: meter
+                volumeMounts:
+                  - name: stub
+                    mountPath: /stub
+            volumes:
+              - name: stub
+                configMap:
+                  name: billing-test-stub
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: backend
+      spec:
+        template:
+          spec:
+            securityContext:
+              runAsUser: 65532
+            containers:
+              - name: backend
+                command: ["python3", "/stub/stub.py", "backend"]
+                env:
+                  - name: BILLING
+                    value: meter
+                volumeMounts:
+                  - name: stub
+                    mountPath: /stub
+            volumes:
+              - name: stub
+                configMap:
+                  name: billing-test-stub

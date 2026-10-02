@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import createWrapper from "@cloudscape-design/components/test-utils/dom"
 import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { FakeEditor, presetSource, renderAt, startBackend } from "../test/harness"
@@ -15,7 +16,7 @@ async function open(name: string) {
   return { ...server, session }
 }
 
-const editor = () => screen.findByLabelText("JSON policy editor") as Promise<HTMLTextAreaElement>
+const editor = () => screen.findByLabelText("Rego policy editor") as Promise<HTMLTextAreaElement>
 const save = () => fireEvent.click(screen.getByRole("button", { name: "Save policy" }))
 const landed = () => screen.getByTestId("landed").textContent
 
@@ -27,13 +28,13 @@ describe("edit policy", () => {
     save()
     await waitFor(() => expect(landed()).toBe(`/sessions/${session.id}?tab=policy Policy saved and in force (v2)`))
     const [put] = writes()
-    expect(put).toMatchObject({ method: "PUT", path: `/api/sessions/${session.id}/policy`, body: { kind: "json", source: presetSource("no-scripting") } })
+    expect(put).toMatchObject({ method: "PUT", path: `/api/sessions/${session.id}/policy`, body: { kind: "rego", source: presetSource("no-scripting") } })
     expect(put.headers.get("If-Match")).toBe('"1"')
   })
 
   it("says so when the policy is saved but not yet loaded everywhere", async () => {
     const { session } = await open("research")
-    fireEvent.change(await editor(), { target: { value: '{ "version": 1, "description": "slow to load", "allow": { "operations": ["*"] } }' } })
+    fireEvent.change(await editor(), { target: { value: "# slow to load\n" + presetSource("no-scripting") } })
     save()
     await waitFor(() => expect(landed()).toBe(`/sessions/${session.id}?tab=policy Policy saved; loading`))
   })
@@ -61,12 +62,12 @@ describe("edit policy", () => {
 
   it("keeps the user on the page with the errors of a policy that does not validate", async () => {
     const { writes } = await open("research")
-    fireEvent.change(await editor(), { target: { value: '{ "version": 1, "allow": { "operations": ["clik"] } }' } })
+    fireEvent.change(await editor(), { target: { value: "package browserjs.policy\n\nallow_tool_call if http.send({})\n" } })
     save()
     expect(await screen.findByText("The policy does not validate. Nothing was saved.")).toBeTruthy()
     expect(writes()).toHaveLength(1)
     expect(screen.queryByTestId("landed")).toBeNull()
-    expect((await screen.findByRole("list", { name: "Problems" })).textContent).toContain('unknown operation "clik"')
+    expect((await screen.findByRole("list", { name: "Problems" })).textContent).toContain("3:20  undefined function http.send")
   })
 
   it("asks before leaving with changes", async () => {
@@ -87,8 +88,31 @@ describe("edit policy", () => {
     expect(screen.queryByLabelText(/policy editor$/)).toBeNull()
     // Test still works: it saves nothing.
     fireEvent.click(screen.getByRole("button", { name: "Run test" }))
-    expect(await screen.findByText("Allowed")).toBeTruthy()
+    expect(await screen.findByText(/^(Allowed|Denied)$/)).toBeTruthy()
     expect(writes()).toHaveLength(0)
+  })
+
+  it("starts over from a preset, which is Rego, and saves it", async () => {
+    const { session, sent, writes } = await open("research")
+    await editor()
+    const dropdown = await waitFor(() => {
+      const found = createWrapper().findAllButtonDropdowns().find(d => d.getElement().textContent === "Start from a preset")
+      expect(found).toBeTruthy()
+      return found!
+    })
+    dropdown.openDropdown()
+    dropdown.findItemById("browser-only")!.click()
+    expect((await editor()).value).toBe(presetSource("browser-only"))
+    save()
+    await waitFor(() => expect(landed()).toBe(`/sessions/${session.id}?tab=policy Policy saved and in force (v2)`))
+    expect(writes()[0].body).toEqual({ kind: "rego", source: presetSource("browser-only") })
+    expect(sent.some(r => r.path.includes("policy-schema"))).toBe(false)
+  })
+
+  it("opens the editor on a policy that does not compile, with what the check says", async () => {
+    await open("broken")
+    expect((await editor()).value).toContain("http.send")
+    expect((await screen.findByRole("list", { name: "Problems" })).textContent).toContain("undefined function http.send")
   })
 
   it("has nothing to edit for a session from before policies", async () => {

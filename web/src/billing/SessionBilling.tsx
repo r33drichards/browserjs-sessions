@@ -9,9 +9,10 @@ import { useState } from "react"
 import type { Session } from "../api"
 import type { BillingAction, Refusal, WakeBlock } from "../billingApi"
 import { WAKE_BLOCK_LABEL, createRefusal, dayMonth, ratesInWords, refusalOf, wakeBlock } from "../billingApi"
+import { stateLabel } from "../components/SessionLifecycle"
 import { useBilling } from "./BillingProvider"
 
-type Blockable = Pick<Session, "state" | "stoppedBy" | "deleteAfter" | "draining">
+type Blockable = Pick<Session, "state" | "stoppedBy" | "deleteAfter" | "draining" | "stateSaved">
 
 // Why this session cannot wake now, or null.
 export function useWakeBlock(session: Blockable | null): WakeBlock | null {
@@ -26,7 +27,7 @@ export function SessionState({ session }: { session: Blockable }) {
   return (
     <>
       <span className="wf-state" data-state={session.state} data-blocked={block ?? undefined}>
-        {block ? WAKE_BLOCK_LABEL[block] : session.state}
+        {block ? WAKE_BLOCK_LABEL[block] : stateLabel(session)}
       </span>
       {session.deleteAfter && <span className="wf-note wf-delete-after"> {deletedOn(session.deleteAfter)}</span>}
     </>
@@ -73,7 +74,7 @@ export function BlockedWake({ block, deleteAfter }: { block: WakeBlock; deleteAf
 
 // Over the screen of a session that is finishing its calls before a sleep.
 export function DrainingNote({ session }: { session: Blockable }) {
-  if (!session.draining || session.draining === "user" || session.draining === "idle") return null
+  if (!session.draining || session.draining === "user" || session.draining === "sleep" || session.draining === "idle") return null
   return <Alert type="warning">Finishing work in progress, then going to sleep.</Alert>
 }
 

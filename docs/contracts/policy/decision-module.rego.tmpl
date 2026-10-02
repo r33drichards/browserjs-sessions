@@ -6,4 +6,14 @@ import rego.v1
 
 default allow := false
 
-allow if data.browserjs.tenant["{{SESSION_ID}}"].allow_tool_call == true
+# The servers of a session and their tools. A call to anything else is
+# refused whatever the tenant's policy says: a policy written before a tool
+# existed cannot have meant to allow it. A tool is added here in the pull
+# request that adds its input to rego-contract.md.
+allow if {
+	input.tool in {
+		"browser": {"browser_execute", "desktop_execute"},
+		"exec": {"exec", "kill", "search_logs", "stream_logs"},
+	}[input.server]
+	data.browserjs.tenant["{{SESSION_ID}}"].allow_tool_call == true
+}

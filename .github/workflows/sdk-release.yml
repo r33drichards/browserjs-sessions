@@ -1,0 +1,321 @@
+name: sdk release
+
+# Builds the SDK's packages for every platform and, when asked to, publishes
+# them: the crates to crates.io, the wheels to PyPI, the package to npm, and
+# the Go libraries to a GitHub release.
+#
+#   - Pushing a tag `sdk-v<version>` builds and publishes.
+#   - Running it by hand builds only, unless `publish` is ticked.
+#
+# It never runs on a pull request: four platforms, two of them macOS, are
+# too dear for that.
+#
+# The version is the one in sdk/Cargo.toml and sdk/js/package.json; a tag
+# that says another is refused before anything is built.
+#
+# Secrets it reads (the repository's owner creates them; see sdk/README.md):
+#   CARGO_REGISTRY_TOKEN   crates.io
+#   NPM_TOKEN              npm
+#   PYPI_API_TOKEN         PyPI, optional: without it, PyPI trusted publishing
+#                          (OIDC) is used, which needs no secret
+#
+# Unlike sdk.yml this does not build inside the flake's dev shell. A library
+# built by nix names its C library by a /nix/store path and runs only where
+# nix is; a published one has to load on any machine. So the release
+# libraries are built with rustup's toolchain on GitHub's runners, against
+# the runner's own C library (glibc 2.35 on Linux, the macOS SDK on macOS).
+
+on:
+  push:
+    tags: ["sdk-v*"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish to crates.io, PyPI and npm, and make the GitHub release"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sdk-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: "1.91.1"
+  MATURIN_VERSION: "1.15.0"
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  version:
+    name: version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: One version everywhere
+        id: version
+        env:
+          REF: ${{ github.ref }}
+          EVENT: ${{ github.event_name }}
+          PUBLISH_INPUT: ${{ inputs.publish }}
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' sdk/Cargo.toml | head -1)"
+          npm_version="$(node -p 'require("./sdk/js/package.json").version')"
+          macros_dependency="$(sed -n 's/^computeruse-sdk-macros = { version = "\([^"]*\)".*/\1/p' sdk/crates/computeruse/Cargo.toml)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::sdk/Cargo.toml has no X.Y.Z version: '$version'"; exit 1; }
+          [ "$npm_version" = "$version" ] || { echo "::error::sdk/js/package.json is $npm_version, sdk/Cargo.toml is $version"; exit 1; }
+          [ "$macros_dependency" = "$version" ] || { echo "::error::computeruse-sdk depends on computeruse-sdk-macros $macros_dependency, not $version"; exit 1; }
+          publish=false
+          if [ "$EVENT" = push ]; then
+            [ "$REF" = "refs/tags/sdk-v$version" ] || { echo "::error::the tag is $REF; the tree's version is $version (tag sdk-v$version)"; exit 1; }
+            publish=true
+          elif [ "$PUBLISH_INPUT" = true ]; then
+            publish=true
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "SDK $version; publish: $publish" >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: build (${{ matrix.platform }})
+    needs: version
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # node: the directory the npm package looks in (prebuilds/<node>/).
+          # go: the name of the Go archive.
+          - { platform: linux-x86_64, runner: ubuntu-22.04, node: linux-x64-gnu, go: linux_amd64, library: libcomputeruse.so }
+          - { platform: linux-aarch64, runner: ubuntu-22.04-arm, node: linux-arm64-gnu, go: linux_arm64, library: libcomputeruse.so }
+          - { platform: macos-arm64, runner: macos-14, node: darwin-arm64, go: darwin_arm64, library: libcomputeruse.dylib, deployment_target: "11.0" }
+          - { platform: macos-x86_64, runner: macos-15-intel, node: darwin-x64, go: darwin_amd64, library: libcomputeruse.dylib, deployment_target: "10.13" }
+    env:
+      MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment_target }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: sdk/go/go.mod
+          cache: false
+
+      # One cargo build makes the shared library (the wheel, npm) and the
+      # static one (Go).
+      - name: Build the library
+        working-directory: sdk
+        run: cargo build --release --locked -p computeruse-sdk
+
+      - name: Build the wheel
+        working-directory: sdk/python
+        run: |
+          python -m pip install --quiet "maturin==$MATURIN_VERSION"
+          maturin build --release --locked --out "$GITHUB_WORKSPACE/dist/wheels"
+          ls -l "$GITHUB_WORKSPACE/dist/wheels"
+
+      - name: Smoke-test the wheel
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet --no-index --find-links dist/wheels computeruse
+          cd sdk/python/tests && "$RUNNER_TEMP/venv/bin/python" -m unittest -v test_smoke
+
+      - name: Collect the libraries
+        env:
+          NODE_TRIPLE: ${{ matrix.node }}
+          GO_PLATFORM: ${{ matrix.go }}
+          LIBRARY: ${{ matrix.library }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p "dist/prebuilds/$NODE_TRIPLE" dist/go stage
+          cp "sdk/target/release/$LIBRARY" "dist/prebuilds/$NODE_TRIPLE/"
+          # A package.json is how the generated bindings find the directory.
+          printf '{"name": "computeruse-%s", "version": "%s", "private": true}\n' "$NODE_TRIPLE" "$VERSION" > "dist/prebuilds/$NODE_TRIPLE/package.json"
+          cp sdk/target/release/libcomputeruse.a sdk/go/computeruse/computeruse.h sdk/LICENSE stage/
+          tar -C stage -czf "dist/go/libcomputeruse-$VERSION-$GO_PLATFORM.tar.gz" libcomputeruse.a computeruse.h LICENSE
+          ls -lR dist
+
+      # stage/ holds only the static library, so this is the link a user of
+      # the Go module makes.
+      - name: Smoke-test the Go module against the static library
+        working-directory: sdk/go
+        run: CGO_LDFLAGS="-L$GITHUB_WORKSPACE/stage" go test -count=1 ./...
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sdk-${{ matrix.platform }}
+          path: dist
+          if-no-files-found: error
+
+  npm:
+    name: npm package
+    needs: [version, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: sdk/js/package-lock.json
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: sdk-*
+          merge-multiple: true
+          path: dist
+
+      # The TypeScript is the generated source in the tree (sdk.yml checks
+      # that it is current); the libraries are the four just built.
+      - name: Build and pack
+        working-directory: sdk/js
+        run: |
+          set -euo pipefail
+          cp -R "$GITHUB_WORKSPACE/dist/prebuilds" prebuilds
+          npm ci --no-audit --no-fund
+          npm run typecheck
+          npm run build
+          node --test test/smoke.test.mjs
+          mkdir -p "$GITHUB_WORKSPACE/dist/npm"
+          npm pack --pack-destination "$GITHUB_WORKSPACE/dist/npm"
+          tar -tzf "$GITHUB_WORKSPACE"/dist/npm/*.tgz
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sdk-npm
+          path: dist/npm
+          if-no-files-found: error
+
+  publish-crates:
+    name: publish to crates.io
+    needs: [version, build, npm]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+      # The macros first: the SDK depends on them by version. cargo waits
+      # for the index to have a crate before it returns.
+      - name: Publish
+        working-directory: sdk
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          [ -n "$CARGO_REGISTRY_TOKEN" ] || { echo "::error::the secret CARGO_REGISTRY_TOKEN is not set"; exit 1; }
+          cargo publish --locked -p computeruse-sdk-macros
+          cargo publish --locked -p computeruse-sdk
+
+  publish-pypi:
+    name: publish to PyPI
+    needs: [version, build, npm]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: pypi
+    permissions:
+      id-token: write # trusted publishing
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: sdk-*
+          merge-multiple: true
+          path: dist
+      # With no password the action uses trusted publishing.
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist/wheels
+          password: ${{ secrets.PYPI_API_TOKEN }}
+
+  publish-npm:
+    name: publish to npm
+    needs: [version, build, npm]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write # provenance
+    steps:
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: sdk-npm
+          path: dist/npm
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          [ -n "$NODE_AUTH_TOKEN" ] || { echo "::error::the secret NPM_TOKEN is not set"; exit 1; }
+          npm publish dist/npm/*.tgz --access public --provenance
+
+  github-release:
+    name: GitHub release (Go libraries)
+    needs: [version, build, npm]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: sdk-*
+          merge-multiple: true
+          path: dist
+      # The release carries the static libraries the Go module links, and
+      # the tag `sdk/go/v<version>` is what `go get` resolves the module in
+      # the sdk/go directory by.
+      - name: Release and tag the Go module
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          (cd dist/go && shasum -a 256 *.tar.gz > SHA256SUMS)
+          if ! gh release view "sdk-v$VERSION" > /dev/null 2>&1; then
+            gh release create "sdk-v$VERSION" --target "$GITHUB_SHA" --title "SDK $VERSION" \
+              --notes "Computer Use SDK $VERSION: the crate \`computeruse-sdk\`, \`computeruse\` on PyPI and npm, and the Go module \`sdk/go\`. The archives here hold \`libcomputeruse.a\` for the Go module; see sdk/go/README.md."
+          fi
+          gh release upload "sdk-v$VERSION" dist/go/*.tar.gz dist/go/SHA256SUMS dist/wheels/*.whl dist/npm/*.tgz --clobber
+          git tag "sdk/go/v$VERSION" "$GITHUB_SHA"
+          git push origin "sdk/go/v$VERSION"

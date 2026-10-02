@@ -1,0 +1,38 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "computeruse"
+description = "Client for Computer Use (computeruse.site): serverless, resumable desktop containers for agents. Sessions, policies and run_js over MCP."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Robert Wendt" }]
+keywords = ["computer-use", "mcp", "agents", "browser", "sandbox"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: AsyncIO",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Typing :: Typed",
+]
+# The version is the Rust crate's (sdk/Cargo.toml).
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://computeruse.site"
+Documentation = "https://computeruse.site/reference/sdk"
+# RENAME: the repository is about to become r33drichards/computer-use.
+Repository = "https://github.com/r33drichards/browserjs-sessions"
+
+[tool.maturin]
+# UniFFI bindings load the library with ctypes, so the wheel is
+# py3-none-<platform>: one per platform, for every Python 3.
+bindings = "uniffi"
+manifest-path = "../crates/computeruse/Cargo.toml"
+python-source = "python"
+module-name = "computeruse"
+include = [{ path = "LICENSE", format = "sdist" }]

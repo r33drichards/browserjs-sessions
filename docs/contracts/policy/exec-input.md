@@ -22,7 +22,7 @@ input for each next to them. Policies and their cases:
 Agent code in `run_js` calls
 
 ```js
-await mcp.callTool("exec", "exec", { bin: "git", args: ["status", "--short"], cwd: "/home/browser/work/app", timeout: 60 });
+await mcp.callTool("exec", "exec", { bin: "git", args: ["status", "--short"], cwd: "/data/chrome/home/work/app", timeout: 60 });
 ```
 
 and mcp-js v0.21.0-rc.3 asks the policy before it forwards the call, with
@@ -36,7 +36,7 @@ and mcp-js v0.21.0-rc.3 asks the policy before it forwards the call, with
   "arguments": {
     "bin": "git",
     "args": ["status", "--short"],
-    "cwd": "/home/browser/work/app",
+    "cwd": "/data/chrome/home/work/app",
     "timeout": 60
   }
 }
@@ -188,7 +188,7 @@ exec-workdir: 49/49 cases pass (10 allow, 39 deny)
 | [`exec-git-subcommands.rego`](tools/examples/exec-git-subcommands.rego) | `git` with `args[0]` one of `status`, `log`, `diff`, `show`, `rev-parse`, `ls-files`, and none of four long flags (matched by prefix, since git accepts abbreviations); `timeout` up to 120. Nothing else. | Requiring the subcommand first keeps git's own `-c` and `-C` out. The denied flags are a list of what its author knew, and git obeys the configuration of the repository it runs in: safe for repositories the agent cannot write to. |
 | [`exec-curl-hosts.rego`](tools/examples/exec-curl-hosts.rego) | `curl` with `-q` first, flags from a short list, and `https://` URLs whose host is `api.github.com` or `example.com`; `timeout` up to 120. | Every argument is accounted for, which is why it holds: an unknown flag denies. The host is followed by the end or a `/`, so userinfo (`https://example.com@evil.test/`), ports and look-alike hosts fail. `-L` is not on the list: a redirect goes wherever the server says. |
 | [`exec-no-shell.rego`](tools/examples/exec-no-shell.rego) | Any program whose name (the last part of `bin`) is not on a list of shells, interpreters and other launchers; no `env`; the browser and desktop tools. | A deny-list, so only as good as the list. Two cases show what it still allows: `find … -exec sh -c …`, and a copy of the shell under another name. It keeps commands readable; it does not restrict what runs. |
-| [`exec-workdir.rego`](tools/examples/exec-workdir.rego) | Any program, with `cwd` given and equal to or under `/home/browser/work` (no `..`, `.` or empty segment), `env` absent or its names from a list of five, `timeout` up to 1800. | It decides where commands start. It does not confine them (a case shows a command reading an absolute path elsewhere being allowed), and it cannot see a symbolic link that leads out. |
+| [`exec-workdir.rego`](tools/examples/exec-workdir.rego) | Any program, with `cwd` given and equal to or under `/data/chrome/home/work` (no `..`, `.` or empty segment), `env` absent or its names from a list of five, `timeout` up to 1800. | It decides where commands start. It does not confine them (a case shows a command reading an absolute path elsewhere being allowed), and it cannot see a symbolic link that leads out. |
 | [`exec-deny.rego`](tools/examples/exec-deny.rego) | `browser_execute` only. | Denies the exec server's tools and `desktop_execute`. |
 
 Patterns they share:
@@ -203,5 +203,5 @@ Patterns they share:
 - `timeout_within(n)`: a number, at least 1, at most `n`.
 - Describe what is allowed and deny the rest. The one list of denied things
   that is not backed by a list of allowed ones, `exec-no-shell.rego`, says so.
-- The home directory in the paths above is `/home/browser`, `$HOME` of the
+- The home directory in the paths above is `/data/chrome/home`, `$HOME` of the
   desktop's user in the current image; use the real one.

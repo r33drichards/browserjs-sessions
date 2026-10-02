@@ -56,7 +56,7 @@ paths:
       summary: Create a session, optionally with a policy.
       description: |
         Without `policy`, the session gets the unrestricted policy
-        (`examples/unrestricted.policy.json`). The policy is validated
+        (`examples/unrestricted.rego`). The policy is validated
         before anything is created; an invalid one is 422 and creates
         nothing. The answer does not wait for the policy to be loaded: the
         session's `state` is `starting` until it is.
@@ -107,6 +107,33 @@ paths:
       responses:
         "204": {description: Deleted, or there was none.}
         "404": {description: Not the caller's., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /sessions/{id}/sleep:
+    parameters: [{$ref: "#/components/parameters/id"}]
+    post:
+      summary: Put a running session to sleep (unchanged by policies).
+      description: |
+        What the idle sweep does, asked for: a snapshot of the pod, then the
+        suspend. Answers when the snapshot is done (seconds; at most the
+        snapshot timeout). The session wakes on the next request to it, an
+        MCP call included, or on `wake`. A snapshot that fails does not stop
+        the sleep: the session then has no `stateSaved` and starts fresh.
+        No-op on a session that is asleep. A token needs `sessions:write`.
+      responses:
+        "200": {description: "The session, suspended.", content: {application/json: {schema: {$ref: "#/components/schemas/Session"}}}}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {description: "The session is starting, stopping, stopped or failed: there is no running state to save.", content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /sessions/{id}/wake:
+    parameters: [{$ref: "#/components/parameters/id"}]
+    post:
+      summary: Start a session that is asleep or stopped (PATCH's `resume`, as a route).
+      description: |
+        Restores from the snapshot if the session has one that is ready,
+        starts fresh otherwise. Does not wait for the session to run. No-op
+        on one that is awake. A token needs `sessions:write`. With billing
+        on it can be refused (docs/contracts/billing/backend-api.yaml).
+      responses:
+        "200": {description: The session after the change., content: {application/json: {schema: {$ref: "#/components/schemas/Session"}}}}
+        "404": {$ref: "#/components/responses/NotFound"}
   /sessions/{id}/policy:
     parameters: [{$ref: "#/components/parameters/id"}]
     get:
@@ -190,11 +217,6 @@ paths:
                   ok: {type: boolean}
                   allow: {type: boolean}
                   errors: {type: array, items: {$ref: "#/components/schemas/Diagnostic"}}
-  /policy-schema.json:
-    get:
-      summary: The JSON Schema of the JSON policy format.
-      responses:
-        "200": {description: The schema., content: {application/schema+json: {schema: {type: object}}}}
   /policy-presets:
     get:
       summary: The ready-made policies the create page offers.
@@ -213,7 +235,7 @@ paths:
                     id: {type: string, examples: [no-scripting]}
                     title: {type: string}
                     description: {type: string}
-                    kind: {type: string, enum: [json, rego]}
+                    kind: {type: string, enum: [rego]}
                     source: {type: string}
   /tokens:
     get:
@@ -327,12 +349,13 @@ components:
         owner: {type: string}
         state: {type: string, description: As today. A new session stays `starting` until its policy is `ready`.}
         mcp_url: {type: string}
+        stateSaved: {type: boolean, description: "Present, and true, when a session that is asleep (or on its way there) holds a snapshot to wake from."}
         policy: {$ref: "#/components/schemas/PolicySummary"}
     PolicySummary:
       type: object
       required: [state]
       properties:
-        kind: {type: string, enum: [json, rego]}
+        kind: {type: string, enum: [rego]}
         version: {type: integer, description: The SessionPolicy's metadata.generation.}
         hash: {type: string, description: Of the policy in force.}
         state: {$ref: "#/components/schemas/PolicyState"}
@@ -343,7 +366,7 @@ components:
         - type: object
           properties:
             source: {type: string}
-            rego: {type: string, description: "The module in force (status.rego); for kind json the generated one."}
+            rego: {type: string, description: "The module in force (status.rego): the last source that compiled, which is not `source` while the state is invalid."}
             errors: {type: array, items: {$ref: "#/components/schemas/Diagnostic"}}
             warnings: {type: array, items: {$ref: "#/components/schemas/Diagnostic"}}
             loaded:
@@ -365,9 +388,9 @@ components:
         | `unsupported` | the session predates policies; there is no SessionPolicy and none can be made |
     PolicySource:
       type: object
-      required: [kind, source]
+      required: [source]
       properties:
-        kind: {type: string, enum: [json, rego]}
+        kind: {type: string, enum: [rego], default: rego, description: Rego is the only kind. May be left out.}
         source: {type: string, minLength: 1, maxLength: 65536}
     PolicyInput:
       allOf:

@@ -17,6 +17,8 @@ resources:
   - warmpool.yaml
   - certificate.yaml
   - site.yaml
+  # The Accounts' daily backup; suspended until billing is enforced.
+  - billing-export.yaml
 
 # THE ONE PLACE the deployed images are chosen. Each digest is what the
 # "images" workflow printed in its run summary for the commit to deploy.
@@ -31,19 +33,24 @@ images:
   # operator has no pods.
   - name: browserjs/policy-operator
     newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/policy-operator
-    digest: sha256:9112d8f9b774c499ef0c2d62fe0cb836d53ed76358411cc1c7f8c3282ce6af65
+    digest: sha256:e1a4f6bb7054f9e47a0464f394900cece813323f12dfc79bf76dcb7c934b5977
+  # Not pinned yet. hack/pin-images.sh accepts the placeholder only while
+  # billing is off (hack/billing-stage.sh), when the operator has no pods.
+  - name: browserjs/billing-operator
+    newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/billing-operator
+    digest: REPLACE_WITH_DIGEST
   - name: browserjs/backend
     newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/backend
-    digest: sha256:e9887294e3923c6a28a60efc1d9ece6e2a889378c8866e0e890af465f6b3f454
+    digest: sha256:1931d07915dd2b9b6b8ca12e52598b67179307991a9e2e9bf94c17a38ac5f96f
   - name: browserjs/browser
     newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/browser
-    digest: sha256:e5d7fc774911669a1921dc13d2b04bebec70a20b4817a8d13b205f8e431744fb
+    digest: sha256:63145f8083996b55793f6d7b91a819e72ac70c4f8925689a4ec70e4cdad47367
   - name: browserjs/mcp-js
     newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/mcp-js
-    digest: sha256:c7f95389964e6b1e6d978d287925e9ffae04b79658e589c46354e86c05e7b365
+    digest: sha256:de903a1b46c19e9130292317b75487f524a78cb3cd373597cde203f8d6be9e9e
   - name: browserjs/site
     newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/site
-    digest: sha256:68c85ef7444b3a2e607487f8b193bb267c615241c1d1d54e3195f7cd4e533c34
+    digest: sha256:9113f04abc1d79cb8bbc7ac91d0e382ef8971ee3bb4e5844b5f86e3130359114
 
 configMapGenerator:
   - name: session-blueprint
@@ -72,8 +79,13 @@ patches:
       - op: add
         path: /spec/volumeClaimTemplates/0/spec/storageClassName
         value: browserjs-zonal
+  # The stage of billing: off with neither line, meter (shadow) with the
+  # first, enforce with both. Switched by hack/billing-stage.sh
+  # (docs/billing-deployment.md).
+  # - path: patch-billing-meter.yaml
+  # - path: patch-billing-enforce.yaml
   # The stage of session policies: off with both lines, serving with the
   # second only, enforcing with neither. They are the last patches, and are
   # switched by hack/policy-stage.sh (docs/policy-deployment.md).
   # - path: patch-policy-off.yaml
-  - path: patch-policy-backend-off.yaml
+  # - path: patch-policy-backend-off.yaml

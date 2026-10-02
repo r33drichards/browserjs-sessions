@@ -49,6 +49,9 @@ type Proxy struct {
 	Authz    authz.Checker
 	Waker    *Waker
 	Idle     *idle.Tracker
+	// Billing, if set, is asked before a sleeping session is woken and
+	// refuses new requests to one that is draining (billing.go).
+	Billing Billing
 	// URLs is where sessions are: it tells a request for a session from one
 	// for the app, names the session, and makes the URLs given out.
 	URLs *sessions.URLTemplate
@@ -68,6 +71,7 @@ type Proxy struct {
 	setup   sync.Once
 	tickets *tickets
 	viewers viewers
+	flights flights // calls and streams in progress, by session (billing.go)
 	// Pod traffic has its own transports: no environment proxy, a bounded
 	// dial, and a bound on the wait for response headers that suits the route.
 	quick, patient http.RoundTripper
@@ -93,6 +97,9 @@ func (p *Proxy) init() {
 		}
 		if p.MaxFileBytes <= 0 {
 			p.MaxFileBytes = DefaultMaxFileBytes
+		}
+		if p.Billing != nil && p.Waker.Allow == nil {
+			p.Waker.Allow = p.Billing.Start
 		}
 		p.tickets = newTickets(time.Now)
 		p.quick = podTransport(uploadResponseTimeout)
@@ -258,6 +265,7 @@ func lookupFailed(w http.ResponseWriter, r *http.Request, id string, err error) 
 	switch {
 	case r.Context().Err() != nil:
 		// The caller hung up while the session was waking; nobody to answer.
+	case refused(w, r, err):
 	case errors.Is(err, sessions.ErrNotFound):
 		http.Error(w, "session not found", http.StatusNotFound)
 	case errors.Is(err, ErrStopped):
@@ -417,7 +425,8 @@ func (p *Proxy) mcp(w http.ResponseWriter, r *http.Request) {
 	// pod takes: a tool call may outlast the idle period.
 	done := p.Idle.Open(id)
 	defer done()
-	s, err := p.Waker.EnsureAwake(r.Context(), id)
+	defer p.flights.call(id)() // in flight: a drain waits for it
+	s, err := p.awake(r.Context(), id)
 	if err != nil {
 		lookupFailed(w, r, id, err)
 		return
@@ -433,7 +442,7 @@ func (p *Proxy) mcp(w http.ResponseWriter, r *http.Request) {
 // stream to offer, which MCP lets a server say with 405; the client's next
 // call wakes it.
 func (p *Proxy) mcpStream(w http.ResponseWriter, r *http.Request, id, path string) {
-	s, err := p.Waker.Running(r.Context(), id)
+	s, err := p.running(r.Context(), id)
 	if errors.Is(err, ErrNotRunning) {
 		w.Header().Set("Allow", "POST, DELETE")
 		http.Error(w, "session is not running; there is no event stream until a call wakes it", http.StatusMethodNotAllowed)
@@ -443,7 +452,10 @@ func (p *Proxy) mcpStream(w http.ResponseWriter, r *http.Request, id, path strin
 		lookupFailed(w, r, id, err)
 		return
 	}
-	p.forward(w, r, s, mcpPort, path, p.patient)
+	// Not work in progress: a drain ends it.
+	ctx, leave := p.flights.stream(r.Context(), id)
+	defer leave()
+	p.forward(w, r.WithContext(ctx), s, mcpPort, path, p.patient)
 }
 
 // The one-time upload tokens mcp-js issues.
@@ -466,11 +478,12 @@ func (p *Proxy) upload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "upload too large", http.StatusRequestEntityTooLarge)
 		return
 	}
-	s, err := p.Waker.Running(r.Context(), id)
+	s, err := p.running(r.Context(), id)
 	if err != nil {
 		lookupFailed(w, r, id, err)
 		return
 	}
+	defer p.flights.call(id)()
 	r.Body = http.MaxBytesReader(w, r.Body, p.MaxUploadBytes)
 	if status := p.forward(w, r, s, mcpPort, "/api/artifact-uploads/"+token, p.quick); status/100 == 2 {
 		p.Idle.Touch(id)
@@ -535,11 +548,13 @@ func (p *Proxy) vnc(w http.ResponseWriter, r *http.Request) {
 	// shuts down; Shutdown ends it through this context.
 	ctx, leave := p.viewers.join(r.Context())
 	defer leave()
+	ctx, left := p.flights.stream(ctx, id) // a drain ends it
+	defer left()
 	r = r.WithContext(ctx)
 
 	done := p.Idle.Open(id) // a viewer keeps the session awake
 	defer done()
-	s, err := p.Waker.EnsureAwake(ctx, id)
+	s, err := p.awake(ctx, id)
 	if err != nil {
 		lookupFailed(w, r, id, err)
 		return

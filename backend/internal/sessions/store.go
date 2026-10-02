@@ -293,7 +293,7 @@ func (s *Store) Suspend(ctx context.Context, id, by string) error {
 	case StoppedByUser:
 		return s.Update(ctx, id, nil, ActionStop)
 	case StoppedByIdle:
-		return s.Sleep(ctx, id, nil)
+		return s.Sleep(ctx, id, StoppedByIdle, nil)
 	default:
 		return fmt.Errorf("suspend: unknown reason %q", by)
 	}
@@ -304,16 +304,18 @@ func (s *Store) Resume(ctx context.Context, id string) error {
 	return s.Update(ctx, id, nil, ActionResume)
 }
 
-// Wake resumes a session that was put to sleep for being idle; its pod is
-// restored from the snapshot taken then, if there is one. It does
-// nothing to one that is already awake, and returns ErrStateChanged for one
-// its user stopped, including a stop that lands while Wake is in progress.
+// Wake resumes a session that was put to sleep for being idle (or by its
+// user, or for its owner's credit or payment method: whether the account now allows it is
+// asked before Wake, not here); its pod is restored from the snapshot taken
+// then, if there is one. It does nothing to one that is already awake, and
+// returns ErrStateChanged for one its user stopped, including a stop that
+// lands while Wake is in progress.
 func (s *Store) Wake(ctx context.Context, id string) error {
 	return s.modify(ctx, id, func(obj *unstructured.Unstructured) (bool, error) {
 		if operatingMode(obj) != "Suspended" {
 			return false, nil
 		}
-		if obj.GetAnnotations()[AnnStoppedBy] != StoppedByIdle {
+		if !wakes(obj.GetAnnotations()[AnnStoppedBy]) {
 			return false, ErrStateChanged
 		}
 		setAnnotation(obj, AnnStoppedBy, "")
@@ -393,4 +395,33 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 		s.deletePolicy(ctx, id)
 	}
 	return err
+}
+
+// SetDraining marks a running session as draining for reason (one of
+// billing's sleep reasons), or removes the mark when reason is "". A session
+// that is suspended has nothing to drain: ErrStateChanged.
+func (s *Store) SetDraining(ctx context.Context, id, reason string) error {
+	if reason != "" && (!sleepReason(reason) || reason == StoppedByIdle) {
+		return fmt.Errorf("draining: unknown reason %q", reason)
+	}
+	return s.modify(ctx, id, func(obj *unstructured.Unstructured) (bool, error) {
+		ann := obj.GetAnnotations()
+		if reason == "" {
+			if ann[AnnDraining] == "" && ann[AnnDrainingSince] == "" {
+				return false, nil
+			}
+			setAnnotation(obj, AnnDraining, "")
+			setAnnotation(obj, AnnDrainingSince, "")
+			return true, nil
+		}
+		if operatingMode(obj) == "Suspended" || obj.GetDeletionTimestamp() != nil {
+			return false, ErrStateChanged
+		}
+		if ann[AnnDraining] == reason {
+			return false, nil // the mark keeps its time
+		}
+		setAnnotation(obj, AnnDraining, reason)
+		setAnnotation(obj, AnnDrainingSince, time.Now().UTC().Format(time.RFC3339))
+		return true, nil
+	})
 }

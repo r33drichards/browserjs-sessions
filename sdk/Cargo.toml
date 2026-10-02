@@ -1,0 +1,25 @@
+[workspace]
+members = ["crates/computeruse", "crates/computeruse-macros", "crates/uniffi-bindgen"]
+resolver = "2"
+
+[workspace.package]
+# One version for the crate, the wheel, the npm package and the Go module tag.
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+rust-version = "1.91"
+authors = ["Robert Wendt"]
+homepage = "https://computeruse.site"
+# RENAME: the repository is about to become r33drichards/computer-use.
+repository = "https://github.com/r33drichards/browserjs-sessions"
+
+[workspace.dependencies]
+# Pinned: uniffi-bindgen-go and uniffi-bindgen-react-native each follow one
+# UniFFI release, and the generated bindings check the version at load.
+uniffi = { version = "=0.31.0", features = ["tokio"] }
+
+[profile.release]
+# Smaller libraries in the wheels, the npm package and the Go archives.
+opt-level = "s"
+lto = "thin"
+strip = "debuginfo"

@@ -11,7 +11,7 @@
           "-la"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work"
+        "cwd": "/data/chrome/home/work"
       }
     },
     "allow": true
@@ -28,7 +28,7 @@
           "test"
         ],
         "timeout": 1800,
-        "cwd": "/home/browser/work/app/packages/a"
+        "cwd": "/data/chrome/home/work/app/packages/a"
       }
     },
     "allow": true
@@ -45,7 +45,7 @@
           "all"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/my-app.v2"
+        "cwd": "/data/chrome/home/work/my-app.v2"
       }
     },
     "allow": true
@@ -62,7 +62,7 @@
           "ci"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app",
+        "cwd": "/data/chrome/home/work/app",
         "env": {
           "CI": "1",
           "NODE_ENV": "test"
@@ -80,7 +80,7 @@
       "arguments": {
         "bin": "ls",
         "timeout": 60,
-        "cwd": "/home/browser/work",
+        "cwd": "/data/chrome/home/work",
         "env": {}
       }
     },
@@ -99,7 +99,7 @@
           "npm ci && npm test"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": true
@@ -167,7 +167,7 @@
       "arguments": {
         "bin": "ls",
         "timeout": 60,
-        "cwd": "/home/browser"
+        "cwd": "/data/chrome/home"
       }
     },
     "allow": false
@@ -195,7 +195,7 @@
       "arguments": {
         "bin": "ls",
         "timeout": 60,
-        "cwd": "/home/browser/work-other"
+        "cwd": "/data/chrome/home/work-other"
       }
     },
     "allow": false
@@ -209,7 +209,7 @@
       "arguments": {
         "bin": "ls",
         "timeout": 60,
-        "cwd": "/home/browser/work/../.ssh"
+        "cwd": "/data/chrome/home/work/../.ssh"
       }
     },
     "allow": false
@@ -223,7 +223,7 @@
       "arguments": {
         "bin": "ls",
         "timeout": 60,
-        "cwd": "/home/browser/work/a/../../.ssh"
+        "cwd": "/data/chrome/home/work/a/../../.ssh"
       }
     },
     "allow": false
@@ -237,7 +237,7 @@
       "arguments": {
         "bin": "ls",
         "timeout": 60,
-        "cwd": "/home/browser/work/.."
+        "cwd": "/data/chrome/home/work/.."
       }
     },
     "allow": false
@@ -251,7 +251,7 @@
       "arguments": {
         "bin": "ls",
         "timeout": 60,
-        "cwd": "/home/browser/work/./app"
+        "cwd": "/data/chrome/home/work/./app"
       }
     },
     "allow": false
@@ -265,7 +265,7 @@
       "arguments": {
         "bin": "ls",
         "timeout": 60,
-        "cwd": "/home/browser/work//app"
+        "cwd": "/data/chrome/home/work//app"
       }
     },
     "allow": false
@@ -279,7 +279,7 @@
       "arguments": {
         "bin": "ls",
         "timeout": 60,
-        "cwd": "/home/browser/work/"
+        "cwd": "/data/chrome/home/work/"
       }
     },
     "allow": false
@@ -322,7 +322,7 @@
         "bin": "ls",
         "timeout": 60,
         "cwd": [
-          "/home/browser/work"
+          "/data/chrome/home/work"
         ]
       }
     },
@@ -351,7 +351,7 @@
       "arguments": {
         "bin": "ls",
         "timeout": 60,
-        "cwd": "/home/browser/Work"
+        "cwd": "/data/chrome/home/Work"
       }
     },
     "allow": false
@@ -365,7 +365,7 @@
       "arguments": {
         "bin": "ls",
         "timeout": 60,
-        "cwd": "/home/browser/work",
+        "cwd": "/data/chrome/home/work",
         "env": {
           "PATH": "/tmp/evil"
         }
@@ -382,7 +382,7 @@
       "arguments": {
         "bin": "ls",
         "timeout": 60,
-        "cwd": "/home/browser/work",
+        "cwd": "/data/chrome/home/work",
         "env": {
           "LD_PRELOAD": "/tmp/x.so"
         }
@@ -399,7 +399,7 @@
       "arguments": {
         "bin": "ls",
         "timeout": 60,
-        "cwd": "/home/browser/work",
+        "cwd": "/data/chrome/home/work",
         "env": {
           "CI": "1",
           "GIT_SSH_COMMAND": "sh -c id"
@@ -417,7 +417,7 @@
       "arguments": {
         "bin": "ls",
         "timeout": 60,
-        "cwd": "/home/browser/work",
+        "cwd": "/data/chrome/home/work",
         "env": [
           "CI=1"
         ]
@@ -434,7 +434,7 @@
       "arguments": {
         "bin": "ls",
         "timeout": 1801,
-        "cwd": "/home/browser/work"
+        "cwd": "/data/chrome/home/work"
       }
     },
     "allow": false
@@ -504,7 +504,7 @@
             "-la"
           ],
           "timeout": 60,
-          "cwd": "/home/browser/work"
+          "cwd": "/data/chrome/home/work"
         }
       ]
     },
@@ -521,7 +521,7 @@
           "-la"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work"
+        "cwd": "/data/chrome/home/work"
       }
     },
     "allow": false
@@ -540,7 +540,7 @@
           "-la"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work"
+        "cwd": "/data/chrome/home/work"
       }
     },
     "allow": false
@@ -559,7 +559,7 @@
           "-la"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work"
+        "cwd": "/data/chrome/home/work"
       }
     },
     "allow": false
@@ -574,7 +574,7 @@
         "bin": "ls",
         "args": "-la",
         "timeout": 60,
-        "cwd": "/home/browser/work"
+        "cwd": "/data/chrome/home/work"
       }
     },
     "allow": false
@@ -594,7 +594,7 @@
           }
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work"
+        "cwd": "/data/chrome/home/work"
       }
     },
     "allow": false
@@ -613,7 +613,7 @@
           ]
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work"
+        "cwd": "/data/chrome/home/work"
       }
     },
     "allow": false
@@ -643,7 +643,7 @@
           "-la"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work",
+        "cwd": "/data/chrome/home/work",
         "cmd": "id"
       }
     },
@@ -661,7 +661,7 @@
           "-la"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work",
+        "cwd": "/data/chrome/home/work",
         "shell": true
       }
     },
@@ -678,7 +678,7 @@
         "args": [
           "-la"
         ],
-        "cwd": "/home/browser/work"
+        "cwd": "/data/chrome/home/work"
       }
     },
     "allow": false
@@ -695,7 +695,7 @@
           "-la"
         ],
         "timeout": "60",
-        "cwd": "/home/browser/work"
+        "cwd": "/data/chrome/home/work"
       }
     },
     "allow": false
@@ -712,7 +712,7 @@
           "-la"
         ],
         "timeout": 0,
-        "cwd": "/home/browser/work"
+        "cwd": "/data/chrome/home/work"
       }
     },
     "allow": false
@@ -729,7 +729,7 @@
           "-la"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work"
+        "cwd": "/data/chrome/home/work"
       }
     },
     "allow": false
@@ -746,7 +746,7 @@
           "-la"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work"
+        "cwd": "/data/chrome/home/work"
       }
     },
     "allow": false
@@ -763,7 +763,7 @@
           "/data/chrome/Default/Preferences"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work"
+        "cwd": "/data/chrome/home/work"
       }
     },
     "allow": true

@@ -13,6 +13,20 @@ Facts about Metronome below were read from its documentation on
 2026-10-02; the ones marked **UNVERIFIED** are settled by the sandbox
 checks at the end, before code depends on them.
 
+## Per mode
+
+Everything the Account records from Metronome is under
+`spec.metronome.<environment>`: `sandbox` or `production`, each with its own
+`customerId` (immutable once set) and `credit`. The backend reads and
+writes only one of them: `sandbox` while `STRIPE_MODE` is `test` or unset,
+`production` while it is `live` (the token it is given is that
+environment's). Where this file says `spec.metronomeCustomerId` and
+`spec.credit` it means `customerId` and `credit` of that environment. The
+label that finds an Account from an alert is
+`browserjs.dev/metronome-customer-sandbox` or `-production`. Switching
+environment clears nothing and deletes no Account: the other environment's
+customer and credit stay where they are.
+
 ## Division of labour
 
 | | Makes it | With |
@@ -49,14 +63,14 @@ product or the rate card would stop rating for every customer.
 
 | Object | Name | Definition |
 |---|---|---|
-| Billable metric | `cu_awake_seconds_v1` | `aggregation_type: sum`, `aggregation_key: seconds`, `event_type_filter: session.awake`, `group_keys: [["session_id"]]` |
+| Billable metric | `cu_awake_seconds_v1` | `aggregation_type: sum`, `aggregation_key: seconds`, `event_type_filter: session.awake`, `property_filters: [{name: seconds, exists: true}]` (the aggregated property must be named by a filter), `group_keys: [["session_id"]]` |
 | Billable metric | `cu_disk_gb_seconds_v1` | sum of `gb_seconds`, event type `session.kept`, `group_keys: [["session_id"]]` |
 | Product (usage) | `Awake time` | on `cu_awake_seconds_v1`; `quantity_conversion`: divide by 3600 (hours) |
 | Product (usage) | `Disk` | on `cu_disk_gb_seconds_v1`; `quantity_conversion`: divide by 2628000 (GB-months of 730 hours) |
 | Product (fixed) | `Credit` | what every credit is attached to |
 | Rate card | alias `cu-standard-v1` | below |
 | Alert | `cu-zero-balance`, `uniqueness_key: cu-zero-balance` | `alert_type: low_remaining_contract_credit_and_commit_balance_reached`, `threshold: 0`, no `customer_id` (every customer), `evaluate_on_create: false` |
-| Custom field keys | `grant_key`, `source`, `payment_intent` on credits | |
+| Custom field keys | `grant_key`, `source`, `payment_intent` on credits | entity `contract_credit`, `enforce_uniqueness: false` (that this is the entity of a customer-level credit is **UNVERIFIED**) |
 
 Rates on `cu-standard-v1`, both `rate_type: FLAT`, in US cents, from
 `catalogue.yaml` (`rates`):
@@ -88,8 +102,9 @@ Account without `spec.metronomeCustomerId`:
    cu-standard-v1`, `starting_at` = now truncated to the hour,
    `usage_statement_schedule: {frequency: MONTHLY}`, `uniqueness_key:
    contract/<Account name>`. A 409 is success.
-3. Write `spec.metronomeCustomerId` and the label
-   `browserjs.dev/metronome-customer` on the Account.
+3. Write the environment's `customerId` (`spec.metronome.sandbox.customerId`
+   or `spec.metronome.production.customerId`) and the label
+   `browserjs.dev/metronome-customer-<environment>` on the Account.
 
 No session can exist before its owner's Account, so no usage event names a
 customer Metronome does not know.
@@ -131,6 +146,14 @@ Sent by the observer to `POST /v1/ingest`, at most 100 events a request.
   sent at the window's end with the window's start in the key and its end
   as the timestamp. A window with zero seconds sends nothing. A session
   that stops being awake is sent at once, without waiting for the window.
+  If it is awake again inside the same window, what it then counts is a
+  second **part** of that window with a key of its own:
+  `awake/<session id>/<window start>/<the part's first tick, unix
+  seconds>`, sent like a window (at the window's end, or at once if it
+  falls asleep again). So stopping and resuming inside a window neither
+  makes the rest of the window free (the first key is taken) nor counts
+  anything twice. The same holds for `session.kept` when a session's name
+  is used again inside a window.
 - `session.kept`: the GB-seconds of each session added up over a 6-hour
   window (`KEPT_WINDOW`, aligned to the clock in UTC: 00:00, 06:00, ...),
   sent at the window's end with the window's start in the key. A session
@@ -200,13 +223,15 @@ micro-dollars: `micros = floor(cents x 10000)`.
 Added to `Account.spec`, written by the backend only:
 
 ```yaml
-metronomeCustomerId: <uuid>
-credit:
-  exhausted: true            # no credit left; true from creation until the first grant
-  exhaustedAt: <time>        # when it became true; absent while false
-  balanceMicros: 0           # as of checkedAt; for display when Metronome cannot be reached
-  nextExpiryAt: <time>       # the earliest end of a credit with a balance; absent with none
-  checkedAt: <time>
+metronome:
+  sandbox:                     # or production: the environment in use
+    customerId: <uuid>
+    credit:
+      exhausted: true            # no credit left; true from creation until the first grant
+      exhaustedAt: <time>        # when it became true; absent while false
+      balanceMicros: 0           # as of checkedAt; for display when Metronome cannot be reached
+      nextExpiryAt: <time>       # the earliest end of a credit with a balance; absent with none
+      checkedAt: <time>
 ```
 
 `ensureCredit(account)` is the only writer of `spec.credit`:

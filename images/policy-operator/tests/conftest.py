@@ -1,3 +1,11 @@
+import os
+
+# kopf decides when it is imported whether it can log in with a kubeconfig:
+# only if KUBECONFIG is set or ~/.kube/config exists. On a machine with
+# neither (CI) the tests that run the operator under kopf would have no
+# login handler. The fixtures point KUBECONFIG at their own file later.
+os.environ.setdefault("KUBECONFIG", "/nonexistent/kubeconfig-set-by-the-test")
+
 import json
 import shutil
 from pathlib import Path
@@ -7,7 +15,7 @@ import pytest
 from policy_operator.config import Config
 
 CONTRACTS = Path(__file__).resolve().parents[3] / "docs" / "contracts" / "policy"
-EXAMPLES = sorted(p.name[: -len(".policy.json")] for p in (CONTRACTS / "examples").glob("*.policy.json"))
+EXAMPLES = sorted(p.name[: -len(".rego")] for p in (CONTRACTS / "examples").glob("*.rego"))
 
 
 def example(name: str, suffix: str) -> str:

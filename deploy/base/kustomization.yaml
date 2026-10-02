@@ -15,6 +15,10 @@ resources:
   - policy-operator.yaml
   # ConfigMap opa-config, from the contract files where they are.
   - ../../docs/contracts/policy
+  # Metering and billing (docs/billing-deployment.md). Installed and off:
+  # nothing reads the Account resource until an overlay sets BILLING.
+  - crd-account.yaml
+  - billing-operator.yaml
 
 configMapGenerator:
   - name: session-blueprint
@@ -26,3 +30,12 @@ configMapGenerator:
   - name: dex-config
     files:
       - config.yaml=dex-config.yaml
+  # What is sold and what it costs to use (docs/contracts/billing): a copy
+  # of the contract's file, read by the backend and the billing operator and
+  # re-read when it changes. No hash in the name, so that a changed number
+  # is a changed ConfigMap and not a new one: no pod restarts.
+  - name: billing-catalogue
+    files:
+      - catalogue.yaml
+    options:
+      disableNameSuffixHash: true

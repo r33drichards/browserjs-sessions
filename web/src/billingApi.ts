@@ -181,6 +181,8 @@ export function createBillingApi(fetchImpl: Fetch = (input, init) => fetch(input
       return call<CheckoutState>("GET", `/api/billing/checkout/${encodeURIComponent(id)}`)
     },
     portal: () => call<{ url: string }>("POST", "/api/billing/portal"),
+    // For a subscriber: a dearer plan now, a cheaper one at the period's end.
+    changePlan: (item: string) => call<PlanChange>("POST", "/api/billing/subscription", { item }),
     setAutoRecharge: (input: AutoRechargeInput) => call<AutoRecharge>("PUT", "/api/billing/auto-recharge", input),
     acceptTerms: (version: string) => call<void>("POST", "/api/billing/terms", { version }),
     deleteAccount: (confirm: string) => call<void>("DELETE", "/api/account", { confirm }),
@@ -360,6 +362,21 @@ export const WAKE_BLOCK_LABEL: Record<WakeBlock, string> = {
 // ---- Banners -------------------------------------------------------------
 
 export type BillingAction = "add-credit" | "plans" | "add-card" | "portal" | "create"
+
+// What POST /api/billing/subscription did.
+export interface PlanChange {
+  change: "upgraded" | "scheduled" | "kept" | "none"
+  item: string
+  effectiveAt?: string
+}
+
+// What to tell the user about a plan change.
+export function planChangeMessage(c: PlanChange, name: string): string {
+  if (c.change === "upgraded") return `You are on ${name} now. Its credit for the new period has been added.`
+  if (c.change === "scheduled")
+    return `Your plan changes to ${name}${c.effectiveAt ? ` on ${dayMonth(c.effectiveAt)}` : " at the end of this period"}. Until then it is as it is.`
+  return `Your plan stays ${name}.`
+}
 
 export interface Banner {
   id: string

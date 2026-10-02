@@ -2,6 +2,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -18,8 +19,19 @@ import (
 	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
 )
 
+// Store is what the API needs of the session store (a *sessions.Store).
+type Store interface {
+	CreateWithPolicy(ctx context.Context, name, owner string, policy *sessions.PolicySpec) (sessions.Session, error)
+	Get(ctx context.Context, id string) (sessions.Session, error)
+	List(ctx context.Context, owner string) ([]sessions.Session, error)
+	ListAll(ctx context.Context) ([]sessions.Session, error)
+	Update(ctx context.Context, id string, name *string, action string) error
+	Sleep(ctx context.Context, id, stoppedBy string, stillWanted func() bool) error
+	Delete(ctx context.Context, id string) error
+}
+
 type API struct {
-	store *sessions.Store
+	store Store
 	authz authz.Checker
 	urls  *sessions.URLTemplate
 	cap   int
@@ -31,9 +43,11 @@ type API struct {
 	petName func() string // names a session created without a name
 
 	policies *policy.Handlers // nil: no session policies (see policy.go)
+
+	billing Billing // nil: no billing (see billing.go)
 }
 
-func New(store *sessions.Store, az authz.Checker, urls *sessions.URLTemplate, maxPerUser int) *API {
+func New(store Store, az authz.Checker, urls *sessions.URLTemplate, maxPerUser int) *API {
 	return &API{store: store, authz: az, urls: urls, cap: maxPerUser, petName: petName}
 }
 
@@ -103,6 +117,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/sessions/{id}", a.session(a.get))
 	mux.HandleFunc("PATCH /api/sessions/{id}", a.session(a.patch))
 	mux.HandleFunc("DELETE /api/sessions/{id}", a.session(a.delete))
+	mux.HandleFunc("POST /api/sessions/{id}/sleep", a.session(a.sleep))
+	mux.HandleFunc("POST /api/sessions/{id}/wake", a.session(a.wake))
 	a.registerPolicies(mux)
 }
 
@@ -176,13 +192,15 @@ type view struct {
 	MCPURL string `json:"mcp_url"` // what an MCP client is pointed at
 	// Policy is absent when policies are off.
 	Policy *policy.Summary `json:"policy,omitempty"`
+	// Absent when billing is off (billing.go).
+	billed
 }
 
-func (a *API) view(s sessions.Session, p *policy.Summary) view {
+func (a *API) view(ctx context.Context, s sessions.Session, p *policy.Summary) view {
 	if p != nil {
 		s = p.Gate(s)
 	}
-	return view{Session: s, MCPURL: a.urls.MCP(s.ID), Policy: p}
+	return view{Session: s, MCPURL: a.urls.MCP(s.ID), Policy: p, billed: a.billed(ctx, s)}
 }
 
 func (a *API) me(w http.ResponseWriter, _ *http.Request, u auth.User) {
@@ -206,7 +224,7 @@ func (a *API) list(w http.ResponseWriter, r *http.Request, u auth.User) {
 	policies := a.summaries(r.Context(), list, owner)
 	views := make([]view, 0, len(list))
 	for _, s := range list {
-		views = append(views, a.view(s, policies[s.ID]))
+		views = append(views, a.view(r.Context(), s, policies[s.ID]))
 	}
 	writeJSON(w, http.StatusOK, views)
 }
@@ -235,7 +253,13 @@ func (a *API) create(w http.ResponseWriter, r *http.Request, u auth.User) {
 		a.storeError(w, err)
 		return
 	}
-	if len(mine) >= a.cap {
+	// Before anything is made, and so before any warm-pool claim.
+	if err := a.mayCreate(r.Context(), u.Subject, mine); err != nil {
+		a.refused(w, err)
+		return
+	}
+	// With billing enforced the plan's limit has been applied instead.
+	if !a.enforcing() && len(mine) >= a.cap {
 		writeError(w, http.StatusConflict, "session limit reached; delete one first")
 		return
 	}
@@ -251,7 +275,7 @@ func (a *API) create(w http.ResponseWriter, r *http.Request, u auth.User) {
 		return
 	}
 	a.created(s)
-	writeJSON(w, http.StatusCreated, a.view(s, a.summary(r.Context(), s)))
+	writeJSON(w, http.StatusCreated, a.view(r.Context(), s, a.summary(r.Context(), s)))
 }
 
 func (a *API) get(w http.ResponseWriter, r *http.Request, id string) {
@@ -260,7 +284,7 @@ func (a *API) get(w http.ResponseWriter, r *http.Request, id string) {
 		a.storeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, a.view(s, a.summary(r.Context(), s)))
+	writeJSON(w, http.StatusOK, a.view(r.Context(), s, a.summary(r.Context(), s)))
 }
 
 func (a *API) patch(w http.ResponseWriter, r *http.Request, id string) {
@@ -272,9 +296,77 @@ func (a *API) patch(w http.ResponseWriter, r *http.Request, id string) {
 		writeError(w, http.StatusBadRequest, "body must be JSON")
 		return
 	}
+	if err := a.mayResume(r.Context(), id, body.Action); err != nil {
+		a.refused(w, err)
+		return
+	}
 	// One write, validated as a whole: a bad action must not leave a rename
 	// behind.
 	if err := a.store.Update(r.Context(), id, body.Name, body.Action); err != nil {
+		a.storeError(w, err)
+		return
+	}
+	a.get(w, r, id)
+}
+
+// sleep puts a running session to sleep on its user's request: what the
+// idle sweep does, without waiting for it. The session's pod is snapshotted
+// and removed, and it wakes as it was on the next request to it (an MCP call
+// included) or on wake. The answer is the session, already suspended:
+// stateSaved says whether the snapshot was taken; without one it starts
+// fresh. A session that is asleep already is left as it is.
+func (a *API) sleep(w http.ResponseWriter, r *http.Request, id string) {
+	// The snapshot takes seconds, and a caller that goes away meanwhile has
+	// still asked for the sleep.
+	ctx := context.WithoutCancel(r.Context())
+	// Twice: the session may be put to sleep or stopped by something else
+	// between the look and the sleep, and is then judged as it now is.
+	for range 2 {
+		s, err := a.store.Get(ctx, id)
+		if err != nil {
+			a.storeError(w, err)
+			return
+		}
+		switch {
+		case s.State == sessions.Asleep, s.State == sessions.Stopping && s.GoingToSleep():
+			a.get(w, r, id)
+			return
+		case s.State != sessions.Running:
+			writeError(w, http.StatusConflict, notSleepable[s.State])
+			return
+		}
+		err = a.store.Sleep(ctx, id, sessions.StoppedBySleep, nil)
+		if errors.Is(err, sessions.ErrStateChanged) {
+			continue
+		}
+		if err != nil {
+			a.storeError(w, err)
+			return
+		}
+		a.get(w, r, id)
+		return
+	}
+	writeError(w, http.StatusConflict, "session changed state while it was put to sleep; try again")
+}
+
+// notSleepable is why a session in a state other than running cannot be put
+// to sleep: only a running pod has state to save.
+var notSleepable = map[sessions.State]string{
+	sessions.Starting: "session is still starting; put it to sleep once it is running",
+	sessions.Stopping: "session is stopping",
+	sessions.Stopped:  "session is stopped, with no running state to save; wake it to start it fresh",
+	sessions.Failed:   "session failed to start; there is no running state to save",
+}
+
+// wake starts a session that is asleep or stopped: PATCH's "resume", as a
+// route. One that is asleep is restored from its snapshot if it has one; a
+// stopped one starts fresh. The answer does not wait for it to run.
+func (a *API) wake(w http.ResponseWriter, r *http.Request, id string) {
+	if err := a.mayResume(r.Context(), id, sessions.ActionResume); err != nil {
+		a.refused(w, err)
+		return
+	}
+	if err := a.store.Update(r.Context(), id, nil, sessions.ActionResume); err != nil {
 		a.storeError(w, err)
 		return
 	}

@@ -95,10 +95,18 @@ nothing.
 
 The key depends only on the session and the window, so the same window
 sent twice (by this process, or by one that replaced it after a restart)
-has the same key, and Metronome ignores the repeat. That also means a
-session that falls asleep, is sent, and wakes again inside the same five
-minutes is not charged for the rest of that window: the second event has
-the first one's key.
+has the same key, and Metronome ignores the repeat.
+
+**Parts.** A session that falls asleep is sent at once, which uses the
+window's key. If it is awake again inside the same window, what it counts
+from then on is a second part with a key of its own,
+`awake/<session>/<window start>/<the part's first tick>`, sent at the
+window's end or when it falls asleep again. Stopping and resuming inside a
+window is therefore neither free (Metronome would ignore a second event
+under the first key) nor counted twice. That a part of the window was sent
+early is remembered in memory only: after a restart in that same window
+the rest goes under the plain key and is ignored, a loss in the user's
+favour that a user cannot bring about.
 
 ### Delivery
 

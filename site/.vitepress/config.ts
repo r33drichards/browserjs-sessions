@@ -10,7 +10,7 @@ const tutorials = [
 ]
 
 const guides = [
-  { text: "Sleep, wake, stop and resume", link: "/guides/sleep-wake-resume" },
+  { text: "Sleep, wake, stop and start", link: "/guides/sleep-wake-resume" },
   { text: "Watch and take over", link: "/guides/take-over" },
   { text: "Move files and the clipboard", link: "/guides/files-and-clipboard" },
   { text: "Write a policy", link: "/guides/write-a-policy" },
@@ -24,6 +24,7 @@ const reference = [
   { text: "Policy format", link: "/reference/policy" },
   { text: "Limits", link: "/reference/limits" },
   { text: "HTTP API", link: "/reference/api" },
+  { text: "SDK: Rust, Python, JavaScript, Go", link: "/reference/sdk" },
   { text: "Live, coming and planned", link: "/reference/status" },
 ]
 

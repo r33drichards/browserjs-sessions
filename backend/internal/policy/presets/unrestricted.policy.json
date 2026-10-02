@@ -1,5 +1,0 @@
-{
-  "version": 1,
-  "description": "No restrictions: every browser operation, with any parameters.",
-  "allow": { "operations": ["*"] }
-}

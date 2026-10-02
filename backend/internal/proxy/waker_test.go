@@ -436,7 +436,7 @@ func TestEnsureAwakeStartsColdWhenTheRestoreDoesNotWork(t *testing.T) {
 			w := &Waker{Store: store, Timeout: 5 * time.Second, Poll: 5 * time.Millisecond, RestoreTimeout: 50 * time.Millisecond}
 			s, _ := store.Create(ctx, "a", "user-1")
 			sessionstest.SetStatus(t, client, s.ID, sessionstest.Ready("10.0.0.7"))
-			if err := store.Sleep(ctx, s.ID, nil); err != nil {
+			if err := store.Sleep(ctx, s.ID, sessions.StoppedByIdle, nil); err != nil {
 				t.Fatal(err)
 			}
 			sessionstest.SetStatus(t, client, s.ID, sessionstest.Suspended())
@@ -460,7 +460,7 @@ func TestEnsureAwakeKeepsASnapshotThatRestores(t *testing.T) {
 	w := &Waker{Store: store, Timeout: 5 * time.Second, Poll: 5 * time.Millisecond, RestoreTimeout: time.Second}
 	s, _ := store.Create(ctx, "a", "user-1")
 	sessionstest.SetStatus(t, client, s.ID, sessionstest.Ready("10.0.0.7"))
-	if err := store.Sleep(ctx, s.ID, nil); err != nil {
+	if err := store.Sleep(ctx, s.ID, sessions.StoppedByIdle, nil); err != nil {
 		t.Fatal(err)
 	}
 	sessionstest.SetStatus(t, client, s.ID, sessionstest.Suspended())
@@ -474,5 +474,28 @@ func TestEnsureAwakeKeepsASnapshotThatRestores(t *testing.T) {
 	}
 	if left := sessionstest.Snapshots(t, client); len(left) != 1 {
 		t.Errorf("snapshots = %v, want the one it woke from", left)
+	}
+}
+
+// A session its user put to sleep is woken by the next request, as one that
+// went to sleep for being idle is: only a stop keeps a session down.
+func TestEnsureAwakeWakesASessionItsUserPutToSleep(t *testing.T) {
+	ctx := t.Context()
+	store, client := sessionstest.New(t)
+	w := &Waker{Store: store, Timeout: 2 * time.Second, Poll: 10 * time.Millisecond}
+	s, _ := store.Create(ctx, "a", "user-1")
+	sessionstest.SetStatus(t, client, s.ID, sessionstest.Ready("10.0.0.7"))
+	if err := store.Sleep(ctx, s.ID, sessions.StoppedBySleep, nil); err != nil {
+		t.Fatal(err)
+	}
+	sessionstest.SetStatus(t, client, s.ID, sessionstest.Suspended())
+
+	controller := readyOnceResumed(ctx, store, client, s.ID, "10.0.0.8")
+	got, err := w.EnsureAwake(ctx, s.ID)
+	if err != nil || got.PodIP != "10.0.0.8" {
+		t.Fatalf("asleep by its user: %+v, %v", got, err)
+	}
+	if err := <-controller; err != nil {
+		t.Fatal(err)
 	}
 }

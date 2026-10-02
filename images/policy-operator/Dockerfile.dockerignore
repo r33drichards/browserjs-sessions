@@ -5,6 +5,5 @@
 !images/policy-operator/policy_operator
 !docs/contracts/policy/capabilities.json
 !docs/contracts/policy/decision-module.rego.tmpl
-!docs/contracts/policy/json-policy.schema.json
 **/__pycache__
 **/*.pyc

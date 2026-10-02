@@ -58,8 +58,8 @@ type snapshotter struct {
 	timeout, poll       time.Duration
 }
 
-// EnableSnapshots makes the store snapshot a session before an idle sleep
-// and wake it from that snapshot. Without it (a cluster with no Pod
+// EnableSnapshots makes the store snapshot a session before a sleep (for
+// being idle, or asked for) and wake it from that snapshot. Without it (a cluster with no Pod
 // Snapshots, such as kind) a session sleeps and wakes cold, and the store
 // asks the cluster for nothing but Sandboxes.
 func (s *Store) EnableSnapshots(client dynamic.Interface, namespace string, o SnapshotOptions) {
@@ -292,14 +292,20 @@ func (s *Store) keepOrDropSnapshot(ctx context.Context, obj *unstructured.Unstru
 	return setSnapshot(obj, nil)
 }
 
-// Sleep puts an idle session to sleep: with snapshots enabled it snapshots
-// the pod first, so that the session wakes as it was. A snapshot that fails
-// or runs out of time does not stop the sleep; the session then wakes cold.
+// Sleep puts a session to sleep, recording why (by: StoppedByIdle,
+// StoppedBySleep for its user asking, or one of billing's reasons): with snapshots enabled it snapshots the pod first, so
+// that the session wakes as it was. A snapshot that fails or runs out of
+// time does not stop the sleep; the session then wakes cold. A session put
+// to sleep for billing before it ever ran has no pod worth a snapshot.
 //
-// stillIdle, if not nil, is asked once the snapshot is done: a session used
-// in the meantime is left running (ErrStateChanged). Like an idle Suspend,
-// Sleep never takes over a session that is already suspended.
-func (s *Store) Sleep(ctx context.Context, id string, stillIdle func() bool) error {
+// stillWanted, if not nil, is asked once the snapshot is done: a session
+// used in the meantime (or whose owner's credit came back) is left running
+// (ErrStateChanged). Like an idle Suspend, Sleep never takes over a session
+// that is already suspended. The draining mark, if any, goes with the sleep.
+func (s *Store) Sleep(ctx context.Context, id, by string, stillWanted func() bool) error {
+	if !sleepReason(by) {
+		return fmt.Errorf("sleep: unknown reason %q", by)
+	}
 	var snap *snapshot
 	if s.snap != nil {
 		obj, err := s.client.Get(ctx, id, metav1.GetOptions{})
@@ -312,10 +318,12 @@ func (s *Store) Sleep(ctx context.Context, id string, stillIdle func() bool) err
 		if operatingMode(obj) == "Suspended" || obj.GetDeletionTimestamp() != nil {
 			return ErrStateChanged
 		}
-		if snap, err = s.snap.take(ctx, obj); err != nil {
+		if by != StoppedByIdle && FromSandbox(obj).State != Running {
+			// Still starting: nothing to snapshot.
+		} else if snap, err = s.snap.take(ctx, obj); err != nil {
 			slog.Warn("snapshot failed; the session will wake cold", "session", id, "err", err)
 		}
-		if stillIdle != nil && !stillIdle() {
+		if stillWanted != nil && !stillWanted() {
 			if snap != nil {
 				s.snap.discard(ctx, snap.name)
 			}
@@ -326,7 +334,9 @@ func (s *Store) Sleep(ctx context.Context, id string, stillIdle func() bool) err
 		if operatingMode(obj) == "Suspended" || obj.GetDeletionTimestamp() != nil {
 			return false, ErrStateChanged
 		}
-		setAnnotation(obj, AnnStoppedBy, StoppedByIdle)
+		setAnnotation(obj, AnnStoppedBy, by)
+		setAnnotation(obj, AnnDraining, "")
+		setAnnotation(obj, AnnDrainingSince, "")
 		if s.snap != nil {
 			if err := setSnapshot(obj, snap); err != nil {
 				return false, err
@@ -388,7 +398,7 @@ func (s *Store) ColdStart(ctx context.Context, id string) (bool, error) {
 	// The pod template only applies to a new pod: suspend to remove the one
 	// that is stuck, then run again.
 	err = s.modify(ctx, id, func(obj *unstructured.Unstructured) (bool, error) {
-		if operatingMode(obj) == "Suspended" && obj.GetAnnotations()[AnnStoppedBy] != StoppedByIdle {
+		if operatingMode(obj) == "Suspended" && !wakes(obj.GetAnnotations()[AnnStoppedBy]) {
 			return false, ErrStateChanged
 		}
 		setAnnotation(obj, AnnStoppedBy, StoppedByIdle)

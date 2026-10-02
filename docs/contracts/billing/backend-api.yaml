@@ -21,12 +21,15 @@ info:
 
     Changes to existing responses, only while BILLING is not off:
     - a session (`GET /api/sessions`, `GET /api/sessions/{id}`) gains
-      `stoppedBy` (`user`, `idle`, `credit`, `payment-method`, `blocked`)
-      when it is asleep or stopped, `draining` (the same reasons) while it
-      is finishing calls before such a sleep, and `deleteAfter` (date-time)
-      when it is due for deletion;
-    - `POST /api/sessions`, `PATCH /api/sessions/{id}` and proxied requests
-      can answer with the `Error` below (enforcement.md).
+      `stoppedBy` (`user` for a stop, `sleep` for a sleep its user asked
+      for, `idle`, `credit`, `payment-method`, `blocked`) when it is asleep
+      or stopped, `draining` (billing's reasons) while it is finishing
+      calls before such a sleep, and `deleteAfter` (date-time) when it is
+      due for deletion;
+    - `POST /api/sessions`, `PATCH /api/sessions/{id}`,
+      `POST /api/sessions/{id}/wake` and proxied requests can answer with
+      the `Error` below (enforcement.md). `POST /api/sessions/{id}/sleep`
+      is never refused for billing.
 paths:
   /api/billing:
     get:
@@ -103,7 +106,7 @@ paths:
         "403":
           description: ui_only, account_blocked.
         "409":
-          description: already_subscribed (a plan was asked for and the account has a subscription; change it in the portal).
+          description: already_subscribed (a plan was asked for and the account has a subscription; change it with POST /api/billing/subscription).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -162,6 +165,58 @@ paths:
           description: no_customer (the account has never bought anything).
         "502":
           description: stripe_unavailable.
+  /api/billing/subscription:
+    post:
+      summary: Change the caller's subscription to another plan, without the portal.
+      description: |
+        Cookie only, for an account with a subscription that is active. A
+        dearer plan is now: a new period starts, charged at once less the
+        unused time of the old one, the new plan's credit is granted in
+        full and what was left of the old period's is dropped. A cheaper
+        plan waits for the end of the period that is paid for. The plan
+        the subscription is on drops a change that was waiting. Asked
+        twice, it is done once. Cancelling stays in the portal. (Changing
+        plan in Stripe's portal is off: docs/billing-iac.md.)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [item]
+              properties:
+                item: { type: string, description: A plan's lookupKey. }
+      responses:
+        "200":
+          description: What was done.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [change, item]
+                properties:
+                  change:
+                    description: |
+                      `upgraded`: now. `scheduled`: at the period's end.
+                      `kept`: already on this plan; a scheduled change, if
+                      any, was dropped.
+                    type: string
+                    enum: [upgraded, scheduled, kept]
+                  item: { type: string }
+                  effectiveAt: { type: string, format: date-time }
+        "400":
+          description: unknown_item (not a plan on sale).
+        "402":
+          description: payment_failed (the card refused the upgrade, or the subscription's last payment failed). The plan is as it was.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: ui_only, account_blocked.
+        "409":
+          description: not_subscribed (use checkout), subscription_ending (it was cancelled and runs out).
+        "502":
+          description: stripe_unavailable. Nothing was changed.
   /api/billing/auto-recharge:
     put:
       summary: Turn automatic top-up on or off, and set its pack, threshold and monthly cap.
@@ -291,7 +346,8 @@ components:
                  at_capacity, rate_limited, metering_unavailable, account_blocked,
                  terms_required, signups_paused, already_subscribed, no_customer,
                  unknown_item, ui_only, stripe_unavailable, payments_off,
-                 too_many_cards, auto_recharge_off]
+                 too_many_cards, auto_recharge_off, not_subscribed, payment_failed,
+                 subscription_ending, invalid_request]
         billingUrl: { type: string, format: uri }
         limit: { type: integer, description: The N of session_limit and awake_limit. }
     SignupCredit:
