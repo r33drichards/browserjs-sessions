@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -139,10 +140,15 @@ func TestErrors(t *testing.T) {
 }
 
 func TestSessionCalls(t *testing.T) {
+	// The requests are made by the SDK's own threads, not by a goroutine the
+	// race detector can follow, so what the handler writes is locked.
+	var mu sync.Mutex
 	var seen []string
 	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
 		seen = append(seen, r.Method+" "+r.URL.Path+" "+string(body))
+		mu.Unlock()
 		switch r.Method {
 		case "DELETE":
 			if strings.HasSuffix(r.URL.Path, "/policy") {
@@ -182,6 +188,8 @@ func TestSessionCalls(t *testing.T) {
 		"DELETE /v1/sessions/s-ab2cd ",
 		"DELETE /v1/sessions/s-ab2cd/policy ",
 	}
+	mu.Lock()
+	defer mu.Unlock()
 	if strings.Join(seen, "\n") != strings.Join(want, "\n") {
 		t.Errorf("requests\n%s\nwant\n%s", strings.Join(seen, "\n"), strings.Join(want, "\n"))
 	}
