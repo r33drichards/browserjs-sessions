@@ -48,6 +48,26 @@ backend keeps no copy of it:
   request. When it cannot be read they answer with the balance last stored
   on the Account and `ledger: stale`.
 
+**What a decision costs.** One GET of the owner's Account from the API
+server, and for an account that passes the account's own rows, one list of
+the owner's sessions and one of everyone's (for the plan's and the
+cluster's limits). It is made at create, at resume, and when a request
+finds a session asleep and is about to wake it: per start, not per call. A
+proxied request to a running session reads no Account; the draining check
+uses the session the proxy has already read.
+
+**Per mode.** An Account keeps its Stripe state under `spec.stripe.<test|live>`
+and its Metronome state under `spec.metronome.<sandbox|production>`.
+`kube.Accounts` is made for one mode (from `STRIPE_MODE`; test and sandbox
+while it is unset) and shows `billing.AccountSpec` as it is in that mode,
+leaving the other mode's state untouched. Nothing else in the code knows
+there are modes. Switching test to live clears nothing.
+
+**The seam.** `billing.Accounts` and `billing.Ledger` are the only things
+enforcement holds. `kube.Accounts` is a thin adapter over the custom
+resource; a client of another store replaces it in
+`cmd/server/billing.go`, where both are constructed, and nowhere else.
+
 So with Metronome unreachable nobody is refused and nobody is stopped: an
 account with credit carries on, one without stays refused, and a purchase
 answers Stripe's webhook with 500 until the credit can be made
@@ -209,9 +229,6 @@ the body) is a change in `Refusal.WriteMCP` and one line in
 - `TERMS_VERSION` is not read from the environment (track G). The state
   `terms` is derived when `billing.Config.TermsVersion` is set.
 - The deletion pass runs every hour rather than once a day.
-- `Ledger.Revoke` needs the account (`GrantSelector.Account`): a credit is
-  one Metronome customer's, so a refund's handler passes the account of the
-  charge's customer.
 - The balance pass finds accounts whose credit has expired among those that
   have a Stripe customer (and those with an awake session). An account
   with only an admin's grant and nothing awake is read again when it is

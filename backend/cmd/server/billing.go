@@ -51,7 +51,9 @@ func newBilling(ctx context.Context, cfg config.Config, dyn dynamic.Interface, s
 		return nil, err
 	}
 	clock := billing.SystemClock{}
-	accounts := kube.NewAccounts(dyn, cfg.Namespace)
+	// test with Metronome's sandbox, or live with its production
+	// environment: the Account keeps each apart.
+	accounts := kube.NewAccounts(dyn, cfg.Namespace, kube.ModeOf(cfg.Billing.Payments))
 	if err := accounts.Check(ctx); err != nil {
 		return nil, err
 	}

@@ -32,15 +32,16 @@ type Resource interface {
 // and nothing else: each call reads the API server.
 type Accounts struct {
 	client Resource
+	mode   Mode
 }
 
-// NewAccounts is the Accounts of a namespace.
-func NewAccounts(client dynamic.Interface, namespace string) *Accounts {
-	return &Accounts{client: client.Resource(AccountGVR).Namespace(namespace)}
+// NewAccounts is the Accounts of a namespace, as they are in mode.
+func NewAccounts(client dynamic.Interface, namespace string, mode Mode) *Accounts {
+	return &Accounts{client: client.Resource(AccountGVR).Namespace(namespace), mode: mode}
 }
 
 // Over is Accounts over any Resource.
-func Over(client Resource) *Accounts { return &Accounts{client: client} }
+func Over(client Resource, mode Mode) *Accounts { return &Accounts{client: client, mode: mode} }
 
 // Check reports whether the Account custom resource is served.
 func (a *Accounts) Check(ctx context.Context) error {
@@ -71,7 +72,7 @@ func (a *Accounts) Ensure(ctx context.Context, owner string) (billing.Account, e
 	if err != nil {
 		return billing.Account{}, err
 	}
-	return accountFrom(obj)
+	return accountFrom(obj, a.mode)
 }
 
 func (a *Accounts) Get(ctx context.Context, name string) (billing.Account, error) {
@@ -82,7 +83,7 @@ func (a *Accounts) Get(ctx context.Context, name string) (billing.Account, error
 	if err != nil {
 		return billing.Account{}, err
 	}
-	return accountFrom(obj)
+	return accountFrom(obj, a.mode)
 }
 
 // list reads the Accounts a label selector finds ("" for all).
@@ -93,7 +94,7 @@ func (a *Accounts) list(ctx context.Context, selector string) ([]billing.Account
 	}
 	out := make([]billing.Account, 0, len(list.Items))
 	for i := range list.Items {
-		acc, err := accountFrom(&list.Items[i])
+		acc, err := accountFrom(&list.Items[i], a.mode)
 		if err != nil {
 			slog.Error("billing: account not read", "err", err)
 			continue
@@ -125,7 +126,7 @@ func (a *Accounts) ByMetronomeCustomer(ctx context.Context, id string) (billing.
 	if id == "" {
 		return billing.Account{}, billing.ErrNotFound
 	}
-	selector := labels.SelectorFromSet(labels.Set{LabelMetronomeCustomer: id}).String()
+	selector := labels.SelectorFromSet(labels.Set{a.mode.label(): id}).String()
 	return a.first(ctx, selector, func(s billing.AccountSpec) bool { return s.MetronomeCustomerID == id })
 }
 
@@ -168,20 +169,20 @@ func (a *Accounts) Update(ctx context.Context, name string, change func(*billing
 			break
 		}
 		var acc billing.Account
-		if acc, err = accountFrom(obj); err != nil {
+		if acc, err = accountFrom(obj, a.mode); err != nil {
 			return billing.Account{}, err
 		}
 		if err = change(&acc.Spec); err != nil {
 			return billing.Account{}, err
 		}
-		if err = setSpec(obj, acc.Spec); err != nil {
+		if err = setSpec(obj, acc.Spec, a.mode); err != nil {
 			return billing.Account{}, err
 		}
 		var written *unstructured.Unstructured
 		// The write carries the read's resourceVersion: on a conflict the
 		// change is made again, to the spec it is about to replace.
 		if written, err = a.client.Update(ctx, obj, metav1.UpdateOptions{}); err == nil {
-			return accountFrom(written)
+			return accountFrom(written, a.mode)
 		}
 		if !apierrors.IsConflict(err) {
 			break
