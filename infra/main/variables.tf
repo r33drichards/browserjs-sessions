@@ -568,6 +568,16 @@ variable "github_repository" {
   }
 }
 
+variable "github_repository_id" {
+  description = "The numeric ID of that repository (`gh api repos/<owner>/<name> -q .id`). Unlike the name it survives a rename or a transfer, so it is what the Workload Identity provider's condition and the grants are bound to. It must be the REPO_ID bootstrap.sh was run with."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[0-9]+$", var.github_repository_id))
+    error_message = "Expected the numeric repository ID, e.g. 1400826306."
+  }
+}
+
 variable "github_wif_pool_id" {
   description = "ID of the Workload Identity pool bootstrap.sh created for GitHub Actions. It is referenced, never managed, here."
   type        = string

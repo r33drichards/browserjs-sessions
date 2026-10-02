@@ -57,12 +57,19 @@ It is safe to re-run. Settings are environment variables:
 | `ORG_ID` | unset | Organisation to create the project under. An account that belongs to an organisation must set it (`gcloud organizations list`); a personal account leaves it unset |
 | `REGION` | `us-west1` | |
 | `REPO` | `r33drichards/browserjs-sessions` | the only repository allowed to use the two service accounts |
+| `REPO_ID` | looked up from `REPO` (`gh api repos/<owner>/<name> -q .id`) | the repository's numeric ID. It is what Google checks: the provider accepts only tokens with this `repository_id`, and each service account is granted to it. A rename or a transfer keeps the ID, so neither breaks the access |
 | `BILLING` | the first open billing account | set it explicitly if you have more than one |
 
 It creates the project, links billing, enables the base APIs, creates the
 versioned state bucket `<project>-tofu-state`, the Workload Identity pool and
 provider `github`, and the two service accounts. It also switches Cloud
-Shell's active project. `infra/main` manages none of those.
+Shell's active project. `infra/main` manages none of those. The "infra plan"
+run of a pull request prints the provider's condition and mapping and who may
+act as each service account ("GitHub trust"), since no state records them.
+
+Put the ID the script prints into `infra/main/terraform.tfvars`
+(`github_repository_id`): the grants on the `images-push` and `deployer`
+service accounts, which `infra/main` does manage, are made to it.
 
 In a project that is seconds old, IAM can answer `PERMISSION_DENIED` for a
 minute; the script retries the Workload Identity steps for that reason. If it
