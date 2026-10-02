@@ -1,6 +1,9 @@
 # browserjs sessions — design
 
-Date: 2026-10-01. Status: agreed in conversation, not yet implemented.
+Date: 2026-10-01. Status: built and run end to end on a local cluster; not yet
+on GKE. Sign-in, authorization and request paths were redesigned during the
+build (Pomerium and Dex instead of Keycloak and Topaz) and are described here
+as built.
 
 ## Goal
 
@@ -23,8 +26,9 @@ their tabs intact.
 | Scale to zero | Idle sessions are suspended automatically and resumed on the next request. The session node pool autoscales to zero. |
 | Tabs across sleep | GKE Pod Snapshots restore the running browser exactly; Chromium session restore is the fallback (and the only mechanism on a local cluster). |
 | Users | Multi-user. You see and manage only your own sessions; an admin group sees all. |
-| Sign-in | Keycloak, following the cua fleet pattern (`keycloak-js` + an auth provider in the UI, bearer tokens to the backend). |
-| Authorization | Topaz (OPA policy + relationship directory), so sharing can be added as data later. |
+| Sign-in | Pomerium (open-source Core) in front of everything, signing users in through Dex, which offers Google and GitHub. |
+| Authorization | The backend's own check: a session belongs to the email that created it; a configured list of admin emails may see and manage all. |
+| Session addresses | Every session has a hostname of its own, `<id>.<session domain>`, so a session's content never shares an origin with the app or another session. |
 | Create form | A name. Nothing else. |
 | UI scope | Sessions only: sign-in, list, detail. No templates or admin pages. |
 | Style | Low-fidelity wireframe: monochrome, outlined boxes, sketch-like, no brand colours, as a theme over Cloudscape components. No cua branding. |
@@ -35,29 +39,39 @@ Not decided: the idle period before a session sleeps. The design assumes
 ## Architecture
 
 ```
-                      one public hostname (GKE Gateway, TLS)
+        app host, authenticate host, <id>.<session domain>  (TLS)
                                      │
+                           ┌─────────▼──────────┐       ┌─────┐   Google
+ browser UI ──────────────▶│      Pomerium      │──────▶│ Dex │──▶ GitHub
+ Claude (MCP) ────────────▶│ sign-in, MCP OAuth │       └─────┘
+                           └─────────┬──────────┘
+                                     │ request + signed identity header
                            ┌─────────▼──────────┐
- browser UI ──────────────▶│      backend (Go)  │◀──── Claude (MCP)
- (React + Cloudscape)      │  API, auth, proxy  │
-                           └──┬────┬────────┬───┘
-                 verify token │    │ check  │ create / suspend / resume / delete
-                        ┌─────▼┐ ┌─▼────┐ ┌─▼──────────────────────┐
-                        │Keycl.│ │Topaz │ │ Kubernetes API         │
-                        └──────┘ └──────┘ │  Sandbox per session   │
-                                          └─┬──────────────────────┘
-                                            │ pod: chromium+VNC | mcp-js   + disk
+                           │      backend (Go)  │
+                           │ API, owner check,  │
+                           │ proxy, UI files    │
+                           └──┬──────────────┬──┘
+     create / suspend / resume│              │ MCP, VNC, uploads
+                 / delete     │              │
+                  ┌───────────▼────────┐  ┌──▼─────────────────────────┐
+                  │ Kubernetes API     │  │ pod: chromium+VNC | mcp-js │
+                  │ Sandbox per session│  │ + disk                     │
+                  └────────────────────┘  └────────────────────────────┘
 ```
 
-- **Session = one `Sandbox`** (`agents.x-k8s.io`), built by the backend from a
-  single `SandboxTemplate` shipped in `deploy/`. Templates are not exposed to
-  users; changing image or size means changing that manifest.
+- **Session = one `Sandbox`** (`agents.x-k8s.io/v1beta1`), built by the backend
+  from a blueprint file shipped in `deploy/`. There is no `SandboxTemplate`
+  object and blueprints are not exposed to users; changing image or size means
+  changing that file.
 - **The backend holds the only Kubernetes credentials.** Users and agents
   never reach the Kubernetes API or a pod directly.
 - **No warm pool and no `SandboxClaim`.** Persistent sessions cannot be
   pre-warmed, so two of the four Agent Sandbox resource types are unused.
-- **Keycloak and Topaz run in the cluster**, Keycloak with a real database so
-  redeploys do not sign everyone out.
+- **Pomerium and Dex run in the cluster.** Pomerium keeps its sessions and MCP
+  client registrations on a disk, so a restart does not sign everyone out;
+  that storage allows one replica. Nothing but Pomerium may reach the backend
+  (NetworkPolicy).
+- **One backend replica.** VNC tickets and idle tracking live in its memory.
 
 ### Session pod
 
@@ -67,8 +81,8 @@ Not decided: the idle period before a session sleeps. The design assumes
 - `mcp-js`: the released `wholelottahoopla/mcp-js` image, configured with
   - the browser MCP as its upstream, on localhost;
   - its session database (artifacts, upload grants) on the session disk;
-  - `--public-url` set to the session's own path, `https://<host>/s/<id>`, so
-    one-time upload URLs point back through the backend;
+  - `--public-url` set to the session's own host, `https://<id>.<session domain>`,
+    so one-time upload URLs point back through the backend;
   - JWT verification off: the backend has already authenticated the caller,
     and the pod is unreachable from anywhere else (NetworkPolicy).
 - Disk: one volume, mounted for the Chromium profile, `/data/memory` and the
@@ -76,35 +90,84 @@ Not decided: the idle period before a session sleeps. The design assumes
 
 ## Request paths
 
-All under one hostname. Everything except the upload route requires a
-Keycloak token and passes a Topaz check.
+Two kinds of host, both served by Pomerium and passed to the one backend
+Service with the caller's `Host`. The backend tells them apart by host.
+
+**The app host.** One Pomerium route: any signed-in user. Pomerium adds the
+signed identity header.
 
 | Path | Purpose |
 |---|---|
-| `GET /api/sessions` | Your sessions (all, for admins) |
+| `GET /api/me` | Who is signed in, and whether they are an admin |
+| `GET /api/sessions` | Your sessions (`?all=1`: everyone's, for admins) |
 | `POST /api/sessions` | Create; body is `{ "name": … }` |
-| `GET /api/sessions/{id}` | One session, with state and recent events |
+| `GET /api/sessions/{id}` | One session, with its state |
 | `PATCH /api/sessions/{id}` | Rename, stop, resume |
 | `DELETE /api/sessions/{id}` | Delete the session and its disk |
-| `/s/{id}/vnc` | VNC websocket for the detail page |
-| `/s/{id}/mcp` | The session's MCP endpoint, plus the OAuth discovery metadata Claude's connector needs |
-| `/s/{id}/api/artifact-uploads/{token}` | mcp-js one-time upload route. No login: the token is the credential |
+| `POST /api/sessions/{id}/vnc-ticket` | A one-time ticket, and the websocket URL to open the screen with |
+| everything else | The UI |
 
-A session the caller may not view answers 404, not 403, so names do not leak.
+**A session's host, `<id>.<session domain>`.** Three wildcard routes; any other
+path does not exist.
+
+| Path | Pomerium route | Who checks what |
+|---|---|---|
+| `/mcp` | MCP server route: Pomerium is the OAuth server for MCP clients and passes the identity header | Backend: the caller owns the session or is an admin |
+| `GET /vnc?ticket=…` | Public, websockets allowed | Backend: the ticket is unused, unexpired and for this session |
+| `PUT /api/artifact-uploads/{token}` | Public | The session's mcp-js: the one-time token it issued. Backend: size cap, session already running |
+
+A session the caller may not use answers 404, not 403, so names do not leak.
+
+The MCP endpoint never answers 401: that is Pomerium's cue to an MCP client to
+sign in, and from the backend Pomerium would turn it into a 502. A request
+with no valid identity is 403.
+
+**The GET stream rule.** A `GET` on `/mcp` is the stream on which the server
+sends events to the client. Some clients keep one open for as long as the
+server is configured. It is therefore not use of the session: it does not
+wake a sleeping session, does not count as activity, and does not keep the
+pod. On a session that is not running it answers 405 (`Allow: POST, DELETE`);
+the client's next call wakes the session.
 
 ## Sign-in and authorization
 
-- The UI signs in with `keycloak-js` and only renders once authenticated, as
-  fleet does. Claude's connector signs in against the same realm.
-- Topaz directory: `user` and `session` objects, an `owner` relation, and an
-  `admins` group. Policy: **view** = owner, admin, or (later) anyone the
-  session is shared with; **manage** = owner or admin.
-- Per request: verify the token, ask Topaz, act.
-- The backend writes the `owner` relation on create and removes it on delete.
-  The owner is also recorded on the `Sandbox`; a periodic reconcile rebuilds
-  the directory from the cluster if the two drift. The cluster is the record
-  of truth.
-- Sharing is supported by the model and has no UI in this version.
+- **Pomerium authenticates, the backend authorizes.** Pomerium signs users in
+  against Dex and adds `X-Pomerium-Jwt-Assertion` to each request: a short-lived
+  JWT naming the user's email, with the request's host as its audience. The
+  backend verifies it against Pomerium's keys (`POMERIUM_JWKS_URL`), requires
+  the audience to be the request's host, and takes the email as the user.
+- **Dex federates the sign-in**: Google and GitHub connectors; Pomerium is its
+  only client. (Pomerium alone offers a single identity provider.)
+- **Owner or admin.** A session's owner is the email recorded on its Sandbox
+  when it was created. Admins are the `ADMIN_EMAILS` list, read at startup.
+  There is no sharing and no directory.
+- **The UI has no sign-in code.** It asks `/api/me`; when the API answers 401
+  (or the proxy redirects) it reloads the page, and Pomerium sends the browser
+  to sign in. Sign-out is a link to `/.pomerium/sign_out`.
+- **MCP clients sign in with Pomerium**, which acts as the OAuth authorization
+  server on the session's host. Clients identify themselves by a metadata
+  document; the domains allowed to are configured
+  (`mcp_allowed_client_id_domains: [claude.ai]`). The token a client gets is
+  not bound to one host; the backend's owner check is what protects a session.
+- **The screen and uploads carry their own credentials**, because a websocket
+  from the app's page to another host and an upload from an agent's machine
+  have no Pomerium session: a one-time ticket issued to a user who may see the
+  session, and mcp-js's one-time upload token.
+- The pod is shown none of this: the backend strips the identity header,
+  cookies and `Authorization` before proxying.
+
+Open:
+
+- **MCP discovery on wildcard hosts.** Pomerium v0.33.3 does not serve the two
+  OAuth discovery documents on a host matched only by a wildcard route, so an
+  MCP client cannot begin sign-in on a session's host. Sign-in and MCP calls
+  were verified with the discovery step supplied by hand. See the plan,
+  Phase 4, for the two ways forward. Until one is built Claude cannot add a
+  session as a connector.
+- **Who may sign in** is everyone with a Google or GitHub account until an
+  allow-list is added to the routes.
+- Not verified: a completed Google or GitHub sign-in (only the redirect to
+  each), Claude's own clients against this setup, anything on GKE.
 
 ## Scale to zero
 
@@ -132,7 +195,7 @@ Known limits:
 
 ## Pages
 
-- **Sign-in**: redirect to Keycloak.
+- **Sign-in**: Pomerium redirects to Dex, which offers Google and GitHub.
 - **Sessions**: table of name, state (starting, running, asleep, stopped,
   failed) and created time; create, stop, resume, delete. Admins can switch
   to all sessions, with an owner column.
@@ -146,16 +209,19 @@ Known limits:
   reason for "starting" or "failed".
 - The VNC pane reconnects on its own and says so while trying.
 - A per-user session cap (configurable) protects the cluster.
-- If Topaz is unreachable, requests are denied, not allowed.
+- If a session's owner cannot be read from the cluster, the request is
+  refused (503), not allowed.
 
 ## Testing
 
 - Backend unit tests against a fake Kubernetes client.
-- Topaz policy tests: owner, admin, stranger.
+- Owner, admin and stranger on every route, in the backend's unit tests and
+  again in the integration test.
 - Integration on a local cluster with the open-source controller: create,
   VNC, MCP call, file upload, stop, resume with disk and tabs (session
   restore), delete.
-- Browser tests of the UI flows.
+- Browser test of the UI through Pomerium and Dex (`test/browser-e2e.mjs`),
+  and an MCP client's sign-in walked by hand (`test/mcp-oauth.mjs`).
 - On GKE, once the cluster exists: headed Chromium under gVisor, Pod Snapshot
   suspend and resume, node pool scale to and from zero.
 
@@ -167,15 +233,20 @@ Known limits:
 2. **Snapshotting a browser.** Pod Snapshots are aimed at code sandboxes and
    model servers; restoring a multi-process browser with an X server is
    untested here. Session restore is the fallback.
-3. **API drift.** Managed GKE Agent Sandbox and the open-source controller
+3. **MCP sign-in on per-session hosts.** See "Open" under Sign-in and
+   authorization.
+4. **API drift.** Managed GKE Agent Sandbox and the open-source controller
    may differ in version; the backend targets the fields both support.
 
 ## Repository layout
 
 ```
-backend/   Go: API, Keycloak verification, Topaz checks, Kubernetes client,
+backend/   Go: API, identity verification, owner check, Kubernetes client,
            VNC and MCP proxy, idle tracker
 web/       React + Cloudscape, wireframe theme, noVNC
-deploy/    SandboxTemplate, Keycloak, Topaz, Gateway, NetworkPolicy
+images/    the session's two container images
+deploy/    kustomize: backend, session blueprint, Pomerium, Dex, NetworkPolicy
+hack/      local cluster up and down
+test/      end-to-end tests against the local cluster
 docs/      this design, then the implementation plan
 ```
