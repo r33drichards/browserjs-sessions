@@ -1,6 +1,6 @@
 # Image build pipeline
 
-`.github/workflows/images.yml` builds the three container images and pushes
+`.github/workflows/images.yml` builds the four container images and pushes
 them to Artifact Registry. No key is stored anywhere: the push job exchanges
 GitHub's OIDC token for the `images-push` service account (Workload Identity
 Federation), which can write to the one image repository and nothing else, and
@@ -13,10 +13,14 @@ which Google hands only to workflows running on `refs/heads/main`.
 | `backend` | repository root | `Dockerfile` | `Dockerfile`, `.dockerignore`, `backend/**`, `web/**` |
 | `mcp-js` | `images/mcp-js` | `images/mcp-js/Dockerfile` | `images/mcp-js/**` |
 | `browser` | `images/browser` | `images/browser/Dockerfile` | `images/browser/**` |
+| `site` | `site` | `site/Dockerfile` | `site/**` |
 
 All are built for `linux/amd64` only, which is what the cluster's nodes are.
 
-A change to `images.yml` itself rebuilds all three.
+A change to `images.yml` itself rebuilds all four.
+
+`site` is the public site (landing page, docs, blog): VitePress builds static
+files and nginx serves them. It is not a session image and is in no blueprint.
 
 The root `Dockerfile` does not exist yet. Until it does, `backend` is skipped
 with a notice in the run, not failed.
@@ -92,7 +96,8 @@ The Kubernetes manifests pin images by digest, not by tag.
    ```
 
    The session images (`browser`, `mcp-js`) are named in the Sandbox template;
-   pin them there the same way.
+   pin them there the same way. `hack/pin-images.sh` does all of this:
+   `hack/pin-images.sh site=sha256:…` pins one image.
 3. Commit, review, apply the overlay to the cluster.
 
 Running sessions keep the image they started with. A session picks up a new
@@ -116,7 +121,7 @@ Nodes pull with their own service account, which can read this repository; no
   and uses no layer cache (the one layer changes whenever its inputs do, so a
   cache would cost minutes and gigabytes per run and never be hit). Every
   browser build is a full build.
-- **`backend` and `mcp-js` use the GitHub Actions layer cache**, one scope per
+- **`backend`, `mcp-js` and `site` use the GitHub Actions layer cache**, one scope per
   image. Pull requests read `main`'s cache.
 - **The image is built before signing in** to Google, then pushed in a second
   step that reuses the build. The access token lasts one hour and the browser

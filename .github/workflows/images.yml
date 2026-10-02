@@ -1,6 +1,6 @@
 name: images
 
-# Builds the three container images and, from main, pushes them to Artifact
+# Builds the four container images and, from main, pushes them to Artifact
 # Registry.
 #
 #   pull request              build only: no sign-in, no push
@@ -23,6 +23,7 @@ on:
       - "backend/**"
       - "web/**"
       - "images/**"
+      - "site/**"
       - ".github/workflows/images.yml"
   push:
     branches:
@@ -33,6 +34,7 @@ on:
       - "backend/**"
       - "web/**"
       - "images/**"
+      - "site/**"
       - ".github/workflows/images.yml"
   workflow_dispatch:
     inputs:
@@ -46,6 +48,7 @@ on:
           - backend
           - mcp-js
           - browser
+          - site
 
 # Every job states its own; this is the floor.
 permissions:
@@ -94,7 +97,8 @@ jobs:
           table='[
             {"name":"backend","context":".",             "timeout":30, "cache":true, "free_disk":false},
             {"name":"mcp-js", "context":"images/mcp-js", "timeout":15, "cache":true, "free_disk":false},
-            {"name":"browser","context":"images/browser","timeout":120,"cache":false,"free_disk":true}
+            {"name":"browser","context":"images/browser","timeout":120,"cache":false,"free_disk":true},
+            {"name":"site",   "context":"site",          "timeout":15, "cache":true, "free_disk":false}
           ]'
 
           changed_files() {
@@ -118,7 +122,7 @@ jobs:
           wanted=()
           if [ "$EVENT" = "workflow_dispatch" ]; then
             if [ "$CHOSEN" = "all" ] || [ -z "$CHOSEN" ]; then
-              wanted=(backend mcp-js browser)
+              wanted=(backend mcp-js browser site)
             else
               wanted=("$CHOSEN")
             fi
@@ -129,11 +133,12 @@ jobs:
             touches() { grep -Eq "$1" <<<"$files"; }
             if touches '^\.github/workflows/images\.yml$'; then
               # The pipeline itself changed: prove it on every image.
-              wanted=(backend mcp-js browser)
+              wanted=(backend mcp-js browser site)
             else
               if touches '^(Dockerfile$|\.dockerignore$|backend/|web/)'; then wanted+=(backend); fi
               if touches '^images/mcp-js/'; then wanted+=(mcp-js); fi
               if touches '^images/browser/'; then wanted+=(browser); fi
+              if touches '^site/'; then wanted+=(site); fi
             fi
           fi
 
