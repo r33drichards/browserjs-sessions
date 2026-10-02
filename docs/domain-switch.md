@@ -186,28 +186,28 @@ That is expected and harmless.
 
 Rollback: at Namecheap, Nameservers back to **Namecheap BasicDNS**.
 
-### 3. OAuth apps: Google now, GitHub at the switch (you)
+### 3. OAuth apps: Google done, GitHub at the switch (you)
 
 Dex's callback becomes `https://dex.computeruse.site/dex/callback`.
 
-- **Google** (console, the OAuth client, Authorized redirect URIs): **add**
-  it, keeping `https://dex.browserjs.com/dex/callback`. Additive; do it now.
-  The app is in testing mode, so the listed test users stay as they are.
-- **GitHub**: an OAuth App has one "Authorization callback URL"; it cannot
-  hold both. Either
-  - change that URL in step 6, at the moment of the switch (simplest; from
-    then on GitHub sign-in works on the new domain only, and changing it
-    back is the rollback), or
-  - register a second OAuth App with the new callback now, and in step 6
-    put its ID and secret in the repository secrets `DEX_GITHUB_CLIENT_ID`
-    and `DEX_GITHUB_CLIENT_SECRET` before the deploy (the deploy writes them
-    to the cluster on every run). Rollback is then the old pair of secrets,
-    so keep them somewhere.
+- **Google: done.** The new URI is on the OAuth client's Authorized redirect
+  URIs, beside `https://dex.browserjs.com/dex/callback` and the localhost
+  one. Google says a change takes from five minutes to a few hours to take
+  effect, so it was made ahead. The app is in testing mode; the listed test
+  users stay as they are.
+- **GitHub: not now.** An OAuth App has one "Authorization callback URL" and
+  cannot hold both. It is changed in step 6, in the browser, right before
+  the deploy; from that moment GitHub sign-in on the old domain is broken,
+  and changing it back is the rollback.
 
-  If it is a GitHub App rather than an OAuth App, it takes several callback
-  URLs: add the new one now.
+  Option, if GitHub sign-in on the old domain must keep working up to the
+  deploy and through a rollback: register a second OAuth App with the new
+  callback, and in step 6 put its ID and secret in the repository secrets
+  `DEX_GITHUB_CLIENT_ID` and `DEX_GITHUB_CLIENT_SECRET` instead of editing
+  the first app (the deploy writes them to the cluster on every run). The
+  rollback is then the old pair of secrets, so keep them.
 
-Verify: nothing to verify until step 7. Rollback: remove the URI.
+Verify: nothing until step 7. Rollback: remove the URI from Google.
 
 ### 4. Bring Phase 2 up to date (whoever maintains the pull request)
 
@@ -246,11 +246,13 @@ deploy applies the manifests until Let's Encrypt has issued the certificate
 for the new names (typically two to five minutes; the deploy waits up to
 fifteen).
 
-1. GitHub: change the OAuth App's callback URL to
-   `https://dex.computeruse.site/dex/callback` (or swap the two secrets, if
-   a second app was made).
-2. Merge Phase 2. `infra apply` runs and changes nothing; wait for it to be
-   green.
+1. Merge Phase 2. `infra apply` runs and changes nothing; wait for it to be
+   green. Nothing that is served has changed yet.
+2. GitHub, in the browser, right before the deploy: Settings, Developer
+   settings, OAuth Apps, the app, "Authorization callback URL" from
+   `https://dex.browserjs.com/dex/callback` to
+   `https://dex.computeruse.site/dex/callback`, Update application. (Or, if
+   a second app was made, swap the two secrets instead.)
 3. Start the deploy on `main`:
    `gh workflow run deploy.yml --ref main -f confirm=deploy -f issuer=production`.
    Do **not** use `issuer=staging` to rehearse: it would replace the working
