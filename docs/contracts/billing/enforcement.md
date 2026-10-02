@@ -1,8 +1,12 @@
 # Enforcement contract
 
 Where the backend checks an account, what it answers, and what it stops.
-The backend reads `Account.status` (through an informer: no call per
+The backend reads `Account` objects through an informer (no call per
 request) and `catalogue.yaml`; it never calls Stripe to decide anything.
+
+Stripe does not stop anything: its metering is post-paid. **Stopping is
+ours.** The operator's ledger says how much credit is left (`metering.md`);
+the backend refuses at the doors and puts sessions to sleep.
 
 ## Modes
 
@@ -11,69 +15,86 @@ request) and `catalogue.yaml`; it never calls Stripe to decide anything.
 | Value | Operator | Backend |
 |---|---|---|
 | unset or `off` | not deployed, or idle | today's behaviour exactly; no `/api/billing`, no Account is made |
-| `meter` | meters, makes free grants | makes Accounts, serves `/api/billing`, takes payments if Stripe is configured; **refuses nothing and stops nothing**. Every decision of the table below is computed and logged as `would_refuse`. |
-| `enforce` | the same | the table below applies |
+| `meter` | meters | makes Accounts, serves `/api/billing`, takes cards and payments if Stripe is configured; **refuses nothing and stops nothing**. Every decision below is computed and logged as `would_refuse`. |
+| `enforce` | the same | everything below applies. Requires `STRIPE_MODE`: without Stripe nobody could ever have a card. |
+
+## Account states
+
+Derived, not stored; the first that matches:
+
+| State | Condition | Can do |
+|---|---|---|
+| `blocked` | `spec.blocked` or `spec.deletedAt` | nothing; sessions are put to sleep |
+| `exempt` | `spec.exempt`, or the email is in `BILLING_EXEMPT_EMAILS` (default: `ADMIN_EMAILS`) | everything, with no card and at any balance; metered for the record |
+| `terms` | `TERMS_VERSION` is set and the account has not accepted it | read; accept the terms |
+| `no_card` | `spec.paymentMethod.present` is not true | read, stop, delete, add a card. **Create and wake nothing.** Its sessions are put to sleep. Credit it has is kept and waits. |
+| `active` | otherwise | everything, within its credit and limits |
+
+`signed in, no card -> card saved -> active` is the first-run path
+(`stripe.md`, "Saving a card"). `active -> no_card` happens when the last
+payment method is removed; `no_card -> active` when one is back.
 
 ## The inputs of a decision
 
 | Name | From |
 |---|---|
-| `blocked` | `spec.blocked` present, or `spec.deletedAt` present |
-| `exempt` | `spec.exempt`, or the caller's email is in `BILLING_EXEMPT_EMAILS` (default: `ADMIN_EMAILS`) |
-| `balance` | `status.balanceSeconds` |
-| `tier` | `status.plan` looked up in `catalogue.yaml` (limits `maxSessions`, `maxAwake`) |
+| `state` | above |
+| `balance` | `status.balanceMicros` |
+| `tier` | `status.plan` looked up in the catalogue (`maxSessions`, `maxAwake`) |
 | `stale` | `status.meter.observedAt` is older than `BILLING_STALE_AFTER` (10 m), or there is no status |
-| `paying` | `status.plan` is not `free` (as last written) |
-| `mine`, `awake` | the caller's sessions, and how many are `running` or `starting` |
+| `mine`, `awake` | the owner's sessions, and how many are `running` or `starting` |
 | `clusterAwake` | every user's sessions that are `running` or `starting` |
-| `terms` | `spec.termsAcceptedAt` set and `termsVersion` current (only checked when `OPEN_SIGNUP` is on) |
 
 The account is always the **session's owner's**, not the caller's: an admin
-waking someone's session, or an API token, spends the owner's hours. A token
-acts as its owner, so the two are the same for tokens.
+waking someone's session, or an API token, or Terraform, spends the owner's
+credit and needs the owner's card. A token acts as its owner.
 
 ## Decision table
 
 Evaluated top to bottom; the first row that matches answers. "Start" means
-anything that makes a session awake: create, resume, wake.
+anything that makes a session awake: create, resume, wake on a call.
 
 | # | When | Create | Resume, wake | Already running |
 |---|---|---|---|---|
 | 1 | `BILLING` is not `enforce` | allow | allow | leave |
 | 2 | `blocked` | refuse `account_blocked` | refuse `account_blocked` | sleep now |
 | 3 | `exempt` | allow | allow | leave |
-| 4 | `OPEN_SIGNUP` and not `terms` | refuse `terms_required` | refuse `terms_required` | leave |
-| 5 | `stale` and `paying` | allow | allow | leave |
-| 6 | `stale` and not `paying` | refuse `metering_unavailable` | refuse `metering_unavailable` | leave |
-| 7 | `balance == 0` | refuse `out_of_hours` | refuse `out_of_hours` | sleep at `exhaustedAt + BILLING_GRACE` |
-| 8 | create and `len(mine) >= tier.maxSessions` | refuse `session_limit` | n/a | n/a |
-| 9 | `awake >= tier.maxAwake` | refuse `awake_limit` | refuse `awake_limit` | leave |
-| 10 | more than `WAKES_PER_HOUR` (30) starts by this account in the last hour | refuse `rate_limited` | refuse `rate_limited` | leave |
-| 11 | `clusterAwake >= MAX_AWAKE_SESSIONS`, or not `paying` and `clusterAwake >= FREE_AWAKE_CEILING` | refuse `at_capacity` | refuse `at_capacity` | leave |
-| 12 | otherwise | allow | allow | leave |
+| 4 | `terms` | refuse `terms_required` | refuse `terms_required` | leave |
+| 5 | `no_card` | refuse `payment_method_required` | refuse `payment_method_required` | **sleep now** (stop sequence, no grace) |
+| 6 | `stale` and the last known balance is above 0 | allow | allow | leave |
+| 7 | `stale` otherwise | refuse `metering_unavailable` | refuse `metering_unavailable` | leave |
+| 8 | `balance == 0` | refuse `out_of_credit` | refuse `out_of_credit` | stop sequence |
+| 9 | create and `len(mine) >= tier.maxSessions` | refuse `session_limit` | n/a | n/a |
+| 10 | `awake >= tier.maxAwake` | refuse `awake_limit` | refuse `awake_limit` | leave |
+| 11 | more than `WAKES_PER_HOUR` (30) starts by this account in the last hour | refuse `rate_limited` | refuse `rate_limited` | leave |
+| 12 | `clusterAwake >= MAX_AWAKE_SESSIONS` | refuse `at_capacity` | refuse `at_capacity` | leave |
+| 13 | otherwise | allow | allow | leave |
 
-Row 5 and 6 are the answer to "fail open or closed": with the ledger stale,
-people who pay are let through and their time is not counted (never
-over-bill, never lock out a customer because of our fault), and people who
-do not pay wait. Row 8 replaces `MAX_SESSIONS_PER_USER` while `BILLING` is
-`enforce`; the old setting remains the limit otherwise.
+Rows 6 and 7 are "fail open or closed": with the ledger stale, an account
+that had credit when it was last counted carries on and is not charged for
+the time (never over-bill, never lock a customer out for our fault); an
+account that had none stays refused; nothing is stopped. Row 9 replaces
+`MAX_SESSIONS_PER_USER` while `BILLING` is `enforce`.
 
-The count for row 10 and the counts for row 11 are in the backend's memory
-and its informer: lost on a restart, which errs towards allowing.
+Rows 11 and 12 count in the backend's memory and its informer: lost on a
+restart, which errs towards allowing.
 
 ## Where each check is made
 
 | Entry point | Code today | Check | Refusal reaches the user as |
 |---|---|---|---|
-| `POST /api/sessions`, `POST /v1/sessions` (UI, API token, Terraform) | `api.create` | Create | the HTTP answer below |
+| `POST /api/sessions`, `POST /v1/sessions` (UI, API token, Terraform) | `api.create`, before `Store.CreateWithPolicy` and so before any warm-pool claim | Create | the HTTP answer below |
 | `PATCH .../sessions/{id}` with `action: resume` | `api.patch` | Resume | the HTTP answer below |
-| Any proxied request to a session that is asleep: MCP on the sessions host and on the API host, the upload URL, the VNC websocket | `proxy.Waker.EnsureAwake`, before `Store.Wake` | Wake | MCP: below. VNC and upload: the HTTP answer. |
-| A proxied request to a session that is running | nothing | none (the sweep stops it, not the request) | |
-| Warm-pool adoption and claim recovery | `Store.createWarm`, `RecoverClaims` | none of their own: they run after Create allowed | |
+| Any proxied request to a session that is not running: MCP on the sessions host and on the API host, the upload URL, the VNC websocket | `proxy.Waker.EnsureAwake`, before `Store.Wake` | Wake | MCP: below. VNC and upload: the HTTP answer. |
+| A **new** proxied request to a running session that is draining (stop sequence) | `proxy`, before forwarding | refused with the reason of the drain | the same |
 | Session policy routes, token routes, list, get, delete, rename, stop | | never refused for billing | |
 
-Reading, stopping and deleting always work, at any balance, so that a user
-who is out of hours can still see their sessions and remove them.
+Reading, stopping and deleting always work, in any state and at any
+balance, so that a user with no card or no credit can still see their
+sessions and remove them (which also ends their disk charges).
+
+Creating an API token or a policy is not gated: neither costs anything, and
+neither can start a session without passing the table.
 
 ## Answers
 
@@ -81,67 +102,125 @@ HTTP, on the app and the API host:
 
 | Code | Status | Message (the `error` field; the UI adds the buttons) |
 |---|---|---|
-| `out_of_hours` | 402 | You have used all your hours. Buy more hours or change plan to continue. |
+| `payment_method_required` | 402 | Add a payment method to create or wake sessions. |
+| `out_of_credit` | 402 | You are out of credit. Add credit or change plan to continue. |
 | `session_limit` | 409 | Your plan allows N sessions. Delete one, or change plan. |
 | `awake_limit` | 409 | Your plan runs N sessions at once. Stop one, or change plan. |
 | `at_capacity` | 503, `Retry-After: 120` | Every desktop is in use right now. Try again in a few minutes. |
 | `rate_limited` | 429, `Retry-After` | Too many starts in the last hour. Try again later. |
-| `metering_unavailable` | 503, `Retry-After: 120` | Usage metering is unavailable right now, so free sessions cannot start. Try again in a few minutes. |
+| `metering_unavailable` | 503, `Retry-After: 120` | Billing is unavailable right now. Try again in a few minutes. |
 | `account_blocked` | 403 | This account is suspended. Contact support. |
 | `terms_required` | 403 | Accept the terms to continue. |
 
 Body: `{"error": "<message>", "code": "<code>", "billingUrl": "<PUBLIC_URL>/billing"}`
-(`Error` of `backend-api.yaml`). `session_limit` keeps the 409 the API
-gives today for the same thing.
+(`Error` of `backend-api.yaml`). `billingUrl` is the link an API or
+Terraform user follows; the Terraform provider prints `error` and
+`billingUrl` as its diagnostic.
+
+`payment_method_required` and `out_of_credit` are **402 with no
+`Retry-After`**: they are not transient, and must not look like something a
+client should retry. A 5xx or a 429 would.
 
 MCP (the request is JSON-RPC and its client is a program): the same HTTP
 status, `Content-Type: application/json`, and a JSON-RPC error whose message
-is one a model can relay to its user:
+a model can relay to its user:
 
 ```json
-{"jsonrpc":"2.0","id":null,"error":{"code":-32002,"message":"This session cannot wake: its owner has used all their hours. Add hours at https://app.computeruse.site/billing"}}
+{"jsonrpc":"2.0","id":null,"error":{"code":-32002,"message":"This session is asleep because its owner is out of credit. It is kept as it was. Add credit at https://app.computeruse.site/billing and call again."}}
+{"jsonrpc":"2.0","id":null,"error":{"code":-32002,"message":"This session is asleep because its owner has no payment method. It is kept as it was. Add one at https://app.computeruse.site/billing and call again."}}
 ```
 
-What Claude's clients show for a 402 or 503 on an MCP call is **not
-verified**; track C records it for each code, and if a client hides the
-body, the status becomes 200 with the JSON-RPC error (the request's `id`
-then has to be read from the body).
+What Claude's clients show for a 402 on an MCP call, and whether any of
+them retries it, is **not verified**; track D records it, and if a client
+hides the body or retries, the answer becomes HTTP 200 with the JSON-RPC
+error (the request's `id` then has to be read from the body).
 
-## Stopping what is running
+## The stop sequence
 
-A sweep in the backend, every 30 s, beside the idle sweep and using the
-same `Store.Sleep` (snapshot first, so the session wakes as it was):
+One sweep in the backend, every 30 s, beside the idle sweep.
 
-- For every account with `level: exhausted` and `now >= exhaustedAt +
-  BILLING_GRACE` (5 m), not exempt: put each `running` session to sleep with
-  `browserjs.dev/stopped-by: billing`.
-- For every blocked account: the same, at once.
-- A session stopped by billing is shown as `asleep` with the message "out of
-  hours"; `Wake` and `Resume` go through the table (row 7 refuses until
-  there is a balance), after which it wakes like an idle sleep. `Store.Wake`
-  must accept `stopped-by: billing` as it accepts `idle`.
-- A sleep that fails is retried at the next sweep. The snapshot failing does
-  not stop the sleep (as today).
-- With `stale` true the sweep stops nothing.
+**Triggers**
 
-The grace is counted from the ledger's `exhaustedAt`, so a user who buys
-hours within it is never interrupted.
+| Trigger | Starts |
+|---|---|
+| `level: exhausted` (row 8), not exempt | at `exhaustedAt + BILLING_GRACE` (5 m). The grace exists so that a top-up in progress does not kill work: a purchase or an auto-recharge that lands inside it clears `exhaustedAt` and nothing is stopped. |
+| `no_card` (row 5) | at once: no grace |
+| `blocked` (row 2) | at once |
 
-## Free and pay-as-you-go storage
+**For each running session of the account**, in this order:
 
-A daily pass in the backend deletes the sessions of accounts whose tier has
-`idleDeleteDays`, when the session has been asleep or stopped that long
-(`browserjs.dev/last-awake`, an annotation the backend writes when a session
-goes to sleep). The session view carries `deleteAfter` from 7 days before,
-and the UI shows it. Subscribers' sessions are never deleted this way. This
-pass runs only in `enforce`, and is separately switchable
-(`IDLE_DELETE=off`), default off until the product owner turns it on.
+1. **Drain.** The session is marked `browserjs.dev/draining: <reason>`
+   (`credit`, `payment-method`, `blocked`) with the time. From now the proxy
+   refuses every **new** request to it with the reason's answer, and
+   closes its VNC viewers and MCP event streams (they are not work in
+   progress).
+2. **Calls in flight finish.** MCP calls and uploads that were already
+   being proxied are left to complete. The bound is the proxy's own:
+   `mcpResponseTimeout`, 10 minutes, after which the proxy has given up on
+   the call anyway. The sweep waits until the session has no call in
+   flight, or `BILLING_DRAIN_TIMEOUT` (10 m) has passed since the mark,
+   whichever is first.
+3. **Snapshot, then sleep**: `Store.Sleep`, as for an idle session, with
+   `browserjs.dev/stopped-by: credit` (or `payment-method`, `blocked`). The
+   snapshot failing does not stop the sleep (as today); the session then
+   wakes cold. The draining mark is removed.
 
-## Rate of new accounts (stage 4)
+A session that was **starting** is suspended at once (nothing to drain). A
+sleep that fails is retried at the next sweep. With `stale` true the sweep
+starts nothing new, and finishes what it began.
+
+If credit arrives (or a card is back) while a session is draining, the mark
+is removed, the session stays up and new calls are accepted again.
+
+Awake time during the grace and the drain is counted as overdraft and
+owed by nobody. The most a user gets this way is about 15 minutes per
+exhaustion, and each exhaustion needs a purchase to recover from.
+
+**Afterwards.** A session stopped for `credit` or `payment-method` shows as
+`asleep` with that reason (`stoppedBy` on the session view). It is **not
+woken automatically** when credit or a card returns: it becomes wakeable,
+and wakes on its next use or on Resume, through the table. `Store.Wake`
+must accept the two new `stopped-by` values as it accepts `idle`.
+
+## Disks at zero
+
+A disk is charged while its session exists (`metering.md`). At a zero
+balance the charge is overdraft: the balance does not go negative and
+nothing is owed. So that this is not free storage for ever:
+
+| Time at zero (`now - exhaustedAt`, continuously) | What happens |
+|---|---|
+| day 0 | sessions asleep (above). Banner: "You are out of credit. Your sessions are kept until <date>. Add credit to keep them." Each session shows "Deleted on <date> unless you add credit." |
+| day 7 | the same banner turns to an error and cannot be dismissed |
+| day 13 | banner: "Your sessions will be deleted tomorrow." |
+| day 14 (`ZERO_BALANCE_DELETE_AFTER`) | a daily pass deletes the account's sessions, disks and snapshots. The Account, its history and any later credit remain. |
+
+The same clock runs for an account in `no_card`, from
+`spec.paymentMethod.removedAt`, **only if** its balance is also zero; a
+`no_card` account with credit keeps its sessions, and its disks go on
+drawing on that credit.
+
+Any credit arriving clears `exhaustedAt` and with it the clock. Subscribers
+are covered by the same rule: a paid renewal is credit arriving.
+
+The deletion pass is switched separately (`ZERO_BALANCE_DELETE`, default
+`off`) and is not turned on until the product can send email, because the
+notices above are seen only by someone who opens the app (design, 11).
+Until then disks at zero are kept and are a cost.
+
+## Auto-recharge
+
+Not enforcement, but it runs in the same sweep (`stripe.md`,
+"Auto-recharge"): when `balanceMicros` is below the account's threshold and
+auto-recharge is on, the sweep asks the Stripe component for a charge. Its
+success is credit arriving.
+
+## Sign-up limits (open sign-up)
 
 With `OPEN_SIGNUP` on, the backend makes an Account for any signed-in user,
-but not more than `SIGNUPS_PER_DAY` (50) and `SIGNUPS_PER_IP_PER_DAY` (3)
-free accounts; beyond that a new user sees "Sign-ups are paused for today"
-and no Account is made. Counted from the Accounts' creation timestamps and
-an annotation `browserjs.dev/signup-ip-hash` (a salted hash, deleted after
-35 days).
+but not more than `SIGNUPS_PER_DAY` (200) and `SIGNUPS_PER_IP_PER_DAY` (5);
+beyond that a new user sees "Sign-ups are paused for today" and no Account
+is made. Setup checkouts are limited to 5 per account per day, and an
+account may have at most 5 saved cards. Counted from the Accounts' creation
+timestamps and an annotation `browserjs.dev/signup-ip-hash` (a salted hash,
+deleted after 35 days).

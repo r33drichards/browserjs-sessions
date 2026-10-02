@@ -29,12 +29,12 @@ spec:
         - name: Plan
           type: string
           jsonPath: .spec.plan
-        - name: Used (s)
+        - name: Awake (s)
           type: integer
-          jsonPath: .spec.usedSeconds
-        - name: Allowance (s)
+          jsonPath: .spec.awakeSeconds
+        - name: Charged (µ$)
           type: integer
-          jsonPath: .spec.allowanceSeconds
+          jsonPath: .spec.chargedMicros
       schema:
         openAPIV3Schema:
           type: object
@@ -45,7 +45,7 @@ spec:
           properties:
             spec:
               type: object
-              required: ["account", "start", "end", "usedSeconds"]
+              required: ["account", "start", "end", "chargedMicros"]
               properties:
                 account:
                   type: string
@@ -58,40 +58,43 @@ spec:
                   format: date-time
                 plan:
                   type: string
-                allowanceSeconds:
+                planCreditMicros:
                   type: integer
                   format: int64
-                usedSeconds:
+                awakeSeconds:
                   type: integer
                   format: int64
-                purchasedSecondsUsed:
-                  description: The part of usedSeconds that packs paid for.
+                diskGBSeconds:
                   type: integer
                   format: int64
-                overdraftSeconds:
+                awakeMicros:
                   type: integer
                   format: int64
+                diskMicros:
+                  type: integer
+                  format: int64
+                chargedMicros:
+                  description: awakeMicros + diskMicros.
+                  type: integer
+                  format: int64
+                overdraftMicros:
+                  type: integer
+                  format: int64
+                bySource:
+                  description: chargedMicros by the source of the grant that paid (signup, plan, purchase, admin).
+                  type: object
+                  additionalProperties:
+                    type: integer
+                    format: int64
                 days:
                   type: array
                   maxItems: 32
                   items:
                     type: object
-                    required: ["date", "seconds"]
-                    properties:
-                      date:
-                        type: string
-                      seconds:
-                        type: integer
-                        format: int64
+                    x-kubernetes-preserve-unknown-fields: true
                 sessions:
                   type: array
                   maxItems: 200
                   items:
                     type: object
-                    required: ["id", "seconds"]
-                    properties:
-                      id:
-                        type: string
-                      seconds:
-                        type: integer
-                        format: int64
+                    x-kubernetes-preserve-unknown-fields: true

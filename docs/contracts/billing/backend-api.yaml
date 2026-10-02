@@ -21,14 +21,16 @@ info:
 
     Changes to existing responses, only while BILLING is not off:
     - a session (`GET /api/sessions`, `GET /api/sessions/{id}`) gains
-      `stoppedBy` (`user`, `idle`, `billing`) when it is asleep or stopped,
-      and `deleteAfter` (date-time) when it is due for deletion;
+      `stoppedBy` (`user`, `idle`, `credit`, `payment-method`, `blocked`)
+      when it is asleep or stopped, `draining` (the same reasons) while it
+      is finishing calls before such a sleep, and `deleteAfter` (date-time)
+      when it is due for deletion;
     - `POST /api/sessions`, `PATCH /api/sessions/{id}` and proxied requests
       can answer with the `Error` below (enforcement.md).
 paths:
   /api/billing:
     get:
-      summary: The caller's plan, hours and limits. Also GET /v1/billing.
+      summary: The caller's state, credit, plan and limits. Also GET /v1/billing.
       description: |
         Makes the Account if the caller has none (subject to the sign-up
         limits when OPEN_SIGNUP is on). `ledger` is `pending` until the
@@ -72,17 +74,19 @@ paths:
               schema: { $ref: "#/components/schemas/Catalogue" }
   /api/billing/checkout:
     post:
-      summary: Start a Stripe Checkout for a plan or a pack.
+      summary: Start a Stripe Checkout, to save a card, subscribe, or buy credit.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [item]
               properties:
                 item:
-                  description: A lookupKey of the catalogue.
+                  description: >-
+                    A lookupKey of the catalogue (a plan or a pack). Absent:
+                    a Checkout in setup mode that saves a card and charges
+                    nothing.
                   type: string
       responses:
         "200":
@@ -126,11 +130,18 @@ paths:
                 properties:
                   status:
                     description: |
-                      `open`: not paid yet. `paid`: paid, and the Grant exists
-                      (its hours are in `GET /api/billing` at the next tick).
+                      `open`: not completed yet. `complete`: the card is
+                      saved, or the payment is made and its Grant exists (the
+                      credit is in `GET /api/billing` at the next tick).
                       `expired`: abandoned.
                     type: string
-                    enum: [open, paid, expired]
+                    enum: [open, complete, expired]
+                  kind:
+                    type: string
+                    enum: [setup, plan, purchase]
+                  signupCredit:
+                    description: For kind setup, what was decided.
+                    $ref: "#/components/schemas/SignupCredit"
                   item: { type: string }
         "404":
           description: Not a Checkout of the caller's account.
@@ -151,9 +162,39 @@ paths:
           description: no_customer (the account has never bought anything).
         "502":
           description: stripe_unavailable.
+  /api/billing/auto-recharge:
+    put:
+      summary: Turn automatic top-up on or off, and set its pack, threshold and monthly cap.
+      description: |
+        Cookie only. Turning it on requires `agree: true` (the user saw the
+        text of ui-states.md) and a saved card. 404 while AUTO_RECHARGE is
+        off.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+                pack: { type: string, description: A pack's key. }
+                thresholdMicros: { type: integer, format: int64 }
+                monthlyCapCents: { type: integer, format: int64 }
+                agree: { type: boolean }
+      responses:
+        "200":
+          description: The setting as stored.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AutoRecharge" }
+        "400":
+          description: unknown_item, a cap above the catalogue's maximum, or enabling without agree.
+        "402":
+          description: payment_method_required.
   /api/billing/terms:
     post:
-      summary: Record that the caller accepts the terms (stage 4).
+      summary: Record that the caller accepts the terms.
       requestBody:
         required: true
         content:
@@ -173,8 +214,9 @@ paths:
       summary: Delete the caller's account and everything in it.
       description: |
         Deletes every session (disk and snapshots), every API token, cancels
-        the subscription at once with no refund, revokes every Grant, and
-        leaves the Account with `deletedAt` for 35 days. Not undoable. The
+        the subscription at once with no refund, detaches every saved
+        card, revokes every Grant, and leaves the Account with `deletedAt`
+        (and the record that its card has had the sign-up credit). Not undoable. The
         body must repeat the caller's email address.
       requestBody:
         required: true
@@ -221,31 +263,72 @@ components:
         error: { type: string, description: A sentence for a person. }
         code:
           type: string
-          enum: [out_of_hours, session_limit, awake_limit, at_capacity, rate_limited,
-                 metering_unavailable, account_blocked, terms_required, signups_paused,
-                 already_subscribed, no_customer, unknown_item, ui_only,
-                 stripe_unavailable, payments_off]
+          enum: [payment_method_required, out_of_credit, session_limit, awake_limit,
+                 at_capacity, rate_limited, metering_unavailable, account_blocked,
+                 terms_required, signups_paused, already_subscribed, no_customer,
+                 unknown_item, ui_only, stripe_unavailable, payments_off,
+                 too_many_cards, auto_recharge_off]
         billingUrl: { type: string, format: uri }
         limit: { type: integer, description: The N of session_limit and awake_limit. }
+    SignupCredit:
+      type: object
+      required: [state]
+      properties:
+        state:
+          type: string
+          enum: [pending, granted, refused]
+        reason:
+          type: string
+          enum: [card-used, prepaid, wallet, no-fingerprint]
+        amountMicros: { type: integer, format: int64 }
+    AutoRecharge:
+      type: object
+      required: [available, enabled]
+      properties:
+        available: { type: boolean, description: AUTO_RECHARGE is on. }
+        enabled: { type: boolean }
+        pack: { type: string }
+        thresholdMicros: { type: integer, format: int64 }
+        monthlyCapCents: { type: integer, format: int64 }
+        chargedCents: { type: integer, format: int64, description: Charged automatically this calendar month. }
+        lastStatus:
+          type: string
+          enum: [pending, succeeded, failed]
+        disabledReason:
+          type: string
+          enum: [payment-failed, authentication-required, no-card, cap-reached]
     Billing:
       type: object
-      required: [mode, ledger, plan, level, balanceSeconds, period, limits, payments]
+      required: [mode, state, ledger, plan, level, balanceMicros, rates, period, limits, payments]
       properties:
         mode:
           type: string
           enum: [meter, enforce]
+        state:
+          description: enforcement.md, "Account states".
+          type: string
+          enum: [blocked, exempt, terms, no_card, active]
         ledger:
           type: string
           enum: [ok, pending, stale]
-        exempt: { type: boolean }
+        hasPaymentMethod: { type: boolean }
+        card:
+          description: The default card, for display. Absent without one.
+          type: object
+          properties:
+            brand: { type: string }
+            last4: { type: string }
+            expMonth: { type: integer }
+            expYear: { type: integer }
+        signupCredit: { $ref: "#/components/schemas/SignupCredit" }
         plan:
           type: object
           required: [key, name]
           properties:
-            key: { type: string, description: "free, payg, or a plan's key" }
+            key: { type: string, description: "payg, or a plan's key" }
             name: { type: string }
-            amount: { type: integer, description: US cents a month; absent for free and payg. }
-            hours: { type: integer, description: Hours the period's grant gives. }
+            amount: { type: integer, description: US cents a month; absent for payg. }
+            creditMicros: { type: integer, format: int64, description: Credit the plan gives each period. }
         subscription:
           description: Absent without one.
           type: object
@@ -259,78 +342,116 @@ components:
         level:
           type: string
           enum: [ok, low, exhausted]
-        balanceSeconds: { type: integer, format: int64 }
-        purchasedSeconds: { type: integer, format: int64 }
-        purchasedExpiresAt:
-          description: When the purchased hours that expire first do.
-          type: string
-          format: date-time
+        balanceMicros: { type: integer, format: int64 }
+        balances:
+          description: The balance by source, in the order it will be used.
+          type: array
+          items:
+            type: object
+            required: [source, micros]
+            properties:
+              source:
+                type: string
+                enum: [plan, signup, purchase, admin]
+              micros: { type: integer, format: int64 }
+              expiresAt: { type: string, format: date-time }
+        burnMicrosPerHour: { type: integer, format: int64 }
+        rates:
+          type: object
+          required: [awakeMicrosPerHour, diskMicrosPerGBHour, sessionDiskGB]
+          properties:
+            awakeMicrosPerHour: { type: integer, format: int64 }
+            diskMicrosPerGBHour: { type: integer, format: int64 }
+            sessionDiskGB: { type: integer }
         exhaustedAt: { type: string, format: date-time }
         sleepAt:
-          description: exhaustedAt + BILLING_GRACE, while sessions are still running on no hours.
+          description: exhaustedAt + BILLING_GRACE, while sessions are still running on no credit.
+          type: string
+          format: date-time
+        deleteAt:
+          description: When the account's sessions will be deleted for being at zero, if ZERO_BALANCE_DELETE is on.
           type: string
           format: date-time
         period:
           type: object
-          required: [start, end, allowanceSeconds, usedSeconds]
+          required: [start, end, awakeSeconds, awakeMicros, diskMicros]
           properties:
             start: { type: string, format: date-time }
             end: { type: string, format: date-time }
-            allowanceSeconds: { type: integer, format: int64 }
-            usedSeconds: { type: integer, format: int64 }
+            planCreditMicros: { type: integer, format: int64 }
+            awakeSeconds: { type: integer, format: int64 }
+            awakeMicros: { type: integer, format: int64 }
+            diskMicros: { type: integer, format: int64 }
         limits:
           type: object
           required: [maxSessions, maxAwake]
           properties:
             maxSessions: { type: integer }
             maxAwake: { type: integer }
-            idleDeleteDays: { type: integer }
+        autoRecharge: { $ref: "#/components/schemas/AutoRecharge" }
         payments:
-          description: "`off`: nothing can be bought (STRIPE_MODE unset). `test`: test mode, the UI says so."
+          description: "`off`: Stripe is not configured. `test`: test mode, the UI says so."
           type: string
           enum: ["off", test, live]
         hasCustomer: { type: boolean, description: Whether the portal can be opened. }
         termsRequired: { type: string, description: The version to accept, when one must be. }
     Usage:
       type: object
-      required: [start, end, usedSeconds, days, sessions, periods]
+      required: [start, end, awakeSeconds, awakeMicros, diskMicros, days, sessions, periods]
       properties:
         start: { type: string, format: date-time }
         end: { type: string, format: date-time }
         plan: { type: string }
-        allowanceSeconds: { type: integer, format: int64 }
-        usedSeconds: { type: integer, format: int64 }
+        awakeSeconds: { type: integer, format: int64 }
+        awakeMicros: { type: integer, format: int64 }
+        diskMicros: { type: integer, format: int64 }
         days:
           type: array
           items:
             type: object
-            required: [date, seconds]
+            required: [date]
             properties:
               date: { type: string, format: date }
-              seconds: { type: integer, format: int64 }
+              awakeSeconds: { type: integer, format: int64 }
+              awakeMicros: { type: integer, format: int64 }
+              diskMicros: { type: integer, format: int64 }
         sessions:
           type: array
           items:
             type: object
-            required: [id, seconds]
+            required: [id]
             properties:
               id: { type: string }
               name: { type: string, description: Absent for a deleted session. }
-              seconds: { type: integer, format: int64 }
+              awakeSeconds: { type: integer, format: int64 }
+              awakeMicros: { type: integer, format: int64 }
+              diskMicros: { type: integer, format: int64 }
         periods:
           description: Starts of the closed periods that can be asked for, newest first.
           type: array
           items: { type: string, format: date-time }
     Catalogue:
+      description: catalogue.yaml as the caller may see it (enabled items only, no product IDs).
       type: object
-      required: [currency, free, plans, packs]
+      required: [currency, rates, signupCredit, payg, plans, packs]
       properties:
         currency: { type: string }
-        free:
+        rates:
           type: object
           properties:
-            hours: { type: integer }
+            awakeMicrosPerHour: { type: integer, format: int64 }
+            diskMicrosPerGBHour: { type: integer, format: int64 }
+            sessionDiskGB: { type: integer }
+        signupCredit:
+          type: object
+          properties:
+            amountMicros: { type: integer, format: int64 }
+            validDays: { type: integer }
+        payg:
+          type: object
+          properties:
             maxSessions: { type: integer }
+            maxAwake: { type: integer }
         plans:
           type: array
           items: { $ref: "#/components/schemas/Item" }
@@ -339,13 +460,13 @@ components:
           items: { $ref: "#/components/schemas/Item" }
     Item:
       type: object
-      required: [key, name, lookupKey, amount, hours]
+      required: [key, name, lookupKey, amount, creditMicros]
       properties:
         key: { type: string }
         name: { type: string }
         lookupKey: { type: string }
         amount: { type: integer, description: US cents. }
-        hours: { type: integer }
+        creditMicros: { type: integer, format: int64 }
         maxSessions: { type: integer }
         maxAwake: { type: integer }
         validDays: { type: integer }

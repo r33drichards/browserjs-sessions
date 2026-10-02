@@ -1,6 +1,6 @@
-# An amount of awake time given to one account: the month's free allowance,
-# a plan's hours for one billing period, a pack that was bought, or an
-# adjustment by an admin. Immutable but for "revoked". Its NAME is derived
+# An amount of credit, in micro-dollars, given to one account: the one-time
+# sign-up credit, a plan's credit for one billing period, a pack that was
+# bought (at a checkout or by auto-recharge), or an adjustment by an admin. Immutable but for "revoked". Its NAME is derived
 # from what caused it, so making it twice is impossible: that is how every
 # Stripe event is handled exactly once (stripe.md).
 # Contract: docs/contracts/billing/README.md. Track B copies this file to
@@ -30,12 +30,12 @@ spec:
         - name: Source
           type: string
           jsonPath: .spec.source
-        - name: Seconds
+        - name: Amount (µ$)
           type: integer
-          jsonPath: .spec.seconds
-        - name: Used
+          jsonPath: .spec.amountMicros
+        - name: Used (µ$)
           type: integer
-          jsonPath: .status.consumedSeconds
+          jsonPath: .status.consumedMicros
         - name: Expires
           type: date
           jsonPath: .spec.expiresAt
@@ -53,11 +53,11 @@ spec:
           properties:
             spec:
               type: object
-              required: ["account", "source", "seconds", "validFrom", "key"]
+              required: ["account", "source", "amountMicros", "validFrom", "key"]
               x-kubernetes-validations:
                 - rule: >-
                     self.account == oldSelf.account && self.source == oldSelf.source &&
-                    self.seconds == oldSelf.seconds && self.validFrom == oldSelf.validFrom &&
+                    self.amountMicros == oldSelf.amountMicros && self.validFrom == oldSelf.validFrom &&
                     self.key == oldSelf.key &&
                     has(self.expiresAt) == has(oldSelf.expiresAt) &&
                     (!has(self.expiresAt) || self.expiresAt == oldSelf.expiresAt)
@@ -73,12 +73,13 @@ spec:
                   pattern: "^acct-[0-9a-f]{32}$"
                 source:
                   type: string
-                  enum: ["free", "plan", "purchase", "admin"]
-                seconds:
+                  enum: ["signup", "plan", "purchase", "admin"]
+                amountMicros:
+                  description: Micro-dollars of credit (1 USD = 1000000).
                   type: integer
                   format: int64
                   minimum: 1
-                  maximum: 36000000
+                  maximum: 10000000000
                 validFrom:
                   type: string
                   format: date-time
@@ -88,13 +89,14 @@ spec:
                 key:
                   description: >-
                     What caused the grant, the string its name is the hash of
-                    (stripe.md, "Grant keys"): free/<ownerHash>/<yyyy-mm>,
+                    (stripe.md, "Grant keys"): signup/<card fingerprint>,
                     plan/<subscription id>/<period start, unix>,
-                    purchase/<checkout session id>, admin/<free text>.
+                    purchase/<checkout session id>, recharge/<payment intent id>,
+                    admin/<free text>.
                   type: string
                   maxLength: 256
                 item:
-                  description: The lookup_key of the plan or pack (catalogue.yaml). Absent for free and admin.
+                  description: The lookup_key of the plan or pack (catalogue.yaml). Absent for signup and admin.
                   type: string
                 ref:
                   description: Stripe IDs for a human following the money. Never used for a decision.
@@ -123,7 +125,7 @@ spec:
               description: Written by the billing operator, for people to read; the ledger itself is Account.status.meter.consumed.
               type: object
               properties:
-                consumedSeconds:
+                consumedMicros:
                   type: integer
                   format: int64
                 state:

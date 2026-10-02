@@ -1,6 +1,7 @@
-# One per user of the product: who they are to Stripe, and the ledger of
-# their hours. Created by the backend the first time a signed-in user is
-# seen; spec is the backend's, status is the billing operator's alone.
+# One per user of the product: who they are to Stripe, whether they have a
+# card, and the ledger of their credit. Created by the backend the first
+# time a signed-in user is seen; spec is the backend's, status is the
+# billing operator's alone.
 # Contract: docs/contracts/billing/README.md. Track B copies this file to
 # deploy/base/crd-account.yaml unchanged.
 apiVersion: apiextensions.k8s.io/v1
@@ -25,18 +26,18 @@ spec:
         - name: Owner
           type: string
           jsonPath: .spec.owner
+        - name: Card
+          type: boolean
+          jsonPath: .spec.paymentMethod.present
         - name: Plan
           type: string
           jsonPath: .status.plan
         - name: Level
           type: string
           jsonPath: .status.level
-        - name: Balance (s)
+        - name: Balance (µ$)
           type: integer
-          jsonPath: .status.balanceSeconds
-        - name: Used (s)
-          type: integer
-          jsonPath: .status.period.usedSeconds
+          jsonPath: .status.balanceMicros
         - name: Period end
           type: date
           jsonPath: .status.period.end
@@ -64,6 +65,8 @@ spec:
                   message: owner and ownerHash cannot be changed
                 - rule: "!has(oldSelf.stripeCustomerId) || (has(self.stripeCustomerId) && self.stripeCustomerId == oldSelf.stripeCustomerId)"
                   message: stripeCustomerId cannot be changed once set
+                - rule: "!has(oldSelf.signupCredit) || (has(self.signupCredit) && self.signupCredit == oldSelf.signupCredit)"
+                  message: the sign-up credit is decided once
               properties:
                 owner:
                   description: The user's email address, lower case, as on their sessions (browserjs.dev/owner-id).
@@ -74,15 +77,59 @@ spec:
                   type: string
                   pattern: "^[0-9a-f]{32}$"
                 stripeCustomerId:
-                  description: The Stripe Customer, made at the first checkout. Absent until then.
+                  description: The Stripe Customer, made the first time the user is sent to Stripe. Absent until then.
                   type: string
                   pattern: "^cus_[A-Za-z0-9]+$"
+                paymentMethod:
+                  description: >-
+                    What the backend last read from Stripe about the customer's
+                    saved payment methods. Always written from a fresh list of
+                    them, never from an event's payload. Absent, or present
+                    false: the account has no card and can create and wake
+                    nothing (enforcement.md).
+                  type: object
+                  required: ["present", "readAt"]
+                  properties:
+                    present:
+                      description: At least one payment method is attached to the customer.
+                      type: boolean
+                    ids:
+                      description: The attached PaymentMethod IDs. A payment_method.detached event names no customer; this list is how its account is found.
+                      type: array
+                      maxItems: 20
+                      x-kubernetes-list-type: set
+                      items:
+                        type: string
+                        pattern: "^pm_[A-Za-z0-9]+$"
+                    default:
+                      type: string
+                    readAt:
+                      type: string
+                      format: date-time
+                    removedAt:
+                      description: When present last became false after having been true. Cleared when a card is back.
+                      type: string
+                      format: date-time
+                signupCredit:
+                  description: The outcome of the one-time sign-up credit, written when the first card is saved and never again.
+                  type: object
+                  required: ["state", "at"]
+                  properties:
+                    state:
+                      type: string
+                      enum: ["granted", "refused"]
+                    reason:
+                      description: "For refused: card-used (this card already earned a credit on some account), prepaid, wallet, no-fingerprint."
+                      type: string
+                      enum: ["card-used", "prepaid", "wallet", "no-fingerprint"]
+                    at:
+                      type: string
+                      format: date-time
                 subscription:
                   description: >-
                     What the backend last read from Stripe about the user's one
                     subscription. Absent for a user who never subscribed. Always
-                    written from a fresh read of the Subscription, never from an
-                    event's payload.
+                    written from a fresh read of the Subscription.
                   type: object
                   required: ["id", "status", "priceLookupKey"]
                   properties:
@@ -106,11 +153,56 @@ spec:
                       type: string
                       format: date-time
                     readAt:
-                      description: When the backend read this from Stripe.
                       type: string
                       format: date-time
+                autoRecharge:
+                  description: The user's automatic top-up (stripe.md, "Auto-recharge"). Absent or enabled false, nothing is ever charged without the user at a checkout.
+                  type: object
+                  required: ["enabled"]
+                  properties:
+                    enabled:
+                      type: boolean
+                    thresholdMicros:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                    pack:
+                      description: The key of a pack in catalogue.yaml.
+                      type: string
+                    monthlyCapCents:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                    agreedAt:
+                      description: When the user agreed to off-session charges, with the text shown (ui-states.md).
+                      type: string
+                      format: date-time
+                    month:
+                      description: The calendar month (yyyy-mm, UTC) that seq and chargedCents count.
+                      type: string
+                    seq:
+                      description: Automatic charges attempted in that month.
+                      type: integer
+                    chargedCents:
+                      type: integer
+                      format: int64
+                    last:
+                      type: object
+                      properties:
+                        paymentIntent:
+                          type: string
+                        status:
+                          type: string
+                          enum: ["pending", "succeeded", "failed"]
+                        at:
+                          type: string
+                          format: date-time
+                    disabledReason:
+                      description: Set with enabled false when the backend turned it off.
+                      type: string
+                      enum: ["payment-failed", "authentication-required", "no-card", "cap-reached"]
                 exempt:
-                  description: Metered, never refused, never stopped. For admins and guests of the house; set by hand or from BILLING_EXEMPT_EMAILS.
+                  description: Metered, never refused, never stopped, needs no card. For admins and guests of the house; set by hand or from BILLING_EXEMPT_EMAILS.
                   type: boolean
                 blocked:
                   description: Present, the user can do nothing and their sessions are put to sleep. Set by an admin, or by the backend on a dispute.
@@ -127,14 +219,14 @@ spec:
                       type: string
                       format: date-time
                 termsAcceptedAt:
-                  description: When the user accepted the terms (stage 4). Absent, the UI asks before anything else.
+                  description: When the user accepted the terms. Absent, the first-run page asks before the card.
                   type: string
                   format: date-time
                 termsVersion:
                   type: string
                   maxLength: 32
                 deletedAt:
-                  description: The user deleted their account. Only owner, ownerHash and this are kept, for 35 days, so that signing up again in the same month gives no second free allowance.
+                  description: The user deleted their account. Only owner, ownerHash, signupCredit and this are kept.
                   type: string
                   format: date-time
             status:
@@ -142,22 +234,40 @@ spec:
               type: object
               properties:
                 plan:
-                  description: The key of the plan in catalogue.yaml that sets the user's limits now.
+                  description: "The key of the catalogue entry that sets the user's limits now: a plan's key, or payg."
                   type: string
                 level:
-                  description: ok, low (20 % of the allowance or 30 minutes left), exhausted (nothing left).
+                  description: ok, low (20 % of the plan's monthly credit, or $1, left), exhausted (nothing left).
                   type: string
                   enum: ["ok", "low", "exhausted"]
-                balanceSeconds:
-                  description: Awake seconds the user can still use now, over every live grant.
+                balanceMicros:
+                  description: Credit the user can still use now, over every live grant, in micro-dollars.
                   type: integer
                   format: int64
                   minimum: 0
-                purchasedSeconds:
-                  description: The part of balanceSeconds that came from packs.
+                balances:
+                  description: balanceMicros by source of grant, with the earliest expiry of each.
+                  type: array
+                  maxItems: 4
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys: ["source"]
+                  items:
+                    type: object
+                    required: ["source", "micros"]
+                    properties:
+                      source:
+                        type: string
+                        enum: ["signup", "plan", "purchase", "admin"]
+                      micros:
+                        type: integer
+                        format: int64
+                      expiresAt:
+                        type: string
+                        format: date-time
+                burnMicrosPerHour:
+                  description: What the account is being charged per hour as of the last tick (awake sessions and every disk). For "about N hours left".
                   type: integer
                   format: int64
-                  minimum: 0
                 period:
                   description: The period usage is shown for. A subscriber's is Stripe's billing period; anyone else's the calendar month, UTC.
                   type: object
@@ -168,47 +278,67 @@ spec:
                     end:
                       type: string
                       format: date-time
-                    allowanceSeconds:
-                      description: The seconds of the period's free or plan grant.
+                    planCreditMicros:
+                      description: The amount of the period's plan grant; 0 without a plan.
                       type: integer
                       format: int64
-                    usedSeconds:
-                      description: Awake seconds metered in the period, whatever paid for them.
+                    awakeSeconds:
+                      type: integer
+                      format: int64
+                    diskGBSeconds:
+                      type: integer
+                      format: int64
+                    awakeMicros:
+                      type: integer
+                      format: int64
+                    diskMicros:
                       type: integer
                       format: int64
                     days:
-                      description: usedSeconds by UTC day, for the chart. At most 32 entries.
+                      description: By UTC day, for the chart. At most 32 entries.
                       type: array
                       maxItems: 32
                       items:
                         type: object
-                        required: ["date", "seconds"]
+                        required: ["date"]
                         properties:
                           date:
                             type: string
                             pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
-                          seconds:
+                          awakeSeconds:
+                            type: integer
+                            format: int64
+                          awakeMicros:
+                            type: integer
+                            format: int64
+                          diskMicros:
                             type: integer
                             format: int64
                     sessions:
-                      description: usedSeconds by session, including sessions since deleted. At most 200 entries; the smallest are merged into "other".
+                      description: By session, including sessions since deleted. At most 200 entries; the smallest are merged into "other".
                       type: array
                       maxItems: 200
                       items:
                         type: object
-                        required: ["id", "seconds"]
+                        required: ["id"]
                         properties:
                           id:
                             type: string
-                          seconds:
+                          awakeSeconds:
+                            type: integer
+                            format: int64
+                          awakeMicros:
+                            type: integer
+                            format: int64
+                          diskMicros:
                             type: integer
                             format: int64
                 exhaustedAt:
-                  description: When the balance reached zero; absent while there is a balance. The backend puts the user's sessions to sleep BILLING_GRACE after this.
+                  description: When the balance reached zero; absent while there is a balance. The backend's stop (enforcement.md) and the deletion of disks at zero count from it.
                   type: string
                   format: date-time
-                overdraftSeconds:
-                  description: Seconds used with no grant to cover them (the grace, and any slowness in stopping). Counted, never charged.
+                overdraftMicros:
+                  description: Charges with no grant to cover them (the grace, calls finishing, disks at zero). Counted, never owed.
                   type: integer
                   format: int64
                 meter:
@@ -219,38 +349,48 @@ spec:
                       description: The time of the last tick. Older than BILLING_STALE_AFTER, the ledger is stale (enforcement.md).
                       type: string
                       format: date-time
-                    usedSeconds:
-                      description: Every second ever metered for the account.
+                    chargedMicros:
+                      description: Everything ever charged to the account.
                       type: integer
                       format: int64
+                    carry:
+                      description: The remainders of the last tick's two divisions by 3600.
+                      type: object
+                      properties:
+                        awake:
+                          type: integer
+                        disk:
+                          type: integer
                     sessions:
-                      description: The sessions that were billable at the last tick.
+                      description: The account's sessions as of the last tick.
                       type: array
                       maxItems: 200
                       x-kubernetes-list-type: map
                       x-kubernetes-list-map-keys: ["id"]
                       items:
                         type: object
-                        required: ["id", "lastSeen"]
+                        required: ["id", "lastSeen", "awake"]
                         properties:
                           id:
                             type: string
                           lastSeen:
                             type: string
                             format: date-time
+                          awake:
+                            type: boolean
                     consumed:
-                      description: Seconds taken from each grant that is still live or expired within 35 days. At most 200 entries.
+                      description: Micro-dollars taken from each grant that is still live or expired within 35 days. At most 200 entries.
                       type: array
                       maxItems: 200
                       x-kubernetes-list-type: map
                       x-kubernetes-list-map-keys: ["grant"]
                       items:
                         type: object
-                        required: ["grant", "seconds"]
+                        required: ["grant", "micros"]
                         properties:
                           grant:
                             type: string
-                          seconds:
+                          micros:
                             type: integer
                             format: int64
                 conditions:

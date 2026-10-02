@@ -10,23 +10,24 @@ same answers. Usage:
 
 --write fills in each vector's "expect" from this implementation; a change
 it makes to the file is a change to the contract and is reviewed as one.
+
+Money is whole micro-dollars (1 USD = 1,000,000). Rates are per hour, so a
+tick's charge is (seconds x rate + carry) // 3600 and the remainder is
+carried: nothing is lost or invented by rounding.
 """
 import json
 import sys
 from datetime import datetime, timezone
 
-MAX_GAP = 150        # seconds; a longer gap between two observations is not billed
-LOW_FRACTION = 0.2   # "low" when the balance is at most this share of the allowance...
-LOW_FLOOR = 1800     # ...or at most this many seconds, whichever is larger
-PERIODIC = ("free", "plan")  # grants that make up the period's allowance
+MAX_GAP = 150            # seconds; a longer gap between two observations is not billed
+AWAKE_RATE = 200_000     # micro-dollars per awake session-hour   (catalogue.yaml rates.awakeMicrosPerHour)
+DISK_RATE = 384          # micro-dollars per GB-hour of disk      (catalogue.yaml rates.diskMicrosPerGBHour)
+LOW_FRACTION = 0.2       # "low" when the balance is at most this share of the plan's monthly credit...
+LOW_FLOOR = 1_000_000    # ...or at most one dollar, whichever is larger
 
 
 def ts(s):
     return int(datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp())
-
-
-def iso(t):
-    return datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def live(grant, now):
@@ -45,47 +46,53 @@ def order(grant):
 
 def step(state, grants, observed, now_iso):
     """One tick. `state` is Account.status.meter (mutated and returned);
-    `grants` the account's Grant specs; `observed` maps session ID to
-    {"billable": bool, "readySince": iso or None}."""
+    `grants` the account's Grant specs; `observed` maps the ID of every
+    session of the account that exists and is not being deleted to
+    {"awake": bool, "readySince": iso or None, "diskGB": int}."""
     now = ts(now_iso)
     sessions = state.setdefault("sessions", {})
-    consumed = state.setdefault("consumed", {})   # grant name -> seconds
-    credited = {}
+    consumed = state.setdefault("consumed", {})   # grant name -> micro-dollars
+    carry = state.setdefault("carry", {"awake": 0, "disk": 0})
+    awake, disk = {}, {}
 
     for sid, o in sorted(observed.items()):
-        if not o["billable"]:
-            continue
         prev = sessions.get(sid)
         gap = now - ts(prev["lastSeen"]) if prev else None
-        if gap is not None and 0 < gap <= MAX_GAP:
-            credit = gap
-        else:
-            # First sight of this run, or the meter was away too long, or the
-            # clock went backwards: bill only from when the pod became Ready,
-            # and only if that was recent enough to have been seen.
-            since = now - ts(o["readySince"]) if o.get("readySince") else -1
-            credit = since if 0 <= since <= MAX_GAP else 0
-        if credit:
-            credited[sid] = credit
-        sessions[sid] = {"lastSeen": now_iso}
+        seen = gap is not None and 0 < gap <= MAX_GAP
+        if seen:
+            disk[sid] = gap * o["diskGB"]          # the disk existed at both sights
+        if o["awake"]:
+            if seen and prev["awake"]:
+                a = gap
+            else:
+                # First sight of this run, or the meter was away too long, or
+                # the clock went backwards: bill only from when the pod became
+                # Ready, and only if that was recent enough to have been seen.
+                since = now - ts(o["readySince"]) if o.get("readySince") else -1
+                a = since if 0 <= since <= MAX_GAP else 0
+            if a:
+                awake[sid] = a
+        sessions[sid] = {"lastSeen": now_iso, "awake": o["awake"]}
     for sid in list(sessions):
-        if sid not in observed or not observed[sid]["billable"]:
-            del sessions[sid]           # the tail since lastSeen is never billed
+        if sid not in observed:
+            del sessions[sid]                      # deleted: the time since lastSeen is never billed
 
-    owed = sum(credited.values())
-    state["usedSeconds"] = state.get("usedSeconds", 0) + owed
+    awake_micros, carry["awake"] = divmod(sum(awake.values()) * AWAKE_RATE + carry["awake"], 3600)
+    disk_micros, carry["disk"] = divmod(sum(disk.values()) * DISK_RATE + carry["disk"], 3600)
+    owed = awake_micros + disk_micros
+    state["chargedMicros"] = state.get("chargedMicros", 0) + owed
     for g in sorted((g for g in grants if live(g, now)), key=order):
         if owed == 0:
             break
-        take = min(owed, g["seconds"] - consumed.get(g["name"], 0))
+        take = min(owed, g["amountMicros"] - consumed.get(g["name"], 0))
         if take > 0:
             consumed[g["name"]] = consumed.get(g["name"], 0) + take
             owed -= take
     # What no grant covers was used but is not owed by anyone.
-    state["overdraftSeconds"] = state.get("overdraftSeconds", 0) + owed
+    state["overdraftMicros"] = state.get("overdraftMicros", 0) + owed
 
-    balance = sum(g["seconds"] - consumed.get(g["name"], 0) for g in grants if live(g, now))
-    allowance = sum(g["seconds"] for g in grants if live(g, now) and g["source"] in PERIODIC)
+    balance = sum(g["amountMicros"] - consumed.get(g["name"], 0) for g in grants if live(g, now))
+    allowance = sum(g["amountMicros"] for g in grants if live(g, now) and g["source"] == "plan")
     if balance > 0:
         state.pop("exhaustedAt", None)
         level = "low" if balance <= max(LOW_FRACTION * allowance, LOW_FLOOR) else "ok"
@@ -93,9 +100,10 @@ def step(state, grants, observed, now_iso):
         state.setdefault("exhaustedAt", now_iso)
         level = "exhausted"
     state["observedAt"] = now_iso
-    return {"credited": credited, "balanceSeconds": balance, "allowanceSeconds": allowance,
-            "level": level, "overdraftSeconds": state["overdraftSeconds"],
-            "exhaustedAt": state.get("exhaustedAt")}
+    return {"awakeSeconds": awake, "diskGBSeconds": disk,
+            "awakeMicros": awake_micros, "diskMicros": disk_micros,
+            "balanceMicros": balance, "level": level,
+            "overdraftMicros": state["overdraftMicros"], "exhaustedAt": state.get("exhaustedAt")}
 
 
 def run(vector):
