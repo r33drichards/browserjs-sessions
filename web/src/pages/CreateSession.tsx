@@ -308,7 +308,7 @@ export function CreateSession() {
                     <Input
                       value={managedUrl}
                       type="url"
-                      placeholder="https://github.com/me/infra/blob/main/browserjs/main.tf"
+                      placeholder="https://github.com/me/infra/blob/main/computeruse/main.tf"
                       onChange={e => setManagedUrl(e.detail.value)}
                     />
                   </FormField>
