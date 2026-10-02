@@ -21,7 +21,29 @@ const (
 
 	StoppedByUser = "user" // stays stopped until resumed
 	StoppedByIdle = "idle" // wakes on the next request
+	// Billing's reasons (docs/contracts/billing/enforcement.md). A session
+	// asleep for credit or for want of a payment method wakes on the next
+	// request, as an idle one does, if its owner's account then allows it.
+	// One put to sleep because its owner is blocked stays stopped.
+	StoppedByCredit        = "credit"
+	StoppedByPaymentMethod = "payment-method"
+	StoppedByBlocked       = "blocked"
+
+	// AnnDraining marks a running session that is about to be put to sleep
+	// for one of billing's reasons (its value): calls in flight finish, new
+	// ones are refused. AnnDrainingSince is when the mark was made.
+	AnnDraining      = "browserjs.dev/draining"
+	AnnDrainingSince = "browserjs.dev/draining-since"
 )
+
+// wakes reports whether a session suspended for reason by wakes on its next
+// use (Wake), rather than staying stopped until it is resumed.
+func wakes(by string) bool {
+	return by == StoppedByIdle || by == StoppedByCredit || by == StoppedByPaymentMethod
+}
+
+// sleepReason reports whether by is a reason Sleep takes.
+func sleepReason(by string) bool { return wakes(by) || by == StoppedByBlocked }
 
 // OwnerLabel is the value of LabelOwner for an owner. An owner is an email
 // address (it has an "@", and may be long or contain "+"), so it cannot be a
@@ -63,6 +85,13 @@ type Session struct {
 	// PolicyCapable is whether the session's mcp-js asks OPA for decisions,
 	// and so whether the session can have a policy (see policy.go).
 	PolicyCapable bool `json:"-"`
+	// StoppedBy is why a suspended session is suspended (StoppedBy*), ""
+	// for one that is not. Draining is the reason a running session is
+	// being drained for, and DrainingSince when that began. Shown by the
+	// API only where billing is on.
+	StoppedBy     string    `json:"-"`
+	Draining      string    `json:"-"`
+	DrainingSince time.Time `json:"-"`
 }
 
 type condition struct {
@@ -117,7 +146,7 @@ func FromSandbox(obj *unstructured.Unstructured) Session {
 		switch {
 		case conds["Suspended"].status != "True":
 			s.State = Stopping
-		case obj.GetAnnotations()[AnnStoppedBy] == StoppedByIdle:
+		case wakes(obj.GetAnnotations()[AnnStoppedBy]):
 			s.State = Asleep
 		default:
 			s.State = Stopped
@@ -142,6 +171,11 @@ func FromSandbox(obj *unstructured.Unstructured) Session {
 	}
 	if mode != "Suspended" {
 		s.Node, _, _ = unstructured.NestedString(obj.Object, "status", "nodeName")
+		if s.Draining = obj.GetAnnotations()[AnnDraining]; s.Draining != "" {
+			s.DrainingSince, _ = time.Parse(time.RFC3339, obj.GetAnnotations()[AnnDrainingSince])
+		}
+	} else if obj.GetDeletionTimestamp() == nil {
+		s.StoppedBy = obj.GetAnnotations()[AnnStoppedBy]
 	}
 	return s
 }

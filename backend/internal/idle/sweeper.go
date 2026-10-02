@@ -10,11 +10,17 @@ import (
 	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
 )
 
+// Store is what the sweep needs of the session store (a *sessions.Store).
+type Store interface {
+	ListAll(ctx context.Context) ([]sessions.Session, error)
+	Sleep(ctx context.Context, id, stoppedBy string, stillWanted func() bool) error
+}
+
 // Sweep puts every running session that has been idle too long to sleep, and
 // stops tracking sessions that no longer exist. Sessions go to sleep side by
 // side (each may first take a snapshot, which takes a while), and Sweep
 // returns when all have: a session used in the meantime is left running.
-func Sweep(ctx context.Context, store *sessions.Store, t *Tracker) error {
+func Sweep(ctx context.Context, store Store, t *Tracker) error {
 	all, err := store.ListAll(ctx)
 	if err != nil {
 		return err
@@ -31,7 +37,7 @@ func Sweep(ctx context.Context, store *sessions.Store, t *Tracker) error {
 	var wg sync.WaitGroup
 	for _, id := range t.Idle(running) {
 		wg.Go(func() {
-			switch err := store.Sleep(ctx, id, func() bool { return t.StillIdle(id) }); {
+			switch err := store.Sleep(ctx, id, sessions.StoppedByIdle, func() bool { return t.StillIdle(id) }); {
 			case err == nil:
 				t.Reset(id)
 				slog.Info("session put to sleep", "session", id)
@@ -47,7 +53,7 @@ func Sweep(ctx context.Context, store *sessions.Store, t *Tracker) error {
 }
 
 // Run sweeps every interval until ctx is done.
-func Run(ctx context.Context, store *sessions.Store, t *Tracker, interval time.Duration) {
+func Run(ctx context.Context, store Store, t *Tracker, interval time.Duration) {
 	tick := time.NewTicker(interval)
 	defer tick.Stop()
 	for {

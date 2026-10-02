@@ -436,7 +436,7 @@ func TestEnsureAwakeStartsColdWhenTheRestoreDoesNotWork(t *testing.T) {
 			w := &Waker{Store: store, Timeout: 5 * time.Second, Poll: 5 * time.Millisecond, RestoreTimeout: 50 * time.Millisecond}
 			s, _ := store.Create(ctx, "a", "user-1")
 			sessionstest.SetStatus(t, client, s.ID, sessionstest.Ready("10.0.0.7"))
-			if err := store.Sleep(ctx, s.ID, nil); err != nil {
+			if err := store.Sleep(ctx, s.ID, sessions.StoppedByIdle, nil); err != nil {
 				t.Fatal(err)
 			}
 			sessionstest.SetStatus(t, client, s.ID, sessionstest.Suspended())
@@ -460,7 +460,7 @@ func TestEnsureAwakeKeepsASnapshotThatRestores(t *testing.T) {
 	w := &Waker{Store: store, Timeout: 5 * time.Second, Poll: 5 * time.Millisecond, RestoreTimeout: time.Second}
 	s, _ := store.Create(ctx, "a", "user-1")
 	sessionstest.SetStatus(t, client, s.ID, sessionstest.Ready("10.0.0.7"))
-	if err := store.Sleep(ctx, s.ID, nil); err != nil {
+	if err := store.Sleep(ctx, s.ID, sessions.StoppedByIdle, nil); err != nil {
 		t.Fatal(err)
 	}
 	sessionstest.SetStatus(t, client, s.ID, sessionstest.Suspended())
