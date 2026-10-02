@@ -1,0 +1,6 @@
+[bindings.python]
+cdylib_name = "computeruse"
+
+[bindings.go]
+# RENAME: follows the repository's name (sdk/go/go.mod has the same path).
+go_mod = "github.com/r33drichards/browserjs-sessions/sdk/go"

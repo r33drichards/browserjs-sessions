@@ -1,0 +1,102 @@
+name: sdk
+
+# Builds and tests the SDK (sdk/): the Rust core, and its UniFFI bindings for
+# Python, JavaScript and Go. Every test runs against a fake of the API host
+# that the test itself starts; nothing here contacts a deployment, and no
+# token here is real. Cargo runs through the flake's `sdk` dev shell.
+
+on:
+  pull_request:
+    paths:
+      - "sdk/**"
+      - "flake.nix"
+      - "flake.lock"
+      - ".github/workflows/sdk.yml"
+  push:
+    branches: [main]
+    paths:
+      - "sdk/**"
+      - "flake.nix"
+      - "flake.lock"
+      - ".github/workflows/sdk.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sdk-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+
+defaults:
+  run:
+    shell: bash
+    working-directory: sdk
+
+jobs:
+  rust:
+    name: rust (fmt, clippy, tests)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+
+      - name: Format
+        run: nix develop ..#sdk -c cargo fmt --all --check
+
+      - name: Clippy
+        run: nix develop ..#sdk -c cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Tests
+        run: nix develop ..#sdk -c cargo test --workspace --locked
+
+      - name: Docs
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: nix develop ..#sdk -c cargo doc --no-deps --locked -p computeruse-sdk -p computeruse-sdk-macros
+
+      - name: The crates package
+        run: |
+          nix develop ..#sdk -c cargo package --locked -p computeruse-sdk-macros
+          nix develop ..#sdk -c cargo package --locked -p computeruse-sdk --list > /dev/null
+
+  bindings:
+    name: bindings (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript, go]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+
+      # Generates the language's bindings from the library just built, checks
+      # that the generated sources in the tree are those, and runs the
+      # language's smoke test: load the library, make calls against a fake.
+      - name: Generate, check and smoke-test
+        env:
+          GENERATED_OUT: ${{ runner.temp }}/generated
+        run: nix develop ..#sdk -c scripts/bindings.sh ${{ matrix.language }} --check --test
+
+      # When the check fails: what the generator produced, to commit.
+      - name: Keep the generated sources
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: generated-${{ matrix.language }}
+          path: ${{ runner.temp }}/generated
+          if-no-files-found: ignore

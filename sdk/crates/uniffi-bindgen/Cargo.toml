@@ -1,0 +1,14 @@
+[package]
+name = "uniffi-bindgen"
+description = "The UniFFI bindings generator at the version the SDK is built with."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/main.rs"
+
+[dependencies]
+uniffi = { workspace = true, features = ["cli"] }

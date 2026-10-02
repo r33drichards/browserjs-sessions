@@ -1,0 +1,40 @@
+[package]
+# crates.io has an unrelated `computeruse`; the library is still `computeruse`
+# in code (`use computeruse::Client`).
+name = "computeruse-sdk"
+description = "Client for Computer Use (computeruse.site): serverless, resumable desktop containers for agents. Sessions, policies and run_js over MCP."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/computeruse-sdk"
+readme = "README.md"
+keywords = ["computer-use", "mcp", "agents", "browser", "sandbox"]
+categories = ["api-bindings", "web-programming::http-client", "asynchronous"]
+include = ["src/**", "examples/**", "tests/**", "uniffi.toml", "README.md", "LICENSE"]
+
+[lib]
+name = "computeruse"
+# lib: Rust. cdylib: Python and Node. staticlib: Go.
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[dependencies]
+base64 = "0.22"
+computeruse-sdk-macros = { version = "0.1.0", path = "../computeruse-macros" }
+# rustls with the platform's trust roots: no OpenSSL.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "http2", "charset"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["sync", "time"] }
+uniffi = { workspace = true }
+url = "2.5"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "sync", "time"] }
+
+[package.metadata.docs.rs]
+all-features = true
