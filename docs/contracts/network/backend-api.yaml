@@ -1,0 +1,82 @@
+# Additions to docs/contracts/policy/backend-api.yaml. The network rules
+# travel with the session's policy: same paths, same credential rules, same
+# management mode, same If-Match (the SessionPolicy's generation).
+openapi: 3.1.0
+info:
+  title: browserjs backend, network rules (additions)
+  version: 0.1.0
+paths:
+  /sessions:
+    post:
+      summary: Create a session. `network` is optional; absent means mode internet.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                network: { $ref: "#/components/schemas/NetworkRules" }
+      responses:
+        "201": { description: Created. The session is `starting` until its rules are applied. }
+        "422": { description: The rules were refused; body carries `errors` as in NetworkStatus. Nothing was created. }
+  /sessions/{id}/policy:
+    get:
+      summary: As today, with `network` (the rules) and `network_status`.
+    put:
+      summary: >
+        As today. `network` is optional: absent leaves the session's network
+        rules as they are, so a client that knows only tool-call policies
+        changes nothing here. A body with `network` and no `source` changes
+        only the network rules.
+      responses:
+        "200": { description: Stored. `network_status.state` says whether it is in force yet. }
+        "409": { description: Managed elsewhere, or If-Match does not match. }
+        "422": { description: Refused. }
+    delete:
+      summary: As today; also resets the network rules to mode internet.
+  /policies/validate:
+    post:
+      summary: As today; a body with `network` gets `network_errors` and `network_warnings` back.
+  /network-schema.json:
+    get:
+      summary: network-policy.schema.json, for the editor.
+  /network-presets:
+    get:
+      summary: The ready-made rule sets the create page offers.
+      responses:
+        "200":
+          description: >
+            `none` ("No network"), `internet` ("Internet", the default) and
+            `allowlist` ("Only these destinations", an empty allow list with
+            DNS on), each `{id, title, description, network}`. `hostnames`
+            says whether host entries can be used on this deployment.
+components:
+  schemas:
+    NetworkRules:
+      description: docs/contracts/network/network-policy.schema.json
+      type: object
+    NetworkStatus:
+      type: object
+      properties:
+        state:
+          description: >
+            applied: the rules of this generation are written to the cluster.
+            pending: not yet. error: refused; `errors` says why and the
+            previous rules are still in force. unsupported: this deployment
+            has no per-session network rules (the local cluster without a
+            CNI that enforces them).
+          enum: ["applied", "pending", "error", "unsupported"]
+        mode: { enum: ["none", "internet", "allowlist"] }
+        hostnames: { enum: ["unavailable", "available"] }
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              path: { type: string }
+              code: { type: string }
+              message: { type: string }
+        warnings:
+          type: array
+          items: { type: object }
+        applied_at: { type: string, format: date-time }

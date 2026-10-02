@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://browserjs.dev/schemas/session-network/v1.json",
+  "title": "browserjs session network rules, version 1",
+  "description": "What a session's pod may connect to. Egress only: who may connect to a session is the platform's business. Deny by default: mode none allows nothing; internet allows the public internet minus deny; allowlist allows only allow. The platform's ceiling (translation.md) applies in every mode and cannot be widened here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "mode"],
+  "properties": {
+    "version": { "const": 1 },
+    "description": { "type": "string", "maxLength": 1024 },
+    "mode": {
+      "description": "none: no network at all, DNS included. internet: the public internet, as every session has today. allowlist: only the destinations in allow.",
+      "enum": ["none", "internet", "allowlist"]
+    },
+    "dns": {
+      "description": "Whether the pod may resolve names through the cluster's resolver. Default true for internet and allowlist. Must be absent or false for none. Resolving is itself a way to send data out (see the design, section 7).",
+      "type": "boolean"
+    },
+    "allow": {
+      "description": "Only with mode allowlist. A connection is allowed if it matches any entry.",
+      "type": "array",
+      "maxItems": 50,
+      "items": { "$ref": "#/$defs/destination" }
+    },
+    "deny": {
+      "description": "Only with mode internet. Addresses taken out of the internet. Whole addresses only: Kubernetes NetworkPolicy cannot refuse one port of an address.",
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["cidr"],
+        "properties": {
+          "cidr": { "$ref": "#/$defs/cidr" },
+          "description": { "type": "string", "maxLength": 256 }
+        }
+      }
+    }
+  },
+  "allOf": [
+    { "if": { "properties": { "mode": { "const": "none" } } },
+      "then": { "properties": { "dns": { "const": false } }, "not": { "anyOf": [ { "required": ["allow"] }, { "required": ["deny"] } ] } } },
+    { "if": { "properties": { "mode": { "const": "internet" } } },
+      "then": { "not": { "required": ["allow"] } } },
+    { "if": { "properties": { "mode": { "const": "allowlist" } } },
+      "then": { "not": { "required": ["deny"] } } }
+  ],
+  "$defs": {
+    "cidr": {
+      "description": "An IPv4 network in canonical form (no host bits set), for example 203.0.113.0/24 or 198.51.100.7/32. Must not lie inside the platform's forbidden ranges. IPv6 is refused: the cluster is IPv4 only.",
+      "type": "string",
+      "pattern": "^((25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\\.){3}(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])/(3[0-2]|[12]?[0-9])$"
+    },
+    "port": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["port"],
+      "properties": {
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "endPort": { "description": "Last port of a range that starts at port.", "type": "integer", "minimum": 1, "maximum": 65535 },
+        "protocol": { "enum": ["TCP", "UDP"], "default": "TCP" }
+      }
+    },
+    "destination": {
+      "description": "Version 1 has cidr only. A later version adds host (a name or *.name) as an alternative to cidr; until then a host is refused with code hosts_unavailable.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cidr"],
+      "properties": {
+        "cidr": { "$ref": "#/$defs/cidr" },
+        "ports": {
+          "description": "Absent or empty: every port, TCP and UDP.",
+          "type": "array",
+          "maxItems": 20,
+          "items": { "$ref": "#/$defs/port" }
+        },
+        "description": { "type": "string", "maxLength": 256 }
+      }
+    }
+  }
+}

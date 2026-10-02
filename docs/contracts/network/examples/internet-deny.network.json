@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "mode": "internet",
+  "deny": [
+    { "cidr": "203.0.113.0/24", "description": "our production front ends" },
+    { "cidr": "198.51.100.7/32" }
+  ]
+}
