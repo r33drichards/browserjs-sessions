@@ -3,8 +3,8 @@ package policy
 import (
 	"net/url"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/auth"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
+	"github.com/r33drichards/computer-use/backend/internal/auth"
+	"github.com/r33drichards/computer-use/backend/internal/sessions"
 )
 
 // What a token must be allowed to do to read and to write a session's

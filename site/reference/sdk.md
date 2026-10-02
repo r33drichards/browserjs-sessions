@@ -15,7 +15,7 @@ it, so they behave alike.
 | Rust | `computeruse-sdk` on crates.io. The library is `computeruse` | Any target of `reqwest` and `tokio` |
 | Python | `computeruse` on PyPI | Python 3.9 or newer |
 | JavaScript, TypeScript | `computeruse` on npm | Node 20 or newer. Not browsers |
-| Go | `github.com/r33drichards/browserjs-sessions/sdk/go` | Go 1.22 or newer, with cgo |
+| Go | `github.com/r33drichards/computer-use/sdk/go` | Go 1.22 or newer, with cgo |
 
 The Python, JavaScript and Go packages carry a native library. It is built
 for Linux x86_64 and arm64 (glibc 2.35 or newer) and macOS arm64 and x86_64.
@@ -77,7 +77,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/r33drichards/browserjs-sessions/sdk/go/computeruse"
+	"github.com/r33drichards/computer-use/sdk/go/computeruse"
 )
 
 func main() {
@@ -293,8 +293,8 @@ the library's place in `CGO_LDFLAGS`. Each release has a static library per
 platform:
 
 ```bash
-go get github.com/r33drichards/browserjs-sessions/sdk/go@v0.1.0
-curl -fsSL https://raw.githubusercontent.com/r33drichards/browserjs-sessions/main/sdk/go/install-lib.sh | sh -s -- 0.1.0 ./lib
+go get github.com/r33drichards/computer-use/sdk/go@v0.1.0
+curl -fsSL https://raw.githubusercontent.com/r33drichards/computer-use/main/sdk/go/install-lib.sh | sh -s -- 0.1.0 ./lib
 export CGO_LDFLAGS="-L$PWD/lib"
 go build ./...
 ```

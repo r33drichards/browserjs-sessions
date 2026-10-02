@@ -17,7 +17,7 @@ import (
 	"github.com/MicahParks/keyfunc/v3"
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/hosts"
+	"github.com/r33drichards/computer-use/backend/internal/hosts"
 )
 
 // AssertionHeader carries Pomerium's signed statement of who the user is: a

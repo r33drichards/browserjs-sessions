@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/auth"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing"
+	"github.com/r33drichards/computer-use/backend/internal/auth"
+	"github.com/r33drichards/computer-use/backend/internal/billing"
 )
 
 func (w *world) changePlan(owner, item string) (int, map[string]any) {

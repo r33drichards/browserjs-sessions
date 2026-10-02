@@ -75,7 +75,8 @@ about what was just saved.
      asked to have and not the default; a policy that exists already is left
      as it is.
 3. The answer is 201 at once. The session's `state` is `starting`, whatever
-   its pod says, until its first policy is `ready`.
+   its pod says, until its first policy is `ready`. The proxy holds to the
+   same rule: see "The gate" below.
 4. The backend keeps watching the new policy for up to two minutes. If the
    operator refuses it at the reconcile after having passed it in step 1,
    the session is deleted.
@@ -147,6 +148,42 @@ A capable session whose `SessionPolicy` was deleted with `kubectl` is denied
 everything by OPA. The API shows it as `starting` with
 `policy: {"state": "loading"}`; `GET /policy` is 404; `PUT` or `DELETE
 /policy` makes the object again.
+
+## The gate
+
+A session is not running, to anyone, until its first policy is in force:
+compiled, and loaded by every ready OPA replica. Until then OPA has no
+decision for the session and denies it everything, so a call that reached
+its pod would be refused for no reason of the caller's.
+
+- **The API** shows the session as `starting` ("waiting for its policy to be
+  loaded") whatever its pod says (`policy.Summary.Gate`).
+- **The proxy** reads sessions through `policy.Gate(store, …)`
+  (`internal/policy/gate.go`), in which such a session is `starting` too. So
+  an MCP call, an upload, a download or a VNC connection is held exactly as
+  for a pod that is still starting, and goes through when the policy is
+  loaded; after `READY_TIMEOUT` it is answered 504 with `Retry-After`. The
+  event stream (`GET …/mcp`) is 405 meanwhile. Nothing is sent to the pod.
+
+This covers every way a session comes to run: created cold (the policy is
+made after the Sandbox), taken from the warm pool (the policy is made at
+adoption, for a pod that has been ready for a while), and woken or resumed
+(its policy outlives its pod, so it is in force already and nothing waits).
+"In force" is `status.lastAppliedTime` being set, or `Ready` for the current
+generation; once seen for a session it is not asked again. An edit of a
+running session does not gate it: the policy before stays in force until
+the new one is loaded. A session whose mcp-js does not ask OPA has no
+policy and waits for none, and with policies off there is no gate.
+
+It is the backend that gates, not a readiness gate on the pod
+(`spec.readinessGates`), for three reasons. A warm-pool pod has no session
+and so no policy until it is adopted, and it must be Ready to be in the
+pool: a pod condition could not gate adoption, which is where most sessions
+come from, so the backend would have to wait there anyway, and one
+mechanism is better than two. The operator would need to write the status
+of pods, which it has no access to today. And everything that reaches a
+session's pod comes through the backend's proxy (the NetworkPolicy admits
+nothing else), so holding it there is complete.
 
 ## Without a session
 

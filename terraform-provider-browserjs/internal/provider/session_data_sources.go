@@ -12,7 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"github.com/r33drichards/browserjs-sessions/terraform-provider-browserjs/internal/client"
+	"github.com/r33drichards/computer-use/terraform-provider-browserjs/internal/client"
 )
 
 type sessionModel struct {

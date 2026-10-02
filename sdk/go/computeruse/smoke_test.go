@@ -13,7 +13,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/r33drichards/browserjs-sessions/sdk/go/computeruse"
+	"github.com/r33drichards/computer-use/sdk/go/computeruse"
 )
 
 const token = "bjs_aaaaaaaaaaaa_c2VjcmV0c2VjcmV0c2VjcmV0c2VjcmV0c2VjcmV0c2VjcmV0"

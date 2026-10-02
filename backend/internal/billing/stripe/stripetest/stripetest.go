@@ -17,8 +17,8 @@ import (
 
 	"github.com/stripe/stripe-go/v86/webhook"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing/stripe"
+	"github.com/r33drichards/computer-use/backend/internal/billing"
+	"github.com/r33drichards/computer-use/backend/internal/billing/stripe"
 )
 
 func copyOf[T any](v T) T {

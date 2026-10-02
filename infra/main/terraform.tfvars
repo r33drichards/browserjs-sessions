@@ -81,3 +81,9 @@ snapshot_token_source   = "podKSA"
 # node did not fit ("GCE quota exceeded"). With 50 GB two session nodes fit;
 # the 12-CPU quota allows no more than two anyway.
 session_disk_size_gb = 50
+
+# The GitHub repository whose workflows on main may push images and deploy,
+# by its numeric ID (gh api repos/<owner>/<name> -q .id): a rename does not
+# change it. Not a default, so that a copy of this configuration cannot be
+# applied still trusting this repository.
+github_repository_id = "1400826306"

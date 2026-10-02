@@ -18,11 +18,11 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"k8s.io/client-go/dynamic"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/auth"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/config"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/idle"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions/sessionstest"
+	"github.com/r33drichards/computer-use/backend/internal/auth"
+	"github.com/r33drichards/computer-use/backend/internal/config"
+	"github.com/r33drichards/computer-use/backend/internal/idle"
+	"github.com/r33drichards/computer-use/backend/internal/sessions"
+	"github.com/r33drichards/computer-use/backend/internal/sessions/sessionstest"
 )
 
 const (

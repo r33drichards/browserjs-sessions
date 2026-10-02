@@ -11,7 +11,7 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
+	"github.com/r33drichards/computer-use/backend/internal/sessions"
 )
 
 var (

@@ -1,4 +1,4 @@
-module github.com/r33drichards/browserjs-sessions/terraform-provider-metronome
+module github.com/r33drichards/computer-use/terraform-provider-metronome
 
 go 1.26.8
 

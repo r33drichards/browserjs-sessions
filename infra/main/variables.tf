@@ -592,14 +592,13 @@ variable "cert_manager_service_account" {
 
 # --- GitHub Actions ------------------------------------------------------------------------
 
-variable "github_repository" {
-  description = "The GitHub repository whose workflows may push images and deploy, as owner/name. It must be the repository bootstrap.sh restricted the Workload Identity provider to."
+variable "github_repository_id" {
+  description = "The numeric ID of the GitHub repository whose workflows may push images and deploy (`gh api repos/<owner>/<name> -q .id`). Unlike the name it survives a rename or a transfer, so it is what the Workload Identity provider's condition and the grants are bound to. It must be the REPO_ID bootstrap.sh was run with."
   type        = string
-  default     = "r33drichards/browserjs-sessions"
 
   validation {
-    condition     = can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", var.github_repository))
-    error_message = "Expected owner/name."
+    condition     = can(regex("^[0-9]+$", var.github_repository_id))
+    error_message = "Expected the numeric repository ID, e.g. 1400826306."
   }
 }
 

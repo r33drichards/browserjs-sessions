@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
+	"github.com/r33drichards/computer-use/backend/internal/sessions"
 )
 
 // The four routes of a session's files, on the app's host.

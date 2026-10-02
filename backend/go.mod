@@ -1,4 +1,4 @@
-module github.com/r33drichards/browserjs-sessions/backend
+module github.com/r33drichards/computer-use/backend
 
 go 1.26.8
 

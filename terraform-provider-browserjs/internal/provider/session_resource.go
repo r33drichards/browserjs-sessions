@@ -16,7 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"github.com/r33drichards/browserjs-sessions/terraform-provider-browserjs/internal/client"
+	"github.com/r33drichards/computer-use/terraform-provider-browserjs/internal/client"
 )
 
 // sessionID is the id parameter of backend-api.yaml.
