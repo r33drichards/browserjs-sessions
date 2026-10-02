@@ -1,0 +1,12 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  template:
+    spec:
+      containers:
+        - name: backend
+          env:
+            - name: POMERIUM_JWKS_URL
+              value: http://test-jwks.browserjs-sessions.svc.cluster.local:8080/jwks.json

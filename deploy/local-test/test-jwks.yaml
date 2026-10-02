@@ -1,0 +1,57 @@
+# Serves the test's public keys (the test-jwks ConfigMap, which
+# test/integration.py creates) where the backend can fetch them.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-jwks
+  labels:
+    app: test-jwks
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test-jwks
+  template:
+    metadata:
+      labels:
+        app: test-jwks
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: httpd
+          image: busybox:1.37
+          args: ["httpd", "-f", "-p", "8080", "-h", "/www"]
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /jwks.json
+              port: http
+            periodSeconds: 2
+          resources:
+            requests:
+              cpu: 10m
+              memory: 8Mi
+            limits:
+              memory: 32Mi
+          volumeMounts:
+            - name: www
+              mountPath: /www
+              readOnly: true
+      volumes:
+        - name: www
+          configMap:
+            name: test-jwks
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-jwks
+spec:
+  selector:
+    app: test-jwks
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
