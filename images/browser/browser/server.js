@@ -19,6 +19,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import puppeteer from 'puppeteer-core';
 import { createFiles, setDownloadDir } from './files.js';
+import { mcpCallerRefusal } from './callers.js';
 
 // `browser-mcp download-dir <profile> <folder>`: what the entrypoint runs
 // before each start of Chromium, instead of the server.
@@ -390,6 +391,12 @@ http
     }
     if (req.method !== 'POST') {
       res.writeHead(405, { Allow: 'POST' }).end();
+      return;
+    }
+    const refused = mcpCallerRefusal(req);
+    if (refused) {
+      console.warn(`browser MCP: refused a request that did not come from mcp-js (${refused})`);
+      res.writeHead(403).end('forbidden');
       return;
     }
     try {
