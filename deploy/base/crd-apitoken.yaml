@@ -1,0 +1,88 @@
+# An API token of a browserjs user, for clients that cannot sign in through
+# Pomerium (the Terraform provider, scripts). Only a hash of the token is
+# stored. Read and written by the backend; no operator reconciles it.
+# Contract: docs/contracts/policy/README.md.
+#
+# Not yet listed in kustomization.yaml: track E of the session-policies plan
+# adds it.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: apitokens.browserjs.dev
+spec:
+  group: browserjs.dev
+  scope: Namespaced
+  names:
+    kind: APIToken
+    listKind: APITokenList
+    plural: apitokens
+    singular: apitoken
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Owner
+          type: string
+          jsonPath: .spec.owner
+        - name: Name
+          type: string
+          jsonPath: .spec.name
+        - name: Expires
+          type: date
+          jsonPath: .spec.expiresAt
+        - name: Last used
+          type: date
+          jsonPath: .status.lastUsedTime
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: ["spec"]
+          x-kubernetes-validations:
+            - rule: self.metadata.name == 'tok-' + self.spec.id
+              message: an APIToken is named tok-<spec.id>
+          properties:
+            spec:
+              type: object
+              required: ["id", "owner", "name", "scopes", "expiresAt", "sha256"]
+              x-kubernetes-validations:
+                - rule: self == oldSelf
+                  message: a token is immutable; revoke it by deleting it
+              properties:
+                id:
+                  description: The public part of the token, the second field of bjs_<id>_<secret>.
+                  type: string
+                  pattern: "^[a-z2-7]{12}$"
+                owner:
+                  description: The user's email address, lower case. The token acts as this user and is never an admin.
+                  type: string
+                  maxLength: 320
+                name:
+                  description: What the user called it.
+                  type: string
+                  minLength: 1
+                  maxLength: 64
+                scopes:
+                  type: array
+                  minItems: 1
+                  maxItems: 4
+                  x-kubernetes-list-type: set
+                  items:
+                    type: string
+                    enum: ["sessions:read", "sessions:write", "policies:read", "policies:write"]
+                expiresAt:
+                  type: string
+                  format: date-time
+                sha256:
+                  description: Hex SHA-256 of the whole token string.
+                  type: string
+                  pattern: "^[0-9a-f]{64}$"
+            status:
+              type: object
+              properties:
+                lastUsedTime:
+                  description: Written by the backend at most once an hour.
+                  type: string
+                  format: date-time

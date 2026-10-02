@@ -1,0 +1,166 @@
+openapi: 3.1.0
+info:
+  title: policy-operator HTTP API
+  version: "1"
+  description: |
+    Served by the policy operator on port 8080 (Service `policy-operator`),
+    inside the cluster only. Two callers, told apart by bearer token:
+
+    - OPA fetches the bundle (`BUNDLE_TOKEN`).
+    - The backend validates and evaluates policies (`OPERATOR_API_TOKEN`).
+
+    Both tokens are keys of the Secret `policy-tokens` (deploy.md). A request
+    with a missing or wrong token is answered 401 with an empty body.
+    NetworkPolicy additionally limits who can connect.
+
+    `validate` runs exactly the code the reconcile of a `SessionPolicy` runs
+    (JSON schema check, JSON to Rego, tenant checks, `opa check` under the
+    capabilities file). There is no other implementation of "is this policy
+    valid" anywhere in the product.
+servers:
+  - url: http://policy-operator.browserjs-sessions.svc:8080
+paths:
+  /healthz:
+    get:
+      summary: Liveness. No authentication.
+      responses:
+        "200": {description: The process is up.}
+  /readyz:
+    get:
+      summary: Readiness. No authentication.
+      responses:
+        "200": {description: Every existing SessionPolicy has been reconciled once and a bundle is published.}
+        "503": {description: Not yet.}
+  /bundles/browserjs.tar.gz:
+    get:
+      summary: The bundle OPA polls (OPA's Bundle Service API).
+      security: [{bundleToken: []}]
+      parameters:
+        - {name: If-None-Match, in: header, schema: {type: string}}
+        - name: Prefer
+          in: header
+          description: OPA sends `modes=snapshot,delta;wait=<seconds>` when long polling is configured.
+          schema: {type: string}
+      responses:
+        "200":
+          description: |
+            The current bundle. `ETag` identifies it. `Content-Type` MUST be
+            `application/vnd.openpolicyagent.bundles`: with `application/gzip`
+            OPA 1.9.0 does not long-poll and falls back to its polling delays
+            (design, section 11, spike 3).
+          headers:
+            ETag: {schema: {type: string}}
+          content:
+            application/vnd.openpolicyagent.bundles: {schema: {type: string, format: binary}}
+        "304":
+          description: |
+            `If-None-Match` is the current ETag. When the request carried
+            `Prefer: …wait=N`, the operator holds it until the bundle changes
+            or N seconds pass, then answers 200 or 304.
+        "503":
+          description: The operator has not finished its first pass over the existing resources. OPA keeps what it has.
+  /v1/validate:
+    post:
+      summary: Check a policy without storing anything.
+      security: [{apiToken: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/PolicySource"}
+      responses:
+        "200":
+          description: The verdict. An invalid policy is a 200 with `ok` false.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Validation"}
+        "400": {description: The request is not JSON of the right shape., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "413": {description: The body is larger than 128 KiB.}
+  /v1/evaluate:
+    post:
+      summary: Evaluate a policy against one input, for the editor's Test.
+      description: |
+        Validates as `/v1/validate` does, then evaluates
+        `data.browserjs.policy.allow_tool_call` with `opa eval` under the
+        capabilities file and a 2 second deadline. `allow` is true only when
+        the rule is `true`, as the decision module has it.
+      security: [{apiToken: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - {$ref: "#/components/schemas/PolicySource"}
+                - type: object
+                  required: [input]
+                  properties:
+                    input:
+                      description: An mcp_tools input document (rego-contract.md). At most 1 MiB.
+              
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: {type: boolean, description: False when the policy is invalid or the evaluation failed or timed out.}
+                  allow: {type: boolean, description: Present when ok.}
+                  errors: {type: array, items: {$ref: "#/components/schemas/Diagnostic"}}
+          description: The outcome.
+        "400": {description: Bad request., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /v1/schema:
+    get:
+      summary: The JSON Schema of the JSON policy format (json-policy.schema.json).
+      security: [{apiToken: []}]
+      responses:
+        "200":
+          description: The schema.
+          content: {application/schema+json: {schema: {type: object}}}
+components:
+  securitySchemes:
+    bundleToken: {type: http, scheme: bearer}
+    apiToken: {type: http, scheme: bearer}
+  schemas:
+    PolicySource:
+      type: object
+      required: [kind, source]
+      properties:
+        kind: {type: string, enum: [json, rego]}
+        source: {type: string, minLength: 1, maxLength: 65536}
+    Validation:
+      type: object
+      required: [ok, errors, warnings]
+      properties:
+        ok: {type: boolean}
+        rego:
+          type: string
+          description: Present when ok. The module, package browserjs.policy; for kind json the generated one, for kind rego the source.
+        hash:
+          type: string
+          description: Present when ok. "sha256:" and the hex SHA-256 of `rego`.
+        errors: {type: array, items: {$ref: "#/components/schemas/Diagnostic"}}
+        warnings: {type: array, items: {$ref: "#/components/schemas/Diagnostic"}}
+    Diagnostic:
+      type: object
+      required: [code, message]
+      description: |
+        `row` and `col` are 1-based positions in the `source` that was sent
+        (the JSON text for kind json), absent when the problem has none.
+        Codes: `size_error`, `json_parse_error`, `schema_error`,
+        `policy_guard_error`, OPA's own (`rego_parse_error`,
+        `rego_type_error`, `rego_compile_error`, `rego_unsafe_var_error`,
+        `rego_recursion_error`), `eval_error`, `eval_timeout`; warnings use
+        the codes of json-to-rego.md.
+      properties:
+        row: {type: integer, minimum: 1}
+        col: {type: integer, minimum: 1}
+        code: {type: string}
+        message: {type: string}
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: {type: string}

@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "description": "Fill in forms on two sites: printable text only, a few keys, sane viewport sizes, no script.",
+  "allow": {
+    "operations": ["click", "select", "wait", "screenshot", "url"],
+    "rules": [
+      { "operation": "navigate",
+        "constraints": { "url": { "hosts": ["forms.example.org", "*.intranet.example.org"] } } },
+      { "operation": "type",
+        "constraints": { "text": { "max_length": 200, "pattern": "^[\\x20-\\x7E]*$" } } },
+      { "operation": "press",
+        "constraints": { "key": { "allowed": ["Enter", "Tab", "Escape"] } } },
+      { "operation": "setViewport",
+        "constraints": { "width": { "min": 320, "max": 1920 }, "height": { "min": 200, "max": 1200 } } }
+    ]
+  },
+  "deny": { "operations": ["evaluate", "setContent"] }
+}

@@ -1,0 +1,199 @@
+[
+  {
+    "name": "empty pipeline",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": []
+      }
+    },
+    "allow": true
+  },
+  {
+    "name": "null arguments",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": null
+    },
+    "allow": false
+  },
+  {
+    "name": "operations is not an array",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": "x"
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "another server",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "other",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "click",
+            "params": {
+              "selector": "a"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "another tool",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "other_tool",
+      "arguments": {
+        "operations": [
+          {
+            "type": "click",
+            "params": {
+              "selector": "a"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "operation without a type",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "params": {}
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "unknown operation type",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "download",
+            "params": {}
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "click and navigate",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {
+              "url": "http://anything.test/"
+            }
+          },
+          {
+            "type": "click",
+            "params": {
+              "selector": "a"
+            }
+          }
+        ]
+      }
+    },
+    "allow": true
+  },
+  {
+    "name": "evaluate",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "evaluate",
+            "params": {
+              "script": "location.href='https://evil.test'"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "setContent",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "setContent",
+            "params": {
+              "html": "<script>1</script>"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "one denied operation denies the whole pipeline",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "click",
+            "params": {
+              "selector": "a"
+            }
+          },
+          {
+            "type": "evaluate",
+            "params": {
+              "script": "1"
+            }
+          },
+          {
+            "type": "screenshot",
+            "params": {}
+          }
+        ]
+      }
+    },
+    "allow": false
+  }
+]

@@ -1,0 +1,182 @@
+# The policy of one browserjs session: what an agent connected over MCP may
+# ask that session's browser to do. Written by the backend on behalf of the
+# session's owner, reconciled by the policy operator into the shared OPA.
+# Contract: docs/contracts/policy/README.md.
+#
+# Not yet listed in kustomization.yaml: track B of the session-policies plan
+# adds it with the workloads that use it.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: sessionpolicies.browserjs.dev
+spec:
+  group: browserjs.dev
+  scope: Namespaced
+  names:
+    kind: SessionPolicy
+    listKind: SessionPolicyList
+    plural: sessionpolicies
+    singular: sessionpolicy
+    shortNames: ["spol"]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Kind
+          type: string
+          jsonPath: .spec.kind
+        - name: Mode
+          type: string
+          jsonPath: .spec.management.mode
+        - name: Ready
+          type: string
+          jsonPath: .status.conditions[?(@.type=="Ready")].status
+        - name: Loaded
+          type: string
+          jsonPath: .status.conditions[?(@.type=="Loaded")].message
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: ["spec"]
+          x-kubernetes-validations:
+            - rule: self.metadata.name == self.spec.sessionRef.name
+              message: a SessionPolicy is named after its session
+          properties:
+            spec:
+              type: object
+              required: ["sessionRef", "kind", "source"]
+              x-kubernetes-validations:
+                - rule: "!has(self.management) || self.management.mode != 'iac' || (has(self.management.managedURL) && self.management.managedURL.startsWith('https://'))"
+                  message: management.managedURL must be an https URL when management.mode is iac
+              properties:
+                sessionRef:
+                  description: The session (its Sandbox, in this namespace) this policy belongs to.
+                  type: object
+                  required: ["name"]
+                  x-kubernetes-validations:
+                    - rule: self == oldSelf
+                      message: sessionRef is immutable
+                  properties:
+                    name:
+                      type: string
+                      pattern: "^s-([a-z2-7]{10}|[a-z0-9]{5})$"
+                kind:
+                  description: json is the declarative format of docs/contracts/policy/json-policy.schema.json, compiled to Rego by the operator; rego is used as written, after the tenant checks.
+                  type: string
+                  enum: ["json", "rego"]
+                source:
+                  description: What the author wrote.
+                  type: string
+                  minLength: 1
+                  maxLength: 65536
+                management:
+                  description: Who may edit this policy. Enforced by the backend; recorded here.
+                  type: object
+                  default: {mode: editor}
+                  required: ["mode"]
+                  properties:
+                    mode:
+                      type: string
+                      enum: ["editor", "iac"]
+                      default: editor
+                    managedURL:
+                      description: Where the policy is managed when mode is iac. Shown as a link in the UI.
+                      type: string
+                      maxLength: 2048
+            status:
+              description: Written only by the policy operator.
+              type: object
+              properties:
+                observedGeneration:
+                  description: The metadata.generation the rest of status describes.
+                  type: integer
+                  format: int64
+                hash:
+                  description: '"sha256:" and the hex SHA-256 of status.rego. What an OPA replica reports once it has loaded this policy.'
+                  type: string
+                rego:
+                  description: The module in force for this session, with package browserjs.policy; for kind json, the generated one. It is the last one that compiled, which is not the current spec's while Compiled is False.
+                  type: string
+                regoGeneration:
+                  description: The generation status.rego and status.hash were built from.
+                  type: integer
+                  format: int64
+                errors:
+                  description: Why the current spec does not compile. Empty when it does.
+                  type: array
+                  maxItems: 50
+                  items:
+                    type: object
+                    required: ["code", "message"]
+                    properties:
+                      row:
+                        description: Line in spec.source, from 1. Absent when the error has no position.
+                        type: integer
+                      col:
+                        description: Column in that line, from 1.
+                        type: integer
+                      code:
+                        type: string
+                      message:
+                        type: string
+                warnings:
+                  type: array
+                  maxItems: 50
+                  items:
+                    type: object
+                    required: ["code", "message"]
+                    properties:
+                      row:
+                        type: integer
+                      col:
+                        type: integer
+                      code:
+                        type: string
+                      message:
+                        type: string
+                loaded:
+                  description: How many ready OPA replicas serve status.hash for this session.
+                  type: object
+                  properties:
+                    replicas:
+                      type: integer
+                    total:
+                      type: integer
+                    revision:
+                      description: The bundle revision that first carried status.hash.
+                      type: string
+                lastAppliedTime:
+                  description: When Loaded last became True.
+                  type: string
+                  format: date-time
+                conditions:
+                  description: 'Compiled: the current spec compiles. Loaded: every ready OPA replica serves it. Ready: both, for observedGeneration.'
+                  type: array
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys: ["type"]
+                  items:
+                    type: object
+                    required: ["type", "status"]
+                    properties:
+                      type:
+                        type: string
+                        enum: ["Compiled", "Loaded", "Ready"]
+                      status:
+                        type: string
+                        enum: ["True", "False", "Unknown"]
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                      observedGeneration:
+                        type: integer
+                        format: int64
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
