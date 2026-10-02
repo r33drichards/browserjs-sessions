@@ -1,9 +1,9 @@
 # Warm pool
 
 A new session used to take about 103 s to start (node 38 s, disk 25 s, image
-pull 36 s, start 4 s). With the warm pool, one session pod is always running
-with nobody in it, and creating a session hands that pod over. The pool then
-starts the next one in the background.
+pull 36 s, start 4 s). With the warm pool, a node's worth of session pods (seven)
+is always running with nobody in them, and creating a session hands one of
+them over. The pool then starts the next one in the background.
 
 Sources, and what is and is not confirmed, are at the end.
 
@@ -13,7 +13,7 @@ Three Agent Sandbox resources of `extensions.agents.x-k8s.io/v1beta1`:
 
 - `SandboxTemplate/session` (`deploy/gke/warmpool.yaml`): the session pod
   and its 5Gi disk, the same as `deploy/gke/blueprint.yaml`.
-- `SandboxWarmPool/s`: keeps `replicas` (1) Sandboxes of that template
+- `SandboxWarmPool/s`: keeps `replicas` (7) Sandboxes of that template
   running. Each is a complete `Sandbox` named `s-<5 characters>`, with its pod
   and its `data-s-…` disk, owned by the pool.
 - `SandboxClaim`: made by the backend for each new session. The claim
@@ -93,32 +93,111 @@ a Sandbox is handed out once and is never returned to the pool. The
 label, so it is in nobody's list, the proxy refuses its host, and the idle
 sweep never puts it to sleep.
 
-## Turning it off, sizing it
+## Size: one node of warm sessions
+
+The pool is sized in nodes of overhead: `replicas` in
+`deploy/gke/warmpool.yaml` is **overhead nodes x 7**, and is the one number
+to change. It is 7 (one node).
+
+**Why 7.** A session pod requests 200m CPU and 1280Mi. A session node
+(n2-standard-4; `cluster info` run
+[36961294377](https://github.com/r33drichards/browserjs-sessions/actions/runs/36961294377)):
+
+| | CPU | memory |
+|---|---|---|
+| allocatable | 3920m | 13273Mi |
+| GKE's own 11 pods (anetd, fluentbit, metadata server, snapshot agent, ...) | 707m | 1176Mi |
+| left for sessions | 3213m | 12097Mi |
+| session pods that fit | 16 | **9** |
+
+Memory decides: nine session pods a node. Seven are warm and two places are
+left free, so that a sleeping session waking up, or a session started cold,
+has room on the node that is already running, and the pool on its own never
+asks for a second node. The fallback pools (n2d-standard-4, c3-standard-4)
+have the same 4 vCPU and 16 GB; that their allocatable is the same is
+UNVERIFIED.
+
+The two free places only help a waking session whose disk is in that node's
+zone and, if it has a snapshot, whose snapshot was taken on that node's pool.
+Any other needs its own node, as it does today.
+
+**As sessions are claimed.** A claimed pod stays where it is and the pool
+starts a replacement, so the cluster holds *sessions running + 7* pods:
+
+| sessions running | pods | session nodes |
+|---|---|---|
+| 0 to 2 | 7 to 9 | 1 |
+| 3 to 11 | 10 to 18 | 2 |
+| 12 to 20 | 19 to 27 | 3 |
+
+The third session's replacement finds no room and stays pending, and the
+autoscaler adds a node for it: capacity arrives ahead of demand, and what is
+spare stays at about one node. A pool can only empty if more than seven
+sessions are created within one node start-up (about 100 s); the eighth
+then starts cold. `session_max_nodes` (3 a pool) is still the ceiling.
+
+**Scale-down.** Session pods mount an `emptyDir` (`/dev/shm`), and the
+cluster autoscaler does not remove a node holding such a pod unless the pod
+is marked `cluster-autoscaler.kubernetes.io/safe-to-evict: "true"`. So:
+
+- A node goes away once it holds no session pod and no warm pod. Sessions
+  leave by sleeping (15 minutes idle) or being deleted.
+- New warm pods are placed on the fullest node that has room (the cluster's
+  `OPTIMIZE_UTILIZATION` profile), so after a busy spell the pool drifts back
+  onto one node as its pods are claimed and replaced.
+- **But nothing moves a warm pod that is not claimed.** If use stops while
+  the seven are spread over two nodes, both nodes stay up, each half empty,
+  until enough warm pods have been claimed from the emptier one. Even where
+  eviction is allowed it would rarely help: a warm pod's disk is zonal, and
+  the two nodes are usually in different zones.
+- Upstream's controller can mark pooled pods safe to evict (and unmark them
+  on adoption); whether GKE's does is UNVERIFIED. `hack/gke-status.sh` shows
+  the annotation and the node of every session pod. Setting the annotation
+  in the template is not an option: it would stay on the pod after adoption
+  and let the autoscaler evict sessions in use.
+- The mitigation, not built because it is code rather than a manifest
+  setting: have the backend's sweep delete pool-owned Sandboxes on a node
+  that holds no session while the pool's other node has room; the pool
+  makes them again on the fuller node.
+- A deploy that changes the template replaces all seven at once
+  (`updateStrategy: Recreate`). For a moment there are fourteen pods, which
+  can start a second node and leave the pool split as above.
+
+**Which machine type.** Warm pods select only gVisor nodes, like any
+session, so they go to whichever of the three pools the autoscaler picks
+(today's node is the `sessions` pool, n2). That is harmless for a warm pod:
+it has no snapshot, and a session is pinned to a pool only once it has
+slept on it. Nothing ping-pongs: a pod stays on its node until that node
+is reclaimed, and its replacement may then be another machine type, with
+nothing depending on which. No preference was added. A preferred node
+affinity is ignored by the autoscaler when it chooses a pool, and a required
+one would give up the fallback pools, which exist for when a Spot machine
+type has no capacity.
+
+## Turning it off
 
 - `replicas: 0` in `warmpool.yaml`: nothing waits, nothing is paid; sessions
   are still made through claims and start cold.
 - Remove `WARM_POOL` from `deploy/gke/patch-backend.yaml`: the backend makes
   Sandboxes itself as before. Sessions that came from the pool keep working
   and can be deleted. `deploy/local` does not set it.
-- More than one user arriving within a start-up time of each other: raise
-  `replicas`. Ten sessions fit on a node, so this costs disks, not nodes.
 
 ## Cost
 
-A waiting session keeps one sessions node up around the clock. From the
-table in [infrastructure.md](infrastructure.md) section 7 (n2-standard-4,
-us-west1, 730 h; node + 100 GB boot disk + NAT):
+Per node of overhead, around the clock, from the table in
+[infrastructure.md](infrastructure.md) section 7 (n2-standard-4, us-west1,
+730 h; node + 100 GB boot disk + NAT). Session nodes are Spot today.
 
 | | per hour | per month |
 |---|---|---|
-| On demand | $0.2093 | about $153 |
 | Spot | $0.1316 | about $96 |
+| On demand | $0.2093 | about $153 |
 
-plus $0.50 a month for the waiting 5 GB disk. That node also serves real
-sessions (about ten fit), so the extra cost is the hours in which nobody has
-a session running: at worst the whole amount, taking the cluster's idle bill
-from about $78 to about $231 on demand or $174 on Spot. On the n2d pool the
-node is $0.169/h on demand, about $135 a month all in.
+plus the seven waiting 5 GB disks, $3.50 a month. With nobody online that
+takes the cluster's idle bill from about $78 to about $178 on Spot. While
+three or more sessions run, the second node is a second $0.13 an hour that a
+cluster without the pool would only pay from its tenth session; and a pool
+left split over two nodes (above) costs two.
 
 ## Sources and what is confirmed
 

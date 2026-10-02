@@ -87,6 +87,10 @@ kubectl -n "$NS" get sandboxes.agents.x-k8s.io -o json 2>&1 | jq -r '
   .items[] | "\(.metadata.name)  owner=\((.metadata.ownerReferences // [])[0] | if . then "\(.kind)/\(.name)" else "none (made by the backend)" end)  session=\(if .metadata.labels["browserjs.dev/owner"] then "yes" else "no" end)  made=\(.metadata.creationTimestamp)  adopted=\(.metadata.annotations["browserjs.dev/created"] // "-")"' 2>&1
 printf '```\n'
 
+# Where the session pods are, waiting ones included, and whether the cluster
+# autoscaler may evict them to remove their node.
+show kubectl -n "$NS" get pods -l app=browserjs-session -o 'custom-columns=NAME:.metadata.name,NODE:.spec.nodeName,PHASE:.status.phase,CLAIM:.metadata.labels.agents\.x-k8s\.io/claim-uid,SAFE-TO-EVICT:.metadata.annotations.cluster-autoscaler\.kubernetes\.io/safe-to-evict'
+
 [ -n "$full" ] || exit 0
 
 section "Warm pool in full"

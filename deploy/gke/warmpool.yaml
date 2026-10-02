@@ -10,9 +10,9 @@
 # fails when the two drift apart, and hack/pin-images.sh writes the image
 # lines of both.
 #
-# A warm Sandbox has everything a session has, its 5Gi disk included, and
-# keeps one sessions node running at all times: see docs/warm-pool.md for
-# the cost.
+# A warm Sandbox has everything a session has, its 5Gi disk included. The
+# pool is sized in nodes (replicas, below); what that costs and how the
+# cluster grows and shrinks around it is docs/warm-pool.md.
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxWarmPool
 metadata:
@@ -20,8 +20,26 @@ metadata:
   # "<pool>-<5 characters>": this name is why they are "s-…".
   name: s
 spec:
-  # How many sessions are kept ready. 0 keeps the pool and stops paying for it.
-  replicas: 1
+  # THE SIZE OF THE POOL: replicas = overhead nodes x 7.
+  #
+  #   overhead nodes   replicas   what is kept ready
+  #         0              0      nothing (and nothing is paid for)
+  #         1              7      one node of warm sessions   <- now
+  #         2             14      two
+  #
+  # Why 7 a node. A session pod requests 200m CPU and 1280Mi (browser 150m +
+  # 1Gi, mcp-js 50m + 256Mi). A 4-vCPU, 16 GB session node, as "cluster info"
+  # showed it (run 36961294377, n2-standard-4):
+  #
+  #   allocatable                      3920m    13273Mi
+  #   GKE's own pods on the node (11)   707m     1176Mi
+  #   left for sessions                3213m    12097Mi
+  #
+  # Memory decides: 12097 / 1280 = 9 session pods a node (CPU would allow 16).
+  # Two of the nine are left free, so 7: a sleeping session that wakes, or a
+  # session started cold, finds room on the node that is already there, and
+  # the pool by itself never needs a second node.
+  replicas: 7
   sandboxTemplateRef:
     name: session
   # New images replace the waiting Sandboxes at once, rather than being

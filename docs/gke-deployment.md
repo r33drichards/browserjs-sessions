@@ -54,7 +54,7 @@ collected at the end.
     account token, all capabilities dropped, CPU and memory limits, disks
     from the StorageClass below.
   - The warm pool (`warmpool.yaml`, [warm-pool.md](warm-pool.md)): a
-    `SandboxWarmPool` of one session started ahead of time, over a
+    `SandboxWarmPool` of one node's worth of sessions (seven) started ahead of time, over a
     `SandboxTemplate` that repeats the blueprint, and `WARM_POOL=s` on the
     backend.
   - The `session` ServiceAccount, and the StorageClass `browserjs-zonal`
