@@ -396,16 +396,39 @@ k delete pod policy-test-stranger --wait=false >/dev/null
 
 # --- 4. OPA replicas going away --------------------------------------------------
 step "4. OPA replicas"
-call $P_WITH url 20s >"$work/during.jsonl" &
+# One pod after another is deleted and replaced, as a node drain, a Spot
+# preemption or a rollout does, while calls are made without a pause. Under
+# enforcing a call that fails here is a tool call an agent was refused for no
+# reason of its own, so none may: REPLACEMENTS times over.
+replacements="${REPLACEMENTS:-20}"
+stamp() { printf '%s %s\n' "$(date +%s.%N)" "$*" >>"$work/timeline"; }
+call $P_WITH url 3600s >"$work/during.jsonl" &
 caller=$!
 sleep 2
-k delete pod "$opa_pod" --wait=true >/dev/null
-k rollout status deploy/opa --timeout=120s >/dev/null
-wait "$caller"
+for i in $(seq 1 "$replacements"); do
+  victim="$(k get pods -l app=opa -o json | jq -r '[.items[] | select(.metadata.deletionTimestamp == null) | select(any(.status.conditions[]?; .type == "Ready" and .status == "True"))] | sort_by(.metadata.creationTimestamp) | .[0].metadata.name')"
+  stamp "$i delete $victim"
+  k delete pod "$victim" --wait=true >/dev/null
+  stamp "$i gone $victim"
+  k rollout status deploy/opa --timeout=120s >/dev/null
+  stamp "$i replaced"
+  sleep 1
+done
+kill "$caller" 2>/dev/null
+wait "$caller" 2>/dev/null || true
 got="$(cat "$work/during.jsonl")"
-is "no call fails while one OPA pod is deleted and replaced ($(jq -s length <<<"$got") calls)" ran "$(outcome "$got")"
-note "" && note "### One OPA pod deleted while calls are made" && note "" &&
-  note "$(jq -rs '"\(length) calls over 20 s, outcomes: \(map(.outcome) | group_by(.) | map("\(.[0]) \(length)") | join(", ")); slowest \(map(.seconds) | max) s"' <<<"$got")"
+is "no call fails while OPA pods are deleted and replaced, $replacements times ($(jq -s length <<<"$got") calls)" ran "$(outcome "$got")"
+if [ "$(outcome "$got")" != ran ]; then
+  # When, against the deletions, and what the agent's code and mcp-js saw.
+  echo "      calls that did not run (at, seconds, seen):"
+  jq -rs '.[] | select(.outcome != "ran") | "      \(.at) \(.seconds)s \(.outcome): \(.seen | .[0:200])"' <<<"$got"
+  echo "      timeline:"
+  sed 's/^/      /' "$work/timeline"
+  echo "      mcp-js:"
+  k logs "$WITH" -c mcp-js --tail=2000 2>/dev/null | grep -i 'opa\|policy' | tail -20 | sed 's/^/      /'
+fi
+note "" && note "### OPA pods deleted and replaced, $replacements times, while calls are made" && note "" &&
+  note "$(jq -rs '"\(length) calls, outcomes: \(map(.outcome) | group_by(.) | map("\(.[0]) \(length)") | join(", ")); slowest \(map(.seconds) | max) s"' <<<"$got")"
 
 k scale deploy/opa --replicas=0 >/dev/null
 k wait --for=delete pod -l app=opa --timeout=120s >/dev/null
