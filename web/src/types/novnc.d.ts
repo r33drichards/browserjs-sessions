@@ -4,6 +4,7 @@ declare module "@novnc/novnc" {
     scaleViewport: boolean
     resizeSession: boolean
     viewOnly: boolean
+    background: string
     disconnect(): void
     clipboardPasteFrom(text: string): void
   }

@@ -54,6 +54,7 @@ export function VncPane({ sessionId }: { sessionId: string }) {
         const conn = new RFB(target, url, {})
         rfb = conn
         conn.scaleViewport = true
+        conn.background = "#fff" // noVNC's own is a dark grey slab
         conn.resizeSession = false
         conn.addEventListener("connect", () => {
           if (rfb !== conn) return
@@ -150,8 +151,15 @@ export function VncPane({ sessionId }: { sessionId: string }) {
 
   return (
     <div>
-      <div ref={screenRef} className="wf-screen" />
-      {!connected && <p>{STATUS_TEXT[status]}</p>}
+      <div className="wf-screen-wrap">
+        <div ref={screenRef} className="wf-screen" />
+        {!connected && (
+          <div className="wf-screen-overlay" role="status">
+            {status !== "paused" && <span className="wf-spinner" aria-hidden="true" />}
+            <p>{STATUS_TEXT[status]}</p>
+          </div>
+        )}
+      </div>
       <div className="wf-box wf-clipboard">
         <SpaceBetween size="xs">
           <strong>Clipboard</strong>
