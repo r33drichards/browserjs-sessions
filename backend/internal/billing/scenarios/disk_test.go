@@ -44,7 +44,11 @@ func atZero(t *testing.T, zeroBalanceDelete bool) (w *world, id string, exhauste
 	// Ticks until the balance is 0. The alert of the tick that took it
 	// there is posted to the webhook, which sets exhausted.
 	account := billing.AccountName(user)
-	for !w.account(user).Spec.Credit.Exhausted {
+	// $1 of disk at 1920 an hour is some 520 hours of ticks.
+	for ticks := 0; !w.account(user).Spec.Credit.Exhausted; ticks++ {
+		if ticks > 600*int(time.Hour/longTick) {
+			t.Fatalf("the balance is used up and the account was never marked exhausted")
+		}
 		w.clock.Advance(longTick)
 		w.tick()
 	}
@@ -120,7 +124,7 @@ func TestDiskAccruesAsleep(t *testing.T) {
 	t.Run("credit bought at day 10: the clock is gone", func(t *testing.T) {
 		w, id, exhaustedAt := atZero(t, true)
 		w.tickTo(exhaustedAt.Add(10 * 24 * time.Hour))
-		w.buy(user, "credit-5")
+		w.buy(user, "cu_credit_5_v1")
 		w.tick()
 		if b := w.billingOf(user); b.ExhaustedAt != nil || b.DeleteAt != nil || b.BalanceMicros != 5_000_000 {
 			t.Fatalf("after the purchase: exhaustedAt %v, deleteAt %v, balance %d", b.ExhaustedAt, b.DeleteAt, b.BalanceMicros)
