@@ -91,7 +91,7 @@ spec:
         # the system call filter), and the policies do not ask for one.
       containers:
         - name: browser
-          image: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/browser@sha256:f91cef5c5101239cc9728a6cc64c6f7efa585e134c25ee2e2ca49a509be52ed1
+          image: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/browser@sha256:e0b9ce739233ab7f7f281cc24567c7dfd54bfb4f277e35eb78bc47f589888a49
           env:
             - name: SESSION_MODE
               value: "1"
