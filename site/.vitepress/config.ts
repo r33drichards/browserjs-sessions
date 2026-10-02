@@ -44,7 +44,7 @@ const docs = [
 ]
 
 export default defineConfig({
-  title: "computeruse",
+  title: "Computer Use",
   description: "A small Linux desktop in the cloud that an AI agent operates over MCP, and that you can watch and take over.",
   lang: "en-US",
   cleanUrls: true,

@@ -26,7 +26,7 @@ export interface Flash {
   content: string
 }
 
-export const ROOT_CRUMB: Crumb = { text: "computeruse sessions", href: "/" }
+export const ROOT_CRUMB: Crumb = { text: "Computer Use sessions", href: "/" }
 
 interface ShellProps {
   children: React.ReactNode
@@ -60,7 +60,7 @@ export function ShellHeader() {
   return (
     <header className="wf-header">
       <h1>
-        <Link to="/">computeruse sessions</Link>
+        <Link to="/">Computer Use sessions</Link>
       </h1>
       <span>
         {tokens && (

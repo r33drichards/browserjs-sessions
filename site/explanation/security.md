@@ -13,7 +13,7 @@ To anyone else a session answers as if it did not exist.
 in to it with the owner's account. There is no shared secret in the MCP URL:
 knowing the URL is not enough.
 
-**The service's operators.** Administrators of computeruse can see and manage
+**The service's operators.** Administrators of Computer Use can see and manage
 all sessions. Treat a session like any hosted service: do not put in it what
 you would not trust the operator with.
 

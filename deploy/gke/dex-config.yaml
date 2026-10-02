@@ -25,7 +25,7 @@ enablePasswordDB: false
 
 staticClients:
   - id: pomerium
-    name: computeruse sessions
+    name: Computer Use sessions
     secretEnv: POMERIUM_CLIENT_SECRET
     redirectURIs:
       - https://authenticate.computeruse.site/oauth2/callback
