@@ -208,6 +208,27 @@ a {
   font-weight: normal;
   vertical-align: middle;
 }
+/* The session's title row: on a wide screen the actions stay on the title's
+   line whatever their labels say, and the title's own details wrap instead.
+   Narrower, the actions go under the title as Cloudscape lays them out. */
+.wf-title-meta {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+@media (min-width: 1280px) {
+  .wf-session-head [class*="awsui_main_"] {
+    flex-wrap: nowrap;
+  }
+  .wf-session-head [class*="awsui_title_"] {
+    min-width: 0;
+  }
+  .wf-session-head [class*="awsui_actions_"] {
+    flex-shrink: 0;
+  }
+  .wf-session-head [class*="awsui_actions_"] > * {
+    flex-wrap: nowrap;
+  }
+}
 /* Breadcrumbs and the message a finished flow leaves on the page it lands on. */
 .wf-crumbs {
   margin-bottom: 12px;

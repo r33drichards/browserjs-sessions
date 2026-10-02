@@ -77,8 +77,11 @@ describe("sleep, wake and stop", () => {
     list()
     const row = await rowOf("research")
     fireEvent.click(within(row).getByRole("button", { name: "Sleep" }))
-    const saving = await within(row).findByRole("button", { name: /Saving state/ })
-    expect((saving as HTMLButtonElement).disabled).toBe(true)
+    // The label does not change while it saves (the row keeps its width):
+    // the button is busy and takes no click.
+    await waitFor(() => expect((within(row).getByRole("button", { name: /^Sleep/ }) as HTMLButtonElement).disabled).toBe(true))
+    const saving = within(row).getByRole("button", { name: /^Sleep/ })
+    expect(row.textContent).not.toContain("Saving state…")
     fireEvent.click(saving)
     expect(backend.sessions.get(id)!.state).toBe("running")
     finish()
@@ -120,6 +123,9 @@ describe("sleep, wake and stop", () => {
     expect(document.body.textContent).toContain("Asleep, with its state saved. It wakes as it was when you or an agent uses it.")
     expect(document.querySelector(".wf-state")!.textContent).toBe("asleep")
     for (const name of [/^Copy the MCP URL/, "Delete"]) expect(screen.getByRole("button", { name })).toBeTruthy()
+    // The actions are in the title row that wireframe.css keeps on one line.
+    const head = document.querySelector<HTMLElement>(".wf-session-head")!
+    for (const name of [/^Copy the MCP URL/, "Wake", "Delete"]) expect(within(head).getByRole("button", { name })).toBeTruthy()
 
     // Asleep with its state saved: Stop discards it.
     fireEvent.click(screen.getByRole("button", { name: "More actions for research" }))

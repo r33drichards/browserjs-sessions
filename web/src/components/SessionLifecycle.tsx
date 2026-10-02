@@ -91,7 +91,9 @@ export function LifecycleActions({
         disabled={busy !== null}
         mainAction={{
           // The snapshot takes seconds; the request answers when it is done.
-          text: busy === "sleep" ? "Saving state…" : "Sleep",
+          // The label stays as it is meanwhile (the spinner says it is
+          // working), so the row of buttons it is in keeps its width.
+          text: "Sleep",
           loading: busy === "sleep",
           loadingText: "Saving state",
           disabled: starting || busy !== null,
@@ -99,6 +101,21 @@ export function LifecycleActions({
           onClick: () => act("sleep"),
         }}
       />
+    )
+  }
+
+  // On its way down: nothing to wake or start until it is there. Wake for a
+  // session going to sleep; Start is for one that is stopped, or being stopped.
+  if (session.state === "stopping") {
+    const sleeping = goingToSleep(session)
+    return (
+      <Button
+        variant={primary ? "primary" : "normal"}
+        disabled
+        disabledReason={sleeping ? "It can wake once it is asleep" : "It can start once it has stopped"}
+      >
+        {sleeping ? "Wake" : "Start"}
+      </Button>
     )
   }
 

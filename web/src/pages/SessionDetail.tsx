@@ -15,7 +15,7 @@ import { VncPane } from "../components/VncPane"
 import type { PolicySession as Session } from "../policyApi"
 import { isManagedAsCode, policySummaryLine } from "../policyApi"
 import { Shell, api } from "../shell"
-import { usePolling } from "../usePolling"
+import { HIDDEN_POLL_MS, usePolling } from "../usePolling"
 
 // Only a deployment with policies shows the tab, so only it loads the code.
 const PolicyTab = lazy(() => import("../components/PolicyTab").then(m => ({ default: m.PolicyTab })))
@@ -50,7 +50,9 @@ export function SessionDetail({ id }: { id: string }) {
       })
   }, [id])
 
-  usePolling(load, !missing) // a 404 is final: stop asking
+  // A 404 is final: stop asking. Behind another tab it still asks, slowly, so
+  // a session that became ready meanwhile is not still "starting" on return.
+  usePolling(load, !missing, 3000, HIDDEN_POLL_MS)
   const blocked = useWakeBlock(session) // billing keeps it asleep: no credit, or no card
 
   if (missing) {
@@ -126,6 +128,8 @@ export function SessionDetail({ id }: { id: string }) {
   return (
     <Shell breadcrumbs={[{ text: session.name, href: `/sessions/${session.id}` }]}>
       <SpaceBetween size="l">
+        {/* The class keeps the actions on the title's line (wireframe.css). */}
+        <div className="wf-session-head">
         <Header
           variant="h1"
           actions={
@@ -182,6 +186,7 @@ export function SessionDetail({ id }: { id: string }) {
             </SpaceBetween>
           )}
         </Header>
+        </div>
 
         {actionError ? <Box>⚠ {actionError}</Box> : null}
         {error ? <Box>⚠ {error}</Box> : null}

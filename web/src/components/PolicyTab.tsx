@@ -19,7 +19,7 @@ import { problemLine } from "../policy/markers"
 import type { ManagementMode, Policy, PolicySession, PolicySummary } from "../policyApi"
 import { KIND_LABEL, isManagedAsCode, isUnrestricted, policyApi, policyStatus, updatedByLabel } from "../policyApi"
 import { api } from "../shell"
-import { usePolling } from "../usePolling"
+import { HIDDEN_POLL_MS, usePolling } from "../usePolling"
 import { ManagementModal } from "./ManagementModal"
 import { CodeView } from "./PolicyEditor"
 
@@ -56,7 +56,7 @@ export function PolicyTab({ sessionId, sessionName, summary }: Props) {
   }, [sessionId])
 
   // A session from before policies has no policy object to ask for.
-  usePolling(load, !unsupported)
+  usePolling(load, !unsupported, 3000, HIDDEN_POLL_MS)
 
   useEffect(() => {
     if (dialog !== "copy") return
