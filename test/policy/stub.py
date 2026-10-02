@@ -9,7 +9,8 @@ standard library only; one file, mounted into three pods.
                      writes.
   stub.py browser    the browser container, as mcp-js sees it: an MCP server
                      named "browser" on 8081 with one tool, browser_execute,
-                     which runs nothing and says what it was asked.
+                     and desktop_execute beside it, which run nothing and
+                     say what they were asked.
   stub.py backend    something listening where the backend does, on 8080.
 """
 import hashlib
@@ -105,8 +106,9 @@ class Browser(Handler):
                       "capabilities": {"tools": {}},
                       "serverInfo": {"name": "browser", "version": "stub"}}
         elif method == "tools/list":
-            result = {"tools": [{"name": "browser_execute", "description": "Says what it was asked to do.",
-                                 "inputSchema": {"type": "object", "properties": {"operations": {"type": "array"}}}}]}
+            result = {"tools": [{"name": name, "description": "Says what it was asked to do.",
+                                 "inputSchema": {"type": "object", "properties": {"operations": {"type": "array"}}}}
+                                for name in ("browser_execute", "desktop_execute")]}
         elif method == "tools/call":
             operations = (params.get("arguments") or {}).get("operations") or []
             types = [op.get("type") for op in operations if isinstance(op, dict)]

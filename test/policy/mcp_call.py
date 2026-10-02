@@ -3,12 +3,14 @@ and what came back. Python's standard library only.
 
   mcp_call.py http://127.0.0.1:18080 <operation type> [count | <seconds>s]
 
-The code run in the session calls the browser tool with one operation of
+The code run in the session calls the browser tool (or, with
+TOOL=desktop_execute in the environment, that one) with one operation of
 that type and prints what it got, or what was thrown: that is what an
 agent's code sees. Prints one JSON line a call: {"outcome": "ran" | "denied"
 | "error", "seconds": <the whole run_js call>, "seen": <the text>}.
 """
 import json
+import os
 import sys
 import time
 import urllib.request
@@ -22,12 +24,12 @@ count = 10 ** 9 if deadline else int(repeat)
 CODE = """
 const started = Date.now();
 try {
-  const r = await mcp.callTool("browser", "browser_execute", { operations: [{ type: %s, params: {} }] });
+  const r = await mcp.callTool("browser", %s, { operations: [{ type: %s, params: {} }] });
   console.log(JSON.stringify({ returned: r, ms: Date.now() - started }));
 } catch (e) {
   console.log(JSON.stringify({ thrown: String((e && e.message) || e), ms: Date.now() - started }));
 }
-""" % json.dumps(operation)
+""" % (json.dumps(os.environ.get("TOOL", "browser_execute")), json.dumps(operation))
 
 session, ids = None, 0
 

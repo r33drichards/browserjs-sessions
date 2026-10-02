@@ -491,6 +491,27 @@ if [ -n "${OPERATOR_IMAGE:-}" ]; then
   edited="$(until_outcome 30 evaluate ran)"
   ok "an edit applies with nothing restarted (${edited:-not} s after the patch)" "$edited"
 
+  # The desktop tool (mouse, keyboard, screen). mcp-js's own file policy
+  # allows it, so the session's policy decides. A JSON policy is about
+  # browser_execute only: the unrestricted one too denies the desktop.
+  is "under the unrestricted JSON policy desktop_execute is denied" denied "$(outcome "$(TOOL=desktop_execute call $P_WITH click)")"
+  rego='package browserjs.policy\n\nimport rego.v1\n\nallow_tool_call if {\n\tinput.server == \"browser\"\n\tinput.tool in {\"browser_execute\", \"desktop_execute\"}\n}\n'
+  k patch sessionpolicy "$WITH" --type=merge -p "{\"spec\":{\"kind\":\"rego\",\"source\":\"$rego\"}}" >/dev/null
+  desktop=""
+  for _ in $(seq 1 60); do
+    [ "$(outcome "$(TOOL=desktop_execute call $P_WITH click)")" = ran ] && desktop=1 && break
+    sleep 0.25
+  done
+  ok "a Rego policy that names desktop_execute allows it" "$desktop" "$(k get sessionpolicy "$WITH" -o json | jq -c .status.errors)"
+  is "and still allows browser_execute" ran "$(outcome "$(call $P_WITH evaluate)")"
+  k patch sessionpolicy "$WITH" --type=merge -p "$(session_policy "$WITH" unrestricted | jq -c '{spec: {kind: "json", source: .spec.source}}')" >/dev/null
+  back=""
+  for _ in $(seq 1 60); do
+    [ "$(outcome "$(TOOL=desktop_execute call $P_WITH click)")" = denied ] && back=1 && break
+    sleep 0.25
+  done
+  ok "back on the JSON policy, desktop_execute is denied again" "$back"
+
   k patch sessionpolicy "$WITH" --type=merge -p '{"spec":{"source":"{ this is not a policy"}}' >/dev/null
   if k wait --for=condition=Compiled=False "sessionpolicy/$WITH" --timeout=60s >/dev/null 2>&1; then
     pass "a policy that does not compile is reported (Compiled=False)"
