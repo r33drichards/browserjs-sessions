@@ -104,11 +104,20 @@ type APIError struct {
 	Errors     []Diagnostic
 	Warnings   []Diagnostic
 	ManagedURL string
+	// Code and BillingURL are set when billing refused the request (a 402
+	// for want of a payment method or of credit, a plan's limit): what was
+	// refused, and where its owner puts it right.
+	Code       string
+	BillingURL string
 }
 
 func (e *APIError) Error() string {
 	if e.Message == "" {
 		return fmt.Sprintf("the API answered %d %s", e.Status, http.StatusText(e.Status))
+	}
+	if e.BillingURL != "" {
+		// What a person running terraform needs: the sentence, and the link.
+		return fmt.Sprintf("the API answered %d: %s See %s", e.Status, e.Message, e.BillingURL)
 	}
 	return fmt.Sprintf("the API answered %d: %s", e.Status, e.Message)
 }
@@ -187,9 +196,12 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) (int,
 			Errors     []Diagnostic `json:"errors"`
 			Warnings   []Diagnostic `json:"warnings"`
 			ManagedURL string       `json:"managed_url"`
+			Code       string       `json:"code"`
+			BillingURL string       `json:"billingUrl"`
 		}
 		_ = json.Unmarshal(raw, &e)
-		return resp.StatusCode, &APIError{Status: resp.StatusCode, Message: e.Error, Errors: e.Errors, Warnings: e.Warnings, ManagedURL: e.ManagedURL}
+		return resp.StatusCode, &APIError{Status: resp.StatusCode, Message: e.Error, Errors: e.Errors, Warnings: e.Warnings,
+			ManagedURL: e.ManagedURL, Code: e.Code, BillingURL: e.BillingURL}
 	}
 	if out != nil && len(bytes.TrimSpace(raw)) > 0 {
 		if err := json.Unmarshal(raw, out); err != nil {

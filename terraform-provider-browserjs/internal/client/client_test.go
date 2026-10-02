@@ -180,3 +180,26 @@ func TestTransportErrorHidesTheToken(t *testing.T) {
 		t.Errorf("%v", err)
 	}
 }
+
+// A refusal by billing (docs/contracts/billing/enforcement.md) is shown
+// with its sentence and the link to put it right.
+func TestBillingRefusal(t *testing.T) {
+	c := serve(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusPaymentRequired)
+		_, _ = io.WriteString(w, `{"error":"Add a payment method to create or wake sessions.","code":"payment_method_required","billingUrl":"https://app.computeruse.site/billing"}`)
+	})
+	_, err := c.CreateSession(context.Background(), "ci")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusPaymentRequired || apiErr.Code != "payment_method_required" ||
+		apiErr.BillingURL != "https://app.computeruse.site/billing" {
+		t.Fatalf("err = %#v", err)
+	}
+	want := "the API answered 402: Add a payment method to create or wake sessions. See https://app.computeruse.site/billing"
+	if err.Error() != want {
+		t.Errorf("diagnostic %q, want %q", err.Error(), want)
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Error("the token is in the error")
+	}
+}
