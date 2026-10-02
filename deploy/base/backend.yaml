@@ -191,10 +191,13 @@ spec:
                   name: stripe
                   key: STRIPE_API_KEY
                   optional: true
+            # The signing secret of the webhook endpoint OpenTofu makes
+            # (infra/billing): the billing-apply workflow copies it from
+            # its state into this Secret. Nobody enters it.
             - name: STRIPE_WEBHOOK_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: stripe
+                  name: stripe-webhook
                   key: STRIPE_WEBHOOK_SECRET
                   optional: true
             - name: OPEN_SIGNUP
