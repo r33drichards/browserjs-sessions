@@ -153,6 +153,14 @@ cleanup() {
       sleep 0.2
     done
   fi
+  # xfconfd writes a changed setting to disk some seconds later, or when it
+  # is asked to stop: ask, so that a setting changed just now is kept.
+  if pkill -TERM -x xfconfd 2>/dev/null; then
+    for _ in $(seq 1 10); do
+      pgrep -x xfconfd >/dev/null 2>&1 || break
+      sleep 0.1
+    done
+  fi
   kill "${pids[@]}" 2>/dev/null || true
 }
 trap cleanup EXIT

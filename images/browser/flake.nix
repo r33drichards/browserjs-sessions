@@ -200,7 +200,6 @@
               pkgs.xprop
               pkgs.xrandr
               pkgs.xset
-              pkgs.xwd
               pkgs.xwininfo
               xvnc
             ]

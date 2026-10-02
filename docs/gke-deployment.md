@@ -181,11 +181,11 @@ The browser image used to have no user but root. It now has the user
 nothing of root:
 
 - `images/browser/Dockerfile`: a passwd and a group entry for uid 1000
-  (openbox crashes for a uid that is not in `/etc/passwd`), and
-  `/home/browser` owned by it.
-- `images/browser/browser/entrypoint.sh`: `HOME` is `/root` for root and the
-  user's home otherwise (with `/tmp/home` as the fallback for a uid the image
-  does not know), instead of always `/root`; the `chmod` of `/tmp`, which
+  (openbox, the window manager then, crashed for a uid that is not in
+  `/etc/passwd`). Its home is now on the session disk
+  (`/data/chrome/home`, [desktop.md](desktop.md)).
+- `images/browser/browser/entrypoint.sh`: `HOME` no longer assumes root
+  (it is `$DATA_DIR/chrome/home` for either user now); the `chmod` of `/tmp`, which
   only its owner may do, is allowed to fail; and an unwritable profile
   directory is reported as such instead of as a Chromium crash loop.
 - The image still **defaults to root** (no `USER`): the standalone

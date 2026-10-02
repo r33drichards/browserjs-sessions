@@ -141,7 +141,7 @@ The image's content, from the binary cache for the pinned nixpkgs
 |---|---|---|
 | chromium | 1815 | `chromium-unwrapped` alone is 737 |
 | novnc + websockify | about 495 | python 142, numpy 54, blas 70, lapack 70, openblas 34, gfortran 14 |
-| openbox | 346 | mostly shared with chromium (gtk, icu) |
+| openbox | 346 | mostly shared with chromium (gtk, icu); replaced by XFCE since, about 160 more ([desktop.md](desktop.md)) |
 | nodejs_22 | 260 | |
 | xorg-server | 146 | |
 | caddy | 89 | not used in a session pod (`SESSION_MODE=1`) |

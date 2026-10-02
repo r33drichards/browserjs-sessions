@@ -54,6 +54,8 @@ set -uo pipefail
 # shellcheck disable=SC1091
 . /tmp/runtime/session-env
 phase="$1"
+# Where the desktop's own programs run.
+cd "$HOME" || exit 1
 failed=0
 ok() { echo "ok   $*"; }
 bad() {
@@ -76,9 +78,9 @@ wait_for() {
   return 1
 }
 
-# A program of the image, by the path it was started with: nixpkgs wraps
-# them, so the process is named .<name>-wrapped.
-running() { pgrep -f "/(bin|xfconf)/\\.?$1(-wrapped)?( |\$)"; }
+# A program of the image, by the name it was started with (nixpkgs wraps
+# them: the process itself is named .<name>-wrapped).
+running() { pgrep -f "(^|/)\\.?$1(-wrapped)?( |\$)"; }
 window() { wmctrl -lx | awk -v c="$1" 'tolower($3) ~ c { print $1; exit }'; }
 has_window() { [ -n "$(window "$1")" ]; }
 screen_size() { xdpyinfo | sed -n 's/^ *dimensions: *\([0-9x]*\) pixels.*/\1/p'; }
@@ -130,10 +132,10 @@ memory() {
 }
 memory_table() {
   echo "mem  --- $1 ---"
-  memory "xfwm4" '/bin/\.?xfwm4'
+  memory "xfwm4" '(^|/)\.?xfwm4'
   memory "xfce4-panel (and its plugins)" 'xfce4-panel|panel/wrapper'
-  memory "xfdesktop" '/bin/\.?xfdesktop'
-  memory "xfsettingsd" '/bin/\.?xfsettingsd'
+  memory "xfdesktop" '(^|/)\.?xfdesktop'
+  memory "xfsettingsd" '(^|/)\.?xfsettingsd'
   memory "xfconfd + dbus-daemon" 'xfconfd|dbus-daemon'
   memory "desktop, all of the above" 'xfwm4|xfce4-panel|panel/wrapper|xfdesktop|xfsettingsd|xfconfd|dbus-daemon'
   memory "terminal, Thunar, Mousepad" 'xfce4-terminal|[Tt]hunar|mousepad'
@@ -147,29 +149,21 @@ memory_table() {
   fi
 }
 
-# The screen as a PNG: xwd's dump, converted here (no image tool in the image).
+# The MCP server's desktop_execute tool (nut.js), as mcp-js calls it.
+desktop_execute() {
+  curl -fsS --max-time 30 -X POST http://127.0.0.1:8081/mcp \
+    -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
+    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"desktop_execute\",\"arguments\":$1}}"
+}
+# The screen as a PNG, grabbed with it.
 screenshot() {
-  xwd -root -silent | python3 -c '
-import struct, sys, zlib
-d = sys.stdin.buffer.read()
-h = struct.unpack(">25I", d[:100])
-size, width, height, bpp, stride, ncolors = h[0], h[4], h[5], h[11], h[12], h[19]
-assert bpp == 32, bpp
-px = d[size + 12 * ncolors:]
-rows = []
-for y in range(height):
-    row = px[y * stride : y * stride + width * 4]
-    rgb = bytearray(width * 3)
-    rgb[0::3], rgb[1::3], rgb[2::3] = row[2::4], row[1::4], row[0::4]
-    rows.append(b"\0" + bytes(rgb))
-def chunk(kind, body):
-    return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
-sys.stdout.buffer.write(
-    b"\x89PNG\r\n\x1a\n"
-    + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
-    + chunk(b"IDAT", zlib.compress(b"".join(rows), 6))
-    + chunk(b"IEND", b"")
-)' >"/tmp/$1.png" && ok "screenshot $1.png ($(screen_size))" || bad "screenshot $1.png"
+  if desktop_execute '{"operations":[{"type":"screen.grab"}]}' 2>/dev/null |
+    jq -er '.result.content[1].data' 2>/dev/null | base64 -d >"/tmp/$1.png" &&
+    [ "$(head -c 4 "/tmp/$1.png" | tail -c 3)" = PNG ]; then
+    ok "screenshot $1.png ($(screen_size), $(wc -c <"/tmp/$1.png") bytes)"
+  else
+    bad "screenshot $1.png"
+  fi
 }
 
 # --- what must hold every time the image starts -----------------------------
@@ -200,6 +194,9 @@ check "Chromium's window is maximised and ends above the panel" wait_for 30 brow
 check "HOME is on the volume" test "$HOME" = /data/chrome/home -a -w "$HOME"
 check "Downloads in HOME is the folder of the session's files" test "$HOME/Downloads" -ef "$FILES_DIR"
 check "/tmp is writable" touch /tmp/desktop-smoke-touch
+# What the panel starts (a terminal, the file manager) starts where it is.
+panel_in_home() { [ "$(readlink "/proc/$(running xfce4-panel | head -n 1)/cwd")" = "$HOME" ]; }
+check "the panel, and so what it launches, runs in HOME" panel_in_home
 
 if [ "$phase" = restarted ]; then
   # A second container on the same volume: what the first one left.
@@ -237,11 +234,6 @@ memory_table "with a terminal, Thunar and Mousepad open"
 
 # desktop_execute (nut.js, through the MCP server) on this desktop: keys
 # typed into a terminal arrive, and the screen can be grabbed.
-desktop_execute() {
-  curl -fsS --max-time 30 -X POST http://127.0.0.1:8081/mcp \
-    -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
-    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"desktop_execute\",\"arguments\":$1}}"
-}
 xfce4-terminal --title smoke-typing -x bash -c \
   'IFS= read -r line; printf %s "$line" >/tmp/smoke-typed; sleep 600' >>/tmp/smoke-terminal.log 2>&1 &
 typing_window() { xdotool search --name '^smoke-typing$' | head -n 1 | grep .; }
@@ -252,6 +244,7 @@ if wait_for 20 typing_window; then
     {"type":"keyboard.type","params":{"text":"typed by nut.js 123"}},
     {"type":"keyboard.type","params":{"keys":["Enter"]}},
     {"type":"getActiveWindow"},
+    {"type":"getWindows"},
     {"type":"screen.grab"}]}' >/tmp/smoke-desktop-execute.json 2>/tmp/smoke-desktop-execute.err
   check "desktop_execute types into the focused terminal" wait_for 10 test "$(cat /tmp/smoke-typed 2>/dev/null)" = 'typed by nut.js 123'
   if jq -er '.result.content[1].data' /tmp/smoke-desktop-execute.json 2>/dev/null | base64 -d >/tmp/desktop-execute.png &&
@@ -261,6 +254,7 @@ if wait_for 20 typing_window; then
     bad "desktop_execute screen.grab: $(head -c 600 /tmp/smoke-desktop-execute.json /tmp/smoke-desktop-execute.err 2>/dev/null)"
   fi
   echo "info desktop_execute getActiveWindow: $(jq -r '.result.content[0].text | fromjson | .results[2].result | tostring' /tmp/smoke-desktop-execute.json 2>/dev/null | head -c 300)"
+  echo "info desktop_execute getWindows titles: $(jq -r '.result.content[0].text | fromjson | .results[3].result | map(.title) | map(select(. != "")) | tostring' /tmp/smoke-desktop-execute.json 2>/dev/null | head -c 600)"
 else
   bad "a second terminal window did not appear"
 fi
@@ -302,7 +296,13 @@ check "xclip sets and reads the clipboard" test "$(xclip -selection clipboard -o
 for size in 1024x768 1920x1080 1280x800; do
   xrandr -s "$size" >/dev/null 2>&1
   resized() { [ "$(screen_size)" = "$size" ]; }
-  if wait_for 10 resized && wait_for 15 browser_ok; then
+  # The panel follows first, and takes its strip of the new screen.
+  strip() {
+    local h
+    read -r _ _ _ h < <(workarea)
+    [ "$h" -lt "${size#*x}" ]
+  }
+  if wait_for 10 resized && wait_for 15 strip && wait_for 15 browser_ok; then
     ok "after a resize to $size Chromium is maximised in the work area ($(workarea))"
   else
     bad "after a resize to $size: screen $(screen_size), work area $(workarea), Chromium $(xwininfo -id "$(window chromium)" | grep -E 'Absolute|Width|Height' | tr -s ' \n' ' ')"
