@@ -128,7 +128,44 @@ kubectl -n "$NS" get sandboxtemplates.extensions.agents.x-k8s.io,sandboxes.agent
   "\($o.kind)/\($o.metadata.name)  asks-opa=\(if ($v | contains("browserjs/decision/")) then "yes" else "no" end)"' 2>&1
 printf '```\n'
 
+section "Billing"
+cat <<'TEXT'
+The stage (docs/billing-deployment.md) as the cluster has it. Off: the
+backend and billing-operator have no BILLING, the operator wants 0 replicas
+and there is no Secret metronome. Meter: both say meter, the operator is
+ready, the Secret metronome has two keys, and the Lease billing-observer was
+renewed under two minutes ago. Enforce: both say enforce, STRIPE_MODE is
+set, and the export's last run succeeded. Stripe: the Secret and the
+ConfigMap are both there or both absent.
+TEXT
+show kubectl -n "$NS" get deployment billing-operator -o 'custom-columns=NAME:.metadata.name,READY:.status.readyReplicas,WANTED:.spec.replicas,IMAGE:.spec.template.spec.containers[0].image'
+echo "BILLING on the backend and on the operator (nothing after the name: billing is off):"
+for deployment in backend billing-operator; do
+  show kubectl -n "$NS" get deployment "$deployment" -o 'jsonpath={.metadata.name}{": "}{range .spec.template.spec.containers[0].env[?(@.name=="BILLING")]}{.name}={.value}{end}{"\n"}'
+done
+show kubectl -n "$NS" get pods -l app=billing-operator -o wide
+# The observer's heartbeat: renewed after each tick Metronome accepted.
+show kubectl -n "$NS" get lease billing-observer -o 'custom-columns=NAME:.metadata.name,HOLDER:.spec.holderIdentity,RENEWED:.spec.renewTime'
+# The mode is not a secret; of the Secrets, key names and sizes only.
+show kubectl -n "$NS" get configmap billing-mode -o 'jsonpath={.data}'
+show kubectl -n "$NS" describe secret stripe
+show kubectl -n "$NS" describe secret metronome
+printf '```\n'
+kubectl get crd accounts.browserjs.dev -o json 2>&1 | jq -r '
+  "\(.metadata.name)  served=\([.spec.versions[] | select(.served) | .name] | join(","))  established=\([.status.conditions[]? | select(.type == "Established") | .status] | join(","))"' 2>&1
+printf '```\n'
+# The owner is an email address: the name (a hash) stands for it here.
+show kubectl -n "$NS" get accounts.browserjs.dev -o 'custom-columns=NAME:.metadata.name,CARD:.spec.paymentMethod.present,PLAN:.spec.subscription.priceLookupKey,METRONOME:.spec.metronomeCustomerId,EXHAUSTED:.spec.credit.exhausted,BALANCE-MICROS:.spec.credit.balanceMicros,CHECKED:.spec.credit.checkedAt,EXEMPT:.spec.exempt,BLOCKED:.spec.blocked.reason'
+# The Accounts' daily backup (deploy/gke/billing-export.yaml).
+show kubectl -n "$NS" get cronjob billing-export -o 'custom-columns=NAME:.metadata.name,SUSPENDED:.spec.suspend,SCHEDULE:.spec.schedule,LAST-RUN:.status.lastScheduleTime,LAST-SUCCESS:.status.lastSuccessfulTime'
+show kubectl -n "$NS" get jobs -l app=billing-export -o wide
+
 [ -n "$full" ] || exit 0
+
+section "Billing in full"
+show kubectl -n "$NS" describe deployment billing-operator
+show kubectl -n "$NS" logs deployment/billing-operator --tail=100
+show kubectl -n "$NS" logs -l app=billing-export --prefix --tail=30
 
 section "Session policies in full"
 show kubectl -n "$NS" get networkpolicies -o yaml

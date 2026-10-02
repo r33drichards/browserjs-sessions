@@ -1,0 +1,189 @@
+# The Accounts' backup: once a day, every Account as `kubectl get -o yaml`
+# prints it, to a versioned bucket (infra/main, billing.tf; its output
+# billing_export_bucket). Usage and credit are in Metronome and are not lost
+# with the cluster; what a recreated cluster would lose without this is each
+# Account's card state, flags (exempt, blocked, terms) and customer IDs.
+#
+# SUSPENDED here: it starts with the stage "enforce"
+# (patch-billing-enforce.yaml, hack/billing-stage.sh). Restoring is
+# hack/billing-restore.sh; both are in docs/billing-deployment.md.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: billing-export
+---
+# Reads Accounts and nothing else. The bucket is reached as this
+# ServiceAccount through Workload Identity Federation: infra/main lets it
+# create objects there, and neither read nor delete them.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: billing-export
+rules:
+  - apiGroups: ["browserjs.dev"]
+    resources: ["accounts"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: billing-export
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: billing-export
+subjects:
+  - kind: ServiceAccount
+    name: billing-export
+---
+# The API server, DNS, the node's metadata server (for the token) and
+# Cloud Storage; nothing in the cluster, and nothing reaches it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: billing-export
+spec:
+  podSelector:
+    matchLabels:
+      app: billing-export
+  policyTypes: ["Ingress", "Egress"]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+        # NodeLocal DNSCache on GKE: see session-pods.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: node-local-dns
+        - ipBlock:
+            cidr: 169.254.20.10/32
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # The API server and storage.googleapis.com: neither can be named.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
+    # GKE's metadata server, which hands this ServiceAccount its token: the
+    # address pods use, and the one Dataplane V2 redirects it to.
+    - to:
+        - ipBlock:
+            cidr: 169.254.169.254/32
+      ports:
+        - port: 80
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: 169.254.169.252/32
+      ports:
+        - port: 988
+          protocol: TCP
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: billing-export
+spec:
+  suspend: true
+  # 03:17 UTC, daily.
+  schedule: "17 3 * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+        app: billing-export
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 600
+      template:
+        metadata:
+          # The NetworkPolicy selects on this label.
+          labels:
+            app: billing-export
+        spec:
+          serviceAccountName: billing-export
+          restartPolicy: Never
+          enableServiceLinks: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: export
+              # kubectl, curl and jq on Alpine; the tag is kubectl's
+              # version. Tag and digest (an index with linux/amd64 and
+              # linux/arm64) read from Docker Hub's API on 2026-10-02.
+              image: alpine/k8s:1.36.5@sha256:094adf64cdc4827377cdbe7ea5747472ce115f9fbc64a4e35970ec66777f9a00
+              env:
+                - name: NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
+                # infra/main's output billing_export_bucket. Empty, the
+                # export is printed instead of uploaded (test/billing).
+                - name: BUCKET
+                  value: browserjs-sessions-billing-export
+                # kubectl keeps its discovery cache under HOME.
+                - name: HOME
+                  value: /tmp
+              command:
+                - bash
+                - -euo
+                - pipefail
+                - -c
+                - |
+                  command -v kubectl curl jq >/dev/null
+                  out=/tmp/export.yaml
+                  kubectl -n "$NAMESPACE" get accounts.browserjs.dev -o yaml >"$out"
+                  if [ -z "$BUCKET" ]; then
+                    cat "$out"
+                    exit 0
+                  fi
+                  name="export/$(date -u +%Y/%m/%Y-%m-%dT%H-%M-%SZ).yaml"
+                  # The token is this ServiceAccount's own, from the node's
+                  # metadata server. It goes to curl on stdin: never in a
+                  # command line, a file or this log.
+                  curl -sS --fail -H 'Metadata-Flavor: Google' \
+                    'http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token' |
+                    jq -r '"header = \"Authorization: Bearer \(.access_token)\""' |
+                    curl -sS --fail -K - -o /dev/null -X POST \
+                      -H 'Content-Type: application/yaml' --data-binary "@$out" \
+                      "https://storage.googleapis.com/upload/storage/v1/b/$BUCKET/o?uploadType=media&name=$(printf %s "$name" | jq -sRr @uri)"
+                  echo "exported $(wc -c <"$out") bytes to gs://$BUCKET/$name"
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  memory: 512Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir: {}

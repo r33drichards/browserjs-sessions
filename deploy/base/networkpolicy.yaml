@@ -206,3 +206,50 @@ spec:
           protocol: TCP
         - port: 6443
           protocol: TCP
+---
+# The billing operator reads Sandboxes and sends usage to Metronome: the API
+# server, DNS and the internet on 443; nothing else in the cluster, and
+# nothing reaches it (the kubelet's probe is not subject to this).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: billing-operator
+spec:
+  podSelector:
+    matchLabels:
+      app: billing-operator
+  policyTypes: ["Ingress", "Egress"]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+        # NodeLocal DNSCache on GKE: see session-pods.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: node-local-dns
+        - ipBlock:
+            cidr: 169.254.20.10/32
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # The API server (those two ports, anywhere, for the reason given with
+    # policy-operator) and Metronome's API on 443: a NetworkPolicy cannot
+    # name a host.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP

@@ -1,0 +1,33 @@
+# BILLING IS ON, IN SHADOW, while this patch is listed in kustomization.yaml:
+# the billing operator has its one pod and sends every account's usage to
+# Metronome, and the backend shows it. Nothing is refused and nothing is
+# stopped. Both need the Secret "metronome" (hack/billing-secrets.sh).
+#
+# hack/billing-stage.sh lists it and takes it out; docs/billing-deployment.md
+# says what has to be true first. BILLING is set nowhere else.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: billing-operator
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: billing-operator
+          env:
+            - name: BILLING
+              value: meter
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  template:
+    spec:
+      containers:
+        - name: backend
+          env:
+            - name: BILLING
+              value: meter

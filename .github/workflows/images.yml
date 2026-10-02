@@ -1,6 +1,6 @@
 name: images
 
-# Builds the four container images and, from main, pushes them to Artifact
+# Builds the container images and, from main, pushes them to Artifact
 # Registry.
 #
 #   pull request              build only: no sign-in, no push
@@ -54,6 +54,7 @@ on:
           - browser
           - site
           - policy-operator
+          - billing-operator
 
 # Every job states its own; this is the floor.
 permissions:
@@ -100,7 +101,8 @@ jobs:
           # layer that changes whenever its inputs do: caching it would cost
           # minutes and gigabytes of cache per run and never be hit.
           # The policy operator is built from the repository root, because it
-          # copies files of docs/contracts/policy; its Dockerfile is named
+          # copies files of docs/contracts/policy (and the billing operator
+          # likewise, for the same layout); its Dockerfile is named
           # ("file"), and what the build may see is its own
           # images/policy-operator/Dockerfile.dockerignore.
           table='[
@@ -108,7 +110,8 @@ jobs:
             {"name":"mcp-js", "context":"images/mcp-js", "timeout":15, "cache":true, "free_disk":false},
             {"name":"browser","context":"images/browser","timeout":120,"cache":false,"free_disk":true},
             {"name":"site",   "context":"site",          "timeout":15, "cache":true, "free_disk":false},
-            {"name":"policy-operator","context":".","file":"images/policy-operator/Dockerfile","timeout":15,"cache":true,"free_disk":false}
+            {"name":"policy-operator","context":".","file":"images/policy-operator/Dockerfile","timeout":15,"cache":true,"free_disk":false},
+            {"name":"billing-operator","context":".","file":"images/billing-operator/Dockerfile","timeout":15,"cache":true,"free_disk":false}
           ]'
 
           changed_files() {
@@ -132,7 +135,7 @@ jobs:
           wanted=()
           if [ "$EVENT" = "workflow_dispatch" ]; then
             if [ "$CHOSEN" = "all" ] || [ -z "$CHOSEN" ]; then
-              wanted=(backend mcp-js browser site policy-operator)
+              wanted=(backend mcp-js browser site policy-operator billing-operator)
             else
               wanted=("$CHOSEN")
             fi
@@ -143,13 +146,14 @@ jobs:
             touches() { grep -Eq "$1" <<<"$files"; }
             if touches '^\.github/workflows/images\.yml$'; then
               # The pipeline itself changed: prove it on every image.
-              wanted=(backend mcp-js browser site policy-operator)
+              wanted=(backend mcp-js browser site policy-operator billing-operator)
             else
               if touches '^(Dockerfile$|\.dockerignore$|backend/|web/)'; then wanted+=(backend); fi
               if touches '^images/mcp-js/'; then wanted+=(mcp-js); fi
               if touches '^images/browser/'; then wanted+=(browser); fi
               if touches '^site/'; then wanted+=(site); fi
               if touches '^(images/policy-operator/|docs/contracts/policy/)'; then wanted+=(policy-operator); fi
+              if touches '^images/billing-operator/'; then wanted+=(billing-operator); fi
             fi
           fi
 
