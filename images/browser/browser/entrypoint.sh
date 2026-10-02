@@ -230,6 +230,45 @@ done
 keep_running xfce4-panel --disable-wm-check
 keep_running xfdesktop --disable-wm-check
 
+# The panel reserves its strip of the screen (a strut), which is what keeps a
+# maximised window from reaching under it. After some changes of the screen's
+# size the strip is not reserved again (seen going from 1920x1080 to
+# 1280x800: the work area stayed the whole screen until another window
+# opened). So after each change, if a panel along the top or bottom edge has
+# no strip, state it for the panel: xfwm4 then refits the maximised windows.
+reserve_panel_strip() {
+  local id x=0 y=0 w=0 h=0 sh work_h
+  id="$({ wmctrl -lx 2>/dev/null || true; } | awk 'tolower($3) ~ /xfce4-panel/ { print $1; exit }')"
+  [ -n "$id" ] || return 0
+  eval "$(xwininfo -id "$id" 2>/dev/null | awk '
+    /Absolute upper-left X/ { print "x=" $4 }
+    /Absolute upper-left Y/ { print "y=" $4 }
+    /^ *Width:/ { print "w=" $2 }
+    /^ *Height:/ { print "h=" $2 }')"
+  IFS=, read -r _ sh < <(desktop_size)
+  work_h="$(xprop -root _NET_WORKAREA 2>/dev/null | sed 's/.*= //; s/,//g' | awk '{ print $4 }')"
+  # Only a horizontal panel on an edge, and only when nothing is reserved.
+  [ "$w" -gt "$h" ] && [ "${work_h:-0}" -ge "$sh" ] || return 0
+  if [ $((y + h)) -ge "$sh" ]; then
+    xprop -id "$id" -f _NET_WM_STRUT_PARTIAL 32c -set _NET_WM_STRUT_PARTIAL \
+      "0, 0, 0, $h, 0, 0, 0, 0, 0, 0, $x, $((x + w - 1))"
+  elif [ "$y" -le 0 ]; then
+    xprop -id "$id" -f _NET_WM_STRUT_PARTIAL 32c -set _NET_WM_STRUT_PARTIAL \
+      "0, 0, $h, 0, 0, 0, 0, 0, $x, $((x + w - 1)), 0, 0"
+  fi
+}
+watch_screen_size() {
+  stdbuf -oL xev -root -event randr 2>/dev/null | while read -r line; do
+    case "$line" in
+      *RRScreenChangeNotify*)
+        # The panel moves first; give it the time.
+        sleep 2
+        reserve_panel_strip || true
+        ;;
+    esac
+  done
+}
+
 # The desktop's size now, as Chromium wants it ("W,H"): a viewer may have
 # resized it since the start. This is the window's size before it is
 # maximised.
@@ -238,6 +277,7 @@ desktop_size() {
   size="$(xdpyinfo -display :99 2>/dev/null | sed -n 's/^ *dimensions: *\([0-9]*\)x\([0-9]*\) pixels.*/\1,\2/p' | head -n 1)"
   echo "${size:-$SCREEN_W,$SCREEN_H}"
 }
+keep_running watch_screen_size
 
 # Maximises Chromium's windows once it has put them up. --start-maximized
 # does that for a new profile, but a window restored from the last session

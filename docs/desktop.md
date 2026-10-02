@@ -22,7 +22,10 @@ has only been checked under Docker.
 | Run dialog, settings | `xfce4-appfinder` (Alt+F2), `xfce4-settings-manager` | on demand |
 
 Theme and icons are Adwaita (GTK's built-in theme, `adwaita-icon-theme`),
-fonts are the ones the image had (DejaVu, Noto, colour emoji).
+fonts are the ones the image had (DejaVu, Noto, colour emoji). The image's
+fontconfig now says what the generic families mean (`sans-serif` is DejaVu
+Sans, `monospace` DejaVu Sans Mono): before, they resolved to a serif font,
+in Chromium's own interface and in pages that ask for a generic family too.
 
 ### What is left out, and why
 
@@ -52,8 +55,12 @@ fonts are the ones the image had (DejaVu, Noto, colour emoji).
   refits maximised windows when the screen changes size
   (`clientScreenResize` in its `client.c` calls `clientUpdateMaximizeSize`
   for every maximised window on GDK's `size-changed`), and the panel moves
-  to the new bottom edge. The smoke test resizes to 1024x768, 1920x1080 and
-  back and checks Chromium each time.
+  to the new bottom edge. One thing did not hold in the test: after some
+  changes of size (1920x1080 to 1280x800) the panel's strip was not
+  reserved again, and Chromium reached under the panel until another window
+  opened. The entrypoint watches for size changes (`xev`) and states the
+  panel's strut itself when none is in effect. The smoke test resizes six
+  times and checks the work area and Chromium each time.
 - **Chromium is always there.** The restart loop is unchanged: close the
   last window, or kill it, and it is back in two seconds with the same
   profile. `browser_execute` needs it, so on this desktop Chromium is the

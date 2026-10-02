@@ -293,7 +293,7 @@ printf 'smoke clip' | xclip -selection clipboard -i >/dev/null 2>&1
 check "xclip sets and reads the clipboard" test "$(xclip -selection clipboard -o 2>/dev/null)" = 'smoke clip'
 
 # A viewer resizes the desktop: Chromium stays maximised, above the panel.
-for size in 1024x768 1920x1080 1280x800; do
+for size in 1024x768 1920x1080 1280x800 1280x1024 800x600 1280x800; do
   xrandr -s "$size" >/dev/null 2>&1
   resized() { [ "$(screen_size)" = "$size" ]; }
   # The panel follows first, and takes its strip of the new screen.
@@ -302,10 +302,13 @@ for size in 1024x768 1920x1080 1280x800; do
     read -r _ _ _ h < <(workarea)
     [ "$h" -lt "${size#*x}" ]
   }
-  if wait_for 10 resized && wait_for 15 strip && wait_for 15 browser_ok; then
+  wait_for 10 resized
+  sleep 1
+  echo "info one second after the resize to $size: work area $(workarea), panel strut $(xprop -id "$(window xfce4-panel)" _NET_WM_STRUT_PARTIAL | sed 's/.*= //')"
+  if resized && wait_for 15 strip && wait_for 15 browser_ok; then
     ok "after a resize to $size Chromium is maximised in the work area ($(workarea))"
   else
-    bad "after a resize to $size: screen $(screen_size), work area $(workarea), Chromium $(xwininfo -id "$(window chromium)" | grep -E 'Absolute|Width|Height' | tr -s ' \n' ' ')"
+    bad "after a resize to $size: screen $(screen_size), work area $(workarea), Chromium $(xwininfo -id "$(window chromium)" | grep -E 'Absolute|Width|Height' | tr -s ' \n' ' '), panel $(xwininfo -id "$(window xfce4-panel)" | grep -E 'Absolute|Width|Height' | tr -s ' \n' ' ') $(xprop -id "$(window xfce4-panel)" _NET_WM_STRUT_PARTIAL _NET_WM_STRUT | tr '\n' ' ')"
   fi
 done
 

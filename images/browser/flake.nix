@@ -178,6 +178,43 @@
             pkgs.nodejs_22
           ];
 
+          # The image's fonts, and which of them the generic names mean.
+          # Without the aliases "sans-serif" and "monospace" resolve to
+          # whatever comes first, a serif: in the desktop's menus, in a
+          # terminal (whose cells are then a letter and a half wide), and in
+          # web pages that ask for a generic family.
+          fonts-conf = pkgs.writeText "fonts.conf" ''
+            <?xml version="1.0"?>
+            <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+            <fontconfig>
+              <include>${
+                pkgs.makeFontsConf {
+                  fontDirectories = [
+                    pkgs.dejavu_fonts
+                    pkgs.noto-fonts
+                    pkgs.noto-fonts-color-emoji
+                  ];
+                }
+              }</include>
+              ${pkgs.lib.concatMapStrings
+                (
+                  { generic, font }:
+                  ''
+                    <alias binding="same"><family>${generic}</family><prefer><family>${font}</family></prefer></alias>
+                  ''
+                )
+                [
+                  { generic = "sans-serif"; font = "DejaVu Sans"; }
+                  { generic = "sans"; font = "DejaVu Sans"; }
+                  { generic = "system-ui"; font = "DejaVu Sans"; }
+                  { generic = "serif"; font = "DejaVu Serif"; }
+                  { generic = "monospace"; font = "DejaVu Sans Mono"; }
+                  { generic = "mono"; font = "DejaVu Sans Mono"; }
+                ]
+              }
+            </fontconfig>
+          '';
+
           runtime = pkgs.writeShellApplication {
             name = "browser-entrypoint";
             runtimeInputs = [
@@ -197,6 +234,7 @@
               # entrypoint maximises Chromium with wmctrl.
               pkgs.wmctrl
               pkgs.xdotool
+              pkgs.xev
               pkgs.xprop
               pkgs.xrandr
               pkgs.xset
@@ -215,13 +253,7 @@
               export SHELL=${pkgs.bashInteractive}/bin/bash
               export TZDIR=${pkgs.tzdata}/share/zoneinfo
               export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
-              export FONTCONFIG_FILE=${pkgs.makeFontsConf {
-                fontDirectories = [
-                  pkgs.dejavu_fonts
-                  pkgs.noto-fonts
-                  pkgs.noto-fonts-color-emoji
-                ];
-              }}
+              export FONTCONFIG_FILE=${fonts-conf}
               exec ${pkgs.bash}/bin/bash ${./browser/entrypoint.sh} "$@"
             '';
           };
