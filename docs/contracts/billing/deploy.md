@@ -16,7 +16,7 @@ Names, flags, secrets, routes and rights. Everything is in the namespace
 | 1, shadow | `BILLING=meter` and the Metronome **sandbox** token, no Stripe key: usage is metered in Metronome and shown; nothing is refused; no purchase is offered | `patch-backend.yaml`, the operator's Deployment, the secrets below |
 | 2, test payments | stage 1 + `STRIPE_MODE=test` and the test secrets: Checkout and the portal work with test cards | the repository variable `STRIPE_MODE`, the secrets below |
 | 3, enforce | `BILLING=enforce`: the card gate, the stop at zero (for the two allow-listed users this is a rehearsal, with test cards). Requires stage 2. | `patch-backend.yaml` |
-| 4, live payments | `STRIPE_MODE=live` and the live secrets, of Stripe **and of Metronome's production environment** (the setup workflow run against it first). Test-mode cards, sandbox customers and credit do not carry over: every Account's `metronomeCustomerId` and `credit` are cleared by the documented command, and the reconcile makes production customers. | the repository variable, the secrets |
+| 4, live payments | `STRIPE_MODE=live` and the live secrets, of Stripe **and of Metronome's production environment** (`infra/billing` applied to it first). Test-mode cards, sandbox customers and credit do not carry over: every Account's `metronomeCustomerId` and `credit` are cleared by the documented command, and the reconcile makes production customers. | the repository variable, the secrets |
 | 5, open sign-up | `OPEN_SIGNUP=true` and Pomerium's policy changed in the same pull request; needs live payments and the other prerequisites of the design's section 8.5 | `patch-backend.yaml`, `pomerium-config.yaml` |
 
 Each stage is one small pull request (or one variable) that can be reverted.
@@ -59,10 +59,10 @@ never printed, never in the repository, a log or a chat:
 |---|---|---|
 | `STRIPE_TEST_API_KEY` | restricted key (`rk_test_...`) of the sandbox, permissions below | `deploy.yml` |
 | `STRIPE_TEST_WEBHOOK_SECRET` | signing secret (`whsec_...`) of the sandbox's webhook endpoint | `deploy.yml` |
-| `STRIPE_TEST_SETUP_KEY` | restricted key of the sandbox for the setup command | `stripe-setup.yml` |
+| `STRIPE_TEST_SETUP_KEY` | restricted key of the sandbox for OpenTofu (`infra/billing`): Products, Prices, the portal configuration | the infra workflows |
 | `STRIPE_LIVE_API_KEY`, `STRIPE_LIVE_WEBHOOK_SECRET`, `STRIPE_LIVE_SETUP_KEY` | the same three for live mode, later | the same |
 
-| `METRONOME_SANDBOX_API_TOKEN` | an API token of Metronome's sandbox (Developer, API tokens) | `deploy.yml`, `metronome-setup.yml` |
+| `METRONOME_SANDBOX_API_TOKEN` | an API token of Metronome's sandbox (Developer, API tokens) | `deploy.yml`, the infra workflows (`infra/billing`) |
 | `METRONOME_SANDBOX_WEBHOOK_SECRET` | the secret of the sandbox's webhook destination | `deploy.yml` |
 | `METRONOME_PRODUCTION_API_TOKEN`, `METRONOME_PRODUCTION_WEBHOOK_SECRET` | the same two for production, later | the same |
 
@@ -94,14 +94,13 @@ prune with the key's request log):
 | Key | Write | Read |
 |---|---|---|
 | run time | Checkout Sessions, Customers, Customer portal sessions, PaymentIntents (auto-recharge), PaymentMethods (detach on account deletion), Subscriptions (cancel on account deletion) | Prices, Products, SetupIntents, Invoices, Invoice payments, Charges, Refunds, Disputes |
-| setup | Products, Prices, Customer portal configurations | the same |
+| OpenTofu (`infra/billing`) | Products, Prices, Customer portal configurations | the same |
 
 ## Workflows
 
 | Workflow | Trigger | Does |
 |---|---|---|
-| `stripe-setup.yml` (new) | by hand; inputs `mode` (`test`, `live`), `apply` (`false` prints the plan, `true` makes the changes), and for live `confirm` typed as `live` | runs `go run ./backend/cmd/stripe-setup --catalogue docs/contracts/billing/catalogue.yaml` with the setup key of that mode; prints object IDs and what changed, never a key |
-| `metronome-setup.yml` (new) | by hand; inputs `environment` (`sandbox`, `production`), `apply`, and for production `confirm` typed as `production` | runs `go run ./backend/cmd/metronome-setup --catalogue docs/contracts/billing/catalogue.yaml` with the token of that environment; prints object IDs and what changed, never a token |
+| the infra workflows (`infra-plan.yml`, `infra-apply.yml`, extended to `infra/billing`, or their twins for it: billing-iac's choice) | as for `infra/main`: a plan on a pull request, an apply from `main` | `tofu plan` and `tofu apply` of `infra/billing` for one environment (Stripe test with Metronome sandbox; later Stripe live with Metronome production, which needs an approval), with that environment's Stripe setup key and Metronome token. Prints what changes, never a key. There is **no** `stripe-setup.yml`, no `metronome-setup.yml` and no setup command: the product owner's instruction is that these objects are infrastructure as code. |
 | `deploy.yml` (edited) | as today | the Secrets and ConfigMap above |
 | `images.yml`, `hack/pin-images.sh` (edited) | as today | the `billing-operator` image beside the others |
 
@@ -157,9 +156,10 @@ the ConfigMap `billing-catalogue` by `configMapGenerator` **without** a name
 suffix hash, and mounted in the backend and the operator. A change of a
 credit amount or a limit is a pull request to that file and a
 manifest apply: no image is built and no pod restarts. A change of a
-**price** also needs the Stripe setup workflow (a new lookup key), and a
-change of a **rate** the Metronome setup workflow (a new rate on the rate
-card, from a date). Track B
+**price** also needs an apply of `infra/billing` (a new Stripe lookup
+key), and so does a change of a **rate** (a new rate on Metronome's rate
+card, from a date). `infra/billing` reads the same catalogue file, so the
+three cannot say different numbers. Track B
 keeps the two copies identical with a test.
 
 ## Labels

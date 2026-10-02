@@ -71,7 +71,8 @@ tested product owned by the company that already takes our payments.
 
 **The fallback**, if the sandbox turns out to be sales-gated or a minimum
 makes it unusable: the small usage service on Firestore of
-[pull request 83](https://github.com/r33drichards/browserjs-sessions/pull/83).
+[pull request 83](https://github.com/r33drichards/browserjs-sessions/pull/83)
+(closed, not merged; kept as the record of the fallback).
 The interfaces below are the same for both (the `Ledger` hides which), so
 falling back costs one implementation, not a redesign.
 
@@ -152,8 +153,11 @@ falling back costs one implementation, not a redesign.
 
 ## 3. Metronome objects for our model
 
-Made by a setup command, as Stripe's products are (contract: "Objects made
-by the setup command").
+Defined in OpenTofu (`infra/billing`, with our own
+`terraform-provider-metronome`), as Stripe's products and prices now are
+too: the product owner's instruction is that nothing is made by a setup
+command or by hand (contract: "Objects defined in OpenTofu"). The backend
+finds them by name.
 
 | Ours | In Metronome |
 |---|---|
@@ -271,7 +275,7 @@ Tracks A and C have no pull request yet.
 | `enforcement.md` | the decision reads the Account with no informer; `balance` and `stale` inputs replaced by `exhausted`; rows 6 and 7 removed; a table of what happens when each part is down; auto-recharge moves to the balance pass |
 | `testing.md` | `Ledger` changed, `Metronome` added (below); fakes; scenario 5 added; the observer's tests |
 | `stripe.md` | note at the top: "create the Grant" is `Ledger.EnsureGrant` onto Metronome with the same keys; nothing else changes |
-| `deploy.md` | the Secret `metronome`, its four GitHub secrets, `metronome-setup.yml`, the public route `api-metronome-webhook`, the operator's egress and rights, `BILLING_BALANCE_PASS` in place of `BILLING_STALE_AFTER`, labels |
+| `deploy.md` | the Secret `metronome`, its four GitHub secrets, `infra/billing` in place of any setup workflow, the public route `api-metronome-webhook`, the operator's egress and rights, `BILLING_BALANCE_PASS` in place of `BILLING_STALE_AFTER`, labels |
 | `backend-api.yaml` | `POST /metronome/webhook` added; nothing else |
 | `catalogue.yaml`, `ui-states.md`, `legal-pages.md` | unchanged |
 
@@ -305,15 +309,17 @@ the fake's `Tick` and posts the alert event it returns.
 | Track | Now | Change | Size |
 |---|---|---|---|
 | **A, operator** | not yet a pull request | Becomes the **observer**: the pass, the observation, the **seconds** function (vectors: `awakeSeconds`, `diskGBSeconds`), the 6-hourly disk sum, the sender to Metronome with keys, batching, retry and give-up, the Lease. **Drops**: money, debit, grants, `Account.status`, periods, `UsagePeriod`, retention, conditions, and reading Accounts at all. Needs the Metronome token and egress on 443. | Smaller |
-| **B, deployment** (#79) | open | **Drops** the `Grant` and `UsagePeriod` CRDs and their rights and CEL tests. **Adds** the Secret `metronome` from the GitHub secrets (sandbox or production by `STRIPE_MODE`), the route `api-metronome-webhook` in every `pomerium-config.yaml`, the operator's new egress and its smaller Role with the Lease, `metronome-setup.yml`, the backend's Role without `watch`. The export CronJob exports Accounts only. The Account CRD is re-copied. | About the same |
+| **B, deployment** (#79) | open | **Drops** the `Grant` and `UsagePeriod` CRDs and their rights and CEL tests. **Adds** the Secret `metronome` from the GitHub secrets (sandbox or production by `STRIPE_MODE`), the route `api-metronome-webhook` in every `pomerium-config.yaml`, the operator's new egress and its smaller Role with the Lease, the backend's Role without `watch`. The export CronJob exports Accounts only. The Account CRD is re-copied. | About the same |
 | **C, Stripe** | not yet a pull request | **Nothing in what it calls**: it creates and revokes credit only through `Ledger.EnsureGrant` and `Revoke`. Three small things: `decideSignupCredit` reads "another account's" as an `existing` with an empty Account; the checkout return no longer waits for a tick; `ensureRecharge`'s trigger is called from D's balance pass, not the sweep. | Very small |
-| **D, enforcement** (#80 open: interfaces and fakes) | in review | #80: replace `Ledger` as above, add `Metronome`, replace the fake ledger with the fake Metronome (the Go step moves inside it). Then, new: `backend/internal/billing/metronome/` (the HTTP client; `Ledger` over it; the webhook handler; the balance pass), `backend/cmd/metronome-setup`, `Accounts` on direct reads with label selectors and **no informer**, the decision reading `spec.credit.exhausted`, `GET /api/billing` and `/usage` from `Ledger.Balance` and `Usage`, scenario 5 and `TestNoLedgerCopy`. The decision table, the sweep, the drain and the answers are as planned. | The most change: one new package, the informer removed |
+| **D, enforcement** (#80 open: interfaces and fakes) | in review | #80: replace `Ledger` as above, add `Metronome`, replace the fake ledger with the fake Metronome (the Go step moves inside it). Then, new: `backend/internal/billing/metronome/` (the HTTP client; `Ledger` over it; the webhook handler; the balance pass), `Accounts` on direct reads with label selectors and **no informer**, the decision reading `spec.credit.exhausted`, `GET /api/billing` and `/usage` from `Ledger.Balance` and `Usage`, scenario 5 and `TestNoLedgerCopy`. The decision table, the sweep, the drain and the answers are as planned. | The most change: one new package, the informer removed |
 | **E, UI** (merged) | done | None: `backend-api.yaml` is unchanged. Optional later: the checkout return can stop polling for the tick, since credit is there at once. | None |
+| **billing-iac** (new) | in progress | `terraform-provider-metronome` and `infra/billing`: the Metronome objects of the contract and Stripe's Products, Prices and portal configuration, from `catalogue.yaml`, applied from GitHub Actions. **No track builds a setup command or a setup workflow**: C drops `backend/cmd/stripe-setup` and `stripe-setup.yml`, D never builds `metronome-setup`. | New |
 | **F, site**; **G, sign-up** | | None. The privacy page gains Metronome as a processor (usage figures and an account identifier; no email address, no card data). | One line |
 
 Suggested order: D amends #80 first (C and the scenarios build on the
-fakes); the sandbox checks M1 to M6 in parallel, since they can change the
-contract; then A, B and D's new package together.
+fakes); billing-iac applies `infra/billing` to the sandbox (M0), which the
+checks M1 to M6 need and which can change the contract; then A, B and D's
+new package together.
 
 ---
 
@@ -329,7 +335,7 @@ contract; then A, B and D's new package together.
 | 6 | Usage period shown to a subscriber | **The calendar month**, like everyone | It is Metronome's statement period; the plan's credit still follows Stripe's billing period. One sentence changes on the billing page. |
 | 7 | Do exempt accounts (admins) get Metronome customers | **Yes** | "Metered for the record"; their usage rates at zero and counts toward the event fee (cents) |
 | 8 | Send the email address to Metronome | **No**: the customer's name is the owner hash | Less personal data with a processor; support looks an account up by hash |
-| 9 | Pull request 83 (the storage options) | **Keep it open** as the fallback until step 1 of the to-do list has passed | It is the plan if Metronome turns out unusable |
+| 9 | Pull request 83 (the storage options) | **Closed**, not merged; it remains the documented fallback | It is the plan only if Metronome turns out unusable |
 
 **What would change the recommendation back to our own service**: sandbox
 or production access turns out to need a sales call or a minimum fee; M2
@@ -363,9 +369,11 @@ nowhere else: not a chat, not a file, not a log.
 2. In Metronome's **sandbox** (app.metronome.com): Developer, API tokens,
    create a token. This is the only place a token is issued. Put it in
    the GitHub Actions secret **`METRONOME_SANDBOX_API_TOKEN`**.
-3. Run the workflow **`metronome-setup`** with `environment: sandbox`,
-   `apply: false`; read the plan; run it again with `apply: true`. (Exists
-   once track D's setup command is merged.)
+3. Merge billing-iac's pull request for `infra/billing` once its plan
+   against the sandbox reads right; the apply from `main` makes the
+   metrics, products, rate card, rates and alert in the sandbox. Nothing
+   is created in Metronome's dashboard by hand, except the webhook of the
+   next step, which has no API.
 4. In the sandbox: Developer, Notifications, Webhooks, Add:
    `https://api.computeruse.site/metronome/webhook`. Put its secret in
    **`METRONOME_SANDBOX_WEBHOOK_SECRET`**. Send the test notification.
@@ -376,11 +384,11 @@ nowhere else: not a chat, not a file, not a log.
 7. Before live payments: ask Metronome how production access is granted
    and what, if anything, is signed. Create the production token and
    webhook the same way into **`METRONOME_PRODUCTION_API_TOKEN`** and
-   **`METRONOME_PRODUCTION_WEBHOOK_SECRET`**; run `metronome-setup` with
-   `environment: production`.
+   **`METRONOME_PRODUCTION_WEBHOOK_SECRET`**; approve the apply of
+   `infra/billing` to production.
 8. Add Metronome to the privacy page's list of processors (track F drafts
    the line) and check its data processing terms.
-9. Keep PR 83's fallback in mind only if step 1c fails.
+9. If step 1c fails, the fallback is the closed pull request 83.
 
 The Stripe steps of the first design's to-do list are unchanged.
 
