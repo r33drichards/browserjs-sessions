@@ -4,9 +4,13 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
+
+	petname "github.com/dustinkirkland/golang-petname"
 
 	"github.com/r33drichards/browserjs-sessions/backend/internal/auth"
 	"github.com/r33drichards/browserjs-sessions/backend/internal/authz"
@@ -22,10 +26,35 @@ type API struct {
 	// The lock is per user. It is enough because there is one backend
 	// replica; more would need the cap enforced cluster-side.
 	creating keyedMutex // the cap is "list, then create"
+
+	petName func() string // names a session created without a name
 }
 
 func New(store *sessions.Store, az authz.Checker, urls *sessions.URLTemplate, maxPerUser int) *API {
-	return &API{store: store, authz: az, urls: urls, cap: maxPerUser}
+	return &API{store: store, authz: az, urls: urls, cap: maxPerUser, petName: petName}
+}
+
+// petName is an adjective and an animal, like "brave-otter".
+func petName() string { return petname.Generate(2, "-") }
+
+// petNameTries bounds the search for a pet name the user doesn't already have.
+const petNameTries = 5
+
+// freshName generates a name that none of the user's sessions has. Names
+// need not be unique, so after a few tries a repeated one will do.
+func (a *API) freshName(mine []sessions.Session) string {
+	taken := make(map[string]bool, len(mine))
+	for _, s := range mine {
+		taken[s.Name] = true
+	}
+	name := a.petName()
+	for range petNameTries - 1 {
+		if !taken[name] {
+			break
+		}
+		name = a.petName()
+	}
+	return name
 }
 
 // keyedMutex is a mutex per key. A key takes up space only while it is held
@@ -172,8 +201,9 @@ func (a *API) create(w http.ResponseWriter, r *http.Request, u auth.User) {
 	var body struct {
 		Name string `json:"name"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "body must be JSON with a name")
+	// The name is optional, and so is a body that would only carry it.
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "body must be JSON, optionally with a name")
 		return
 	}
 	// Counting and creating must not interleave with the same user's other
@@ -189,9 +219,13 @@ func (a *API) create(w http.ResponseWriter, r *http.Request, u auth.User) {
 		writeError(w, http.StatusConflict, "session limit reached; delete one first")
 		return
 	}
+	name := body.Name
+	if strings.TrimSpace(name) == "" {
+		name = a.freshName(mine)
+	}
 	// The owner is recorded on the session itself; that is all there is to
 	// who may use it.
-	s, err := a.store.Create(r.Context(), body.Name, u.Subject)
+	s, err := a.store.Create(r.Context(), name, u.Subject)
 	if err != nil {
 		a.storeError(w, err)
 		return

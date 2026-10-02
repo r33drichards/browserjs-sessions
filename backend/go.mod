@@ -4,6 +4,7 @@ go 1.26.8
 
 require (
 	github.com/MicahParks/keyfunc/v3 v3.8.2
+	github.com/dustinkirkland/golang-petname v0.0.0-20260929120758-6e3915f1a6a8
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	golang.org/x/sync v0.22.0
 	k8s.io/apimachinery v0.37.1
