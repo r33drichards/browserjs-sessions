@@ -175,3 +175,12 @@ routes:
     preserve_host_header: true
     timeout: 0s
     idle_timeout: 0s
+
+  # The public site (site.yaml): anyone may read it, signed in or not, and
+  # it is told nothing about who is asking. An exact host of its own, so it
+  # takes nothing from the routes above.
+  - name: site
+    from: https://computeruse.site
+    to: http://site
+    allow_public_unauthenticated_access: true
+    pass_identity_headers: false

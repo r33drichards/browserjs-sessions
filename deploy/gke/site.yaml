@@ -1,0 +1,93 @@
+# The public site (site/: landing page, docs, blog) on https://computeruse.site.
+# Static files served by nginx; Pomerium's "site" route lets anyone read them
+# without signing in. It holds no credentials and talks to nothing.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: site
+  labels:
+    app: site
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: site
+  template:
+    metadata:
+      labels:
+        app: site
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: site
+          image: browserjs/site
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # nginx's pid file and temporary files; nothing else is written.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: site
+spec:
+  selector:
+    app: site
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+# Only Pomerium talks to the site, and the site talks to nobody.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: site
+spec:
+  podSelector:
+    matchLabels:
+      app: site
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: pomerium
+      ports:
+        - port: 8080
+          protocol: TCP

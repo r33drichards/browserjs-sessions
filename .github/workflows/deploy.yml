@@ -304,6 +304,7 @@ jobs:
             kubectl -n "$NS" rollout restart deployment/backend
           fi
           kubectl -n "$NS" rollout status deployment/backend --timeout=300s
+          kubectl -n "$NS" rollout status deployment/site --timeout=300s
           if [ "$ISSUER" = staging ]; then
             echo "::warning::Deployed with a STAGING certificate: nothing trusts it, so sign-in and the backend's key fetch do not work. Run again with issuer=production."
           fi

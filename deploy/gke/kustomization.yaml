@@ -16,6 +16,7 @@ resources:
   - snapshots.yaml
   - warmpool.yaml
   - certificate.yaml
+  - site.yaml
 
 # THE ONE PLACE the deployed images are chosen. Each digest is what the
 # "images" workflow printed in its run summary for the commit to deploy.
@@ -34,6 +35,9 @@ images:
   - name: browserjs/mcp-js
     newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/mcp-js
     digest: sha256:984dceedf06bf2e18473807617bbc491b409b4fe43e1cea93865128719c0cf3b
+  - name: browserjs/site
+    newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/site
+    digest: sha256:cb42b28db2bfcfdd9aa54091e3cb164f74b74be5825991829d903e88244d6658
 
 configMapGenerator:
   - name: session-blueprint
