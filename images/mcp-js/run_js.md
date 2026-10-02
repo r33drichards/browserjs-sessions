@@ -264,20 +264,20 @@ the pointer move and can use the mouse and keyboard at the same time.
 
 ### Shell (mcp-exec) — `mcp.callTool("exec", "exec", …)`
 
-Shell commands run on the desktop Chromium runs on, as the desktop's user: the
-same home directory, files and `PATH` as a terminal there, and `DISPLAY` is
-set, so a command can open a window the person watching sees.
-(`child_process` is not available in `run_js`; this is the way to run a
-program.) The server is [mcp-exec](https://github.com/r33drichards/mcp-exec),
-and it is asynchronous: `exec` starts the command and returns an id at once,
-`stream_logs` returns its output and status, `search_logs` greps its output.
+Programs run on the desktop Chromium runs on, as the desktop's user: the same
+home directory, files and `PATH` as a terminal there, and `DISPLAY` is set, so
+a program can open a window the person watching sees. (`child_process` is not
+available in `run_js`; this is the way to run a program.) The server is
+[mcp-exec](https://github.com/r33drichards/mcp-exec), and it is asynchronous:
+`exec` starts the program and returns an id at once, `stream_logs` returns its
+output and status, `search_logs` greps its output, `kill` stops it.
 
 ```js
-// Run a command and wait for it: exec, then stream_logs until it has ended.
-async function sh(cmd, timeout = 60) {
-  const call = async (tool, args) => JSON.parse((await mcp.callTool("exec", tool, args)).content[0].text);
-  const { id } = await call("exec", { cmd, timeout }); // { id: "<uuid>", status: "started" }
-  let logs = "", offset = 0;
+// Run a program and wait for it: exec, then stream_logs until it has ended.
+async function run(bin, args = [], { timeout = 60, cwd, env } = {}) {
+  const call = async (tool, a) => JSON.parse((await mcp.callTool("exec", tool, a)).content[0].text);
+  const { id } = await call("exec", { bin, args, timeout, ...(cwd ? { cwd } : {}), ...(env ? { env } : {}) });
+  let logs = "", offset = 0; // exec returned { id: "<uuid>", status: "started" }
   for (;;) {
     const r = await call("stream_logs", { id, offset }); // { logs, next_offset, status }
     logs += r.logs;
@@ -286,59 +286,71 @@ async function sh(cmd, timeout = 60) {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
 }
-const r = await sh("git clone --depth 1 https://github.com/octocat/Hello-World hello && ls hello");
+const r = await run("git", ["clone", "--depth", "1", "https://github.com/octocat/Hello-World", "hello"]);
 if (r.status !== "completed:0") throw new Error(`${r.status}\n${r.logs}`);
-console.log(r.logs);
+console.log((await run("ls", ["-la"], { cwd: "/tmp" })).logs);
 ```
 
 ```js
 // A long command: start it in one run_js call, keep the id, look at it later.
-const start = await mcp.callTool("exec", "exec", { cmd: "cd ~/app && npm ci && npm test", timeout: 1800 });
+const start = await mcp.callTool("exec", "exec", { bin: "npm", args: ["test"], cwd: "/tmp/app", timeout: 1800 });
 const { id } = JSON.parse(start.content[0].text);
 await fs.writeFile("/data/memory/last-build-id.txt", id);
 // ...in a later run_js call: the output from byte `offset` on, and the status.
 const r = JSON.parse((await mcp.callTool("exec", "stream_logs", { id, offset: 0 })).content[0].text);
 console.log(r.status, r.next_offset); // "running", then "completed:<exit code>"
+// Lines of a long log, without reading all of it; and stopping the command.
+const found = await mcp.callTool("exec", "search_logs", { id, pattern: "(?i)error|failed" });
+console.log(JSON.parse(found.content[0].text).matches); // [{ line, offset }]
+await mcp.callTool("exec", "kill", { id }); // { id, status: "cancelled" }
 ```
 
 ```js
-// Find lines in a long log without reading all of it.
-const found = await mcp.callTool("exec", "search_logs", { id, pattern: "(?i)error|failed" });
-console.log(JSON.parse(found.content[0].text).matches); // [{ line, offset }]
+// Pipes, redirection, globs, &&: those are a shell's. Ask for one, as the program.
+const start = await mcp.callTool("exec", "exec", {
+  bin: "sh",
+  args: ["-c", "ls -1 *.csv | wc -l"],
+  cwd: "/tmp",
+  timeout: 10,
+});
 ```
 
-The three tools (every argument is required):
+The tools:
 
-- `exec { cmd, timeout }`: runs `sh -c <cmd>` and returns
-  `{ id, status: "started" }`. `cmd` is one shell command line: pipes,
-  redirection, `&&`, `cd`, `VAR=value program` all work. `timeout` is in
-  **seconds**. There is no working-directory or environment argument: a command
-  starts in the home directory with the desktop's environment, so write
-  `cd dir && …` and `VAR=value …` in `cmd`.
-- `stream_logs { id, offset }`: returns `{ logs, next_offset, status }`: the
+- `exec { bin, args?, timeout, cwd?, env? }` returns `{ id, status: "started" }`.
+  - `bin`: the program, a name on `PATH` or a path. It is run **directly, not
+    by a shell**.
+  - `args`: its arguments, an array of strings, each passed exactly as it is:
+    no quoting needed, nothing is split or expanded (`"*.csv"` and `"$HOME"`
+    arrive as those characters). Default: none.
+  - `timeout`: in **seconds**, required. Then the program and everything it
+    started are killed and the status is `"timeout"`.
+  - `cwd`: the working directory, an absolute path of an existing directory.
+    Default: the home directory.
+  - `env`: `{ NAME: "value" }`, added to the desktop's environment.
+  - Anything else is refused, `cmd` included: there is no command-line form.
+- `stream_logs { id, offset }` returns `{ logs, next_offset, status }`: the
   output from byte `offset` to the end, and where to continue. `status` is
-  `"running"`, `"completed:<exit code>"`, `"timeout"`, `"failed:<reason>"` or
-  `"cancelled"`; `"error"` means the id is not known (the reason is in `logs`).
-- `search_logs { id, pattern }`: returns `{ matches: [{ line, offset }] }` for a
+  `"running"`, `"completed:<exit code>"`, `"timeout"`, `"cancelled"` or
+  `"failed:<reason>"` (for example a program that does not exist); `"error"`
+  means the id is not known (the reason is in `logs`).
+- `search_logs { id, pattern }` returns `{ matches: [{ line, offset }] }` for a
   regular expression (Rust syntax; `(?i)` for case-insensitive).
+- `kill { id }` stops a running command, with everything it started, and
+  returns `{ id, status }`.
 
 How it behaves:
 
 - **Output.** stdout and stderr go to one log, line by line, in the order they
-  arrive. It must be text: at the first line that is not valid UTF-8 the rest
-  of that stream is lost, so pipe binary output through `base64` or into a
-  file. Nothing reaches the model unless you print it: read with offsets and
-  `search_logs`, and log the part you need.
-- **Exit code.** A command that fails is not an error of the call: check that
-  `status` is `"completed:0"`.
-- **Timeout.** After `timeout` seconds the shell is killed and the status
-  becomes `"timeout"`, but programs the shell had started keep running until
-  they end by themselves, and the status stays `"running"` until they do.
-  Prefix a single long-running program with `exec` (`exec sleep 600`) so that
-  it is the process that gets killed. There is no tool to stop a command: to
-  end one early, run `pkill -f <pattern>` as another command.
-- **No terminal, no input.** Commands have no TTY and no stdin you can write
-  to: programs that prompt will not work. Pass flags that make them
+  arrive. Bytes that are not valid UTF-8 read back as `\uFFFD`: pipe binary
+  output through `base64` or into a file. Nothing reaches the model unless you
+  print it: read with offsets and `search_logs`, and log the part you need.
+- **Exit code.** A program that fails is not an error of the call: check that
+  `status` is `"completed:0"`. A refused argument (an unknown field, a `cwd`
+  that does not exist) or a policy that denies the call makes `mcp.callTool`
+  throw.
+- **No terminal, no input.** Programs have no TTY and an empty stdin:
+  programs that prompt will not work. Pass flags that make them
   non-interactive.
 - **Polling.** Each call is quick; a `run_js` call itself is limited (30 s
   unless you raise `execution_timeout_secs`), so for anything long keep the
@@ -346,10 +358,12 @@ How it behaves:
 - **Logs are kept** on the session's disk for 7 days and survive the session
   sleeping, so an id stays readable. Commands do not survive it: one that was
   running then reads `"failed:interrupted: …"` afterwards.
-- **Limits.** Commands run as an unprivileged user with nothing to gain
+- **Limits.** Programs run as an unprivileged user with nothing to gain
   privileges with (no `sudo`, no package installation into the system), and
   reach the network the browser reaches.
 
-A session's policy may allow only certain commands, by matching the `cmd`
-string, or none. When a call is denied by policy, `mcp.callTool` throws; do
-not look for another way to run the same thing, say what was refused.
+**Prefer a program and arguments to `sh -c`.** It runs exactly what you wrote,
+with no quoting to get wrong, and it is what a session's policy reads: a
+policy may allow only certain programs, subcommands, hosts or directories,
+and may deny shells outright. When a call is denied by policy, do not look
+for another way to run the same thing; say what was refused.

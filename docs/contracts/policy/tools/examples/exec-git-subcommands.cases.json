@@ -1,6 +1,6 @@
 [
   {
-    "name": "a listed command",
+    "name": "git status",
     "input": {
       "operation": "mcp_call_tool",
       "server": "exec",
@@ -8,8 +8,24 @@
       "arguments": {
         "bin": "git",
         "args": [
-          "pull",
-          "--ff-only"
+          "status"
+        ],
+        "timeout": 60
+      }
+    },
+    "allow": true
+  },
+  {
+    "name": "git status with a flag, in a directory",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "bin": "git",
+        "args": [
+          "status",
+          "--short"
         ],
         "timeout": 60,
         "cwd": "/home/browser/work/app"
@@ -18,35 +34,61 @@
     "allow": true
   },
   {
-    "name": "another, the longest timeout",
+    "name": "git log with flags and a path",
     "input": {
       "operation": "mcp_call_tool",
       "server": "exec",
       "tool": "exec",
       "arguments": {
-        "bin": "npm",
+        "bin": "git",
         "args": [
-          "test"
+          "log",
+          "--oneline",
+          "-n",
+          "20",
+          "--",
+          "src/"
         ],
-        "timeout": 600,
+        "timeout": 60,
         "cwd": "/home/browser/work/app"
       }
     },
     "allow": true
   },
   {
-    "name": "one without a directory",
+    "name": "git diff between revisions",
     "input": {
       "operation": "mcp_call_tool",
       "server": "exec",
       "tool": "exec",
       "arguments": {
-        "bin": "df",
+        "bin": "git",
         "args": [
-          "-h",
-          "/data/chrome"
+          "diff",
+          "--stat",
+          "HEAD~1",
+          "HEAD"
         ],
-        "timeout": 1
+        "timeout": 120,
+        "cwd": "/home/browser/work/app"
+      }
+    },
+    "allow": true
+  },
+  {
+    "name": "git show",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "bin": "git",
+        "args": [
+          "show",
+          "HEAD:README.md"
+        ],
+        "timeout": 60,
+        "cwd": "/home/browser/work/app"
       }
     },
     "allow": true
@@ -90,7 +132,34 @@
     "allow": true
   },
   {
-    "name": "a command not on the list",
+    "name": "git alone (no subcommand)",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "bin": "git",
+        "args": [],
+        "timeout": 60
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "git with args left out",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "bin": "git",
+        "timeout": 60
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "a subcommand that writes",
     "input": {
       "operation": "mcp_call_tool",
       "server": "exec",
@@ -98,6 +167,64 @@
       "arguments": {
         "bin": "git",
         "args": [
+          "push",
+          "origin",
+          "main"
+        ],
+        "timeout": 60,
+        "cwd": "/home/browser/work/app"
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "git clone",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "bin": "git",
+        "args": [
+          "clone",
+          "https://github.com/octocat/Hello-World"
+        ],
+        "timeout": 60
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "git grep, which can open a pager program",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "bin": "git",
+        "args": [
+          "grep",
+          "-O",
+          "sh",
+          "x"
+        ],
+        "timeout": 60,
+        "cwd": "/home/browser/work/app"
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "git's own -c before the subcommand",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "bin": "git",
+        "args": [
+          "-c",
+          "core.fsmonitor=/tmp/x",
           "status"
         ],
         "timeout": 60,
@@ -107,7 +234,7 @@
     "allow": false
   },
   {
-    "name": "a listed command with one more argument",
+    "name": "git's own -C before the subcommand",
     "input": {
       "operation": "mcp_call_tool",
       "server": "exec",
@@ -115,112 +242,9 @@
       "arguments": {
         "bin": "git",
         "args": [
-          "pull",
-          "--ff-only",
-          "--force"
-        ],
-        "timeout": 60,
-        "cwd": "/home/browser/work/app"
-      }
-    },
-    "allow": false
-  },
-  {
-    "name": "with one argument fewer",
-    "input": {
-      "operation": "mcp_call_tool",
-      "server": "exec",
-      "tool": "exec",
-      "arguments": {
-        "bin": "git",
-        "args": [
-          "pull"
-        ],
-        "timeout": 60,
-        "cwd": "/home/browser/work/app"
-      }
-    },
-    "allow": false
-  },
-  {
-    "name": "the arguments in another order",
-    "input": {
-      "operation": "mcp_call_tool",
-      "server": "exec",
-      "tool": "exec",
-      "arguments": {
-        "bin": "git",
-        "args": [
-          "--ff-only",
-          "pull"
-        ],
-        "timeout": 60,
-        "cwd": "/home/browser/work/app"
-      }
-    },
-    "allow": false
-  },
-  {
-    "name": "the arguments as one string",
-    "input": {
-      "operation": "mcp_call_tool",
-      "server": "exec",
-      "tool": "exec",
-      "arguments": {
-        "bin": "git",
-        "args": [
-          "pull --ff-only"
-        ],
-        "timeout": 60,
-        "cwd": "/home/browser/work/app"
-      }
-    },
-    "allow": false
-  },
-  {
-    "name": "the whole command line as bin",
-    "input": {
-      "operation": "mcp_call_tool",
-      "server": "exec",
-      "tool": "exec",
-      "arguments": {
-        "bin": "git pull --ff-only",
-        "args": [],
-        "timeout": 60,
-        "cwd": "/home/browser/work/app"
-      }
-    },
-    "allow": false
-  },
-  {
-    "name": "in another directory",
-    "input": {
-      "operation": "mcp_call_tool",
-      "server": "exec",
-      "tool": "exec",
-      "arguments": {
-        "bin": "git",
-        "args": [
-          "pull",
-          "--ff-only"
-        ],
-        "timeout": 60,
-        "cwd": "/home/browser/work/other"
-      }
-    },
-    "allow": false
-  },
-  {
-    "name": "without the directory it is listed with",
-    "input": {
-      "operation": "mcp_call_tool",
-      "server": "exec",
-      "tool": "exec",
-      "arguments": {
-        "bin": "git",
-        "args": [
-          "pull",
-          "--ff-only"
+          "-C",
+          "/tmp/repo",
+          "status"
         ],
         "timeout": 60
       }
@@ -228,34 +252,52 @@
     "allow": false
   },
   {
-    "name": "a directory for the one listed without",
+    "name": "--exec-path before the subcommand",
     "input": {
       "operation": "mcp_call_tool",
       "server": "exec",
       "tool": "exec",
       "arguments": {
-        "bin": "df",
+        "bin": "git",
         "args": [
-          "-h",
-          "/data/chrome"
+          "--exec-path=/tmp/x",
+          "status"
         ],
-        "timeout": 60,
-        "cwd": "/tmp"
+        "timeout": 60
       }
     },
     "allow": false
   },
   {
-    "name": "the program by path",
+    "name": "an alias defined on the command line",
     "input": {
       "operation": "mcp_call_tool",
       "server": "exec",
       "tool": "exec",
       "arguments": {
-        "bin": "/usr/bin/git",
+        "bin": "git",
         "args": [
-          "pull",
-          "--ff-only"
+          "-c",
+          "alias.x=!sh -c id",
+          "x"
+        ],
+        "timeout": 60
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "writing a file with --output",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "bin": "git",
+        "args": [
+          "diff",
+          "--output=/home/browser/.bashrc",
+          "HEAD"
         ],
         "timeout": 60,
         "cwd": "/home/browser/work/app"
@@ -264,7 +306,135 @@
     "allow": false
   },
   {
-    "name": "a shell running the listed command",
+    "name": "--output and its value as two arguments",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "bin": "git",
+        "args": [
+          "log",
+          "--output",
+          "/tmp/x"
+        ],
+        "timeout": 60,
+        "cwd": "/home/browser/work/app"
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "--output abbreviated, as git accepts it",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "bin": "git",
+        "args": [
+          "diff",
+          "--outp=/tmp/x"
+        ],
+        "timeout": 60,
+        "cwd": "/home/browser/work/app"
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "an external diff program",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "bin": "git",
+        "args": [
+          "diff",
+          "--ext-diff"
+        ],
+        "timeout": 60,
+        "cwd": "/home/browser/work/app"
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "--ext-diff abbreviated",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "bin": "git",
+        "args": [
+          "log",
+          "-p",
+          "--ext-d"
+        ],
+        "timeout": 60,
+        "cwd": "/home/browser/work/app"
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "textconv filters",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "bin": "git",
+        "args": [
+          "show",
+          "--textconv",
+          "HEAD:x"
+        ],
+        "timeout": 60,
+        "cwd": "/home/browser/work/app"
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "diff of files outside a repository",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "bin": "git",
+        "args": [
+          "diff",
+          "--no-index",
+          "/etc/passwd",
+          "/dev/null"
+        ],
+        "timeout": 60
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "another program",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "bin": "ls",
+        "args": [
+          "-la"
+        ],
+        "timeout": 60
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "a shell running git",
     "input": {
       "operation": "mcp_call_tool",
       "server": "exec",
@@ -273,28 +443,105 @@
         "bin": "sh",
         "args": [
           "-c",
-          "git pull --ff-only"
+          "git status"
         ],
-        "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "timeout": 60
       }
     },
     "allow": false
   },
   {
-    "name": "upper case",
+    "name": "git by path",
     "input": {
       "operation": "mcp_call_tool",
       "server": "exec",
       "tool": "exec",
       "arguments": {
-        "bin": "Git",
+        "bin": "/usr/bin/git",
         "args": [
-          "pull",
-          "--ff-only"
+          "status"
         ],
-        "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "timeout": 60
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "a program called git somewhere else",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "bin": "/tmp/git",
+        "args": [
+          "status"
+        ],
+        "timeout": 60
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "git in the current directory",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "bin": "./git",
+        "args": [
+          "status"
+        ],
+        "timeout": 60
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "git with a trailing space",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "bin": "git ",
+        "args": [
+          "status"
+        ],
+        "timeout": 60
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "the subcommand in upper case",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "bin": "git",
+        "args": [
+          "Status"
+        ],
+        "timeout": 60
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "the subcommand with a space",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "bin": "git",
+        "args": [
+          "status "
+        ],
+        "timeout": 60
       }
     },
     "allow": false
@@ -308,11 +555,9 @@
       "arguments": {
         "bin": "git",
         "args": [
-          "pull",
-          "--ff-only"
+          "status"
         ],
-        "timeout": 601,
-        "cwd": "/home/browser/work/app"
+        "timeout": 121
       }
     },
     "allow": false
@@ -358,8 +603,8 @@
       "arguments": {
         "bin": "git",
         "args": [
-          "pull",
-          "--ff-only"
+          "status",
+          "--short"
         ],
         "timeout": 60,
         "cwd": "/home/browser/work/app",
@@ -379,8 +624,8 @@
       "arguments": {
         "bin": "git",
         "args": [
-          "pull",
-          "--ff-only"
+          "status",
+          "--short"
         ],
         "timeout": 60,
         "cwd": "/home/browser/work/app",
@@ -400,8 +645,8 @@
       "arguments": {
         "bin": "git",
         "args": [
-          "pull",
-          "--ff-only"
+          "status",
+          "--short"
         ],
         "timeout": 60,
         "cwd": "/home/browser/work/app",
@@ -440,8 +685,8 @@
         {
           "bin": "git",
           "args": [
-            "pull",
-            "--ff-only"
+            "status",
+            "--short"
           ],
           "timeout": 60,
           "cwd": "/home/browser/work/app"
@@ -458,8 +703,8 @@
       "tool": "exec",
       "arguments": {
         "args": [
-          "pull",
-          "--ff-only"
+          "status",
+          "--short"
         ],
         "timeout": 60,
         "cwd": "/home/browser/work/app"
@@ -478,8 +723,8 @@
           "git"
         ],
         "args": [
-          "pull",
-          "--ff-only"
+          "status",
+          "--short"
         ],
         "timeout": 60,
         "cwd": "/home/browser/work/app"
@@ -498,8 +743,8 @@
           "bin": "git"
         },
         "args": [
-          "pull",
-          "--ff-only"
+          "status",
+          "--short"
         ],
         "timeout": 60,
         "cwd": "/home/browser/work/app"
@@ -515,7 +760,7 @@
       "tool": "exec",
       "arguments": {
         "bin": "git",
-        "args": "pull --ff-only",
+        "args": "status --short",
         "timeout": 60,
         "cwd": "/home/browser/work/app"
       }
@@ -531,8 +776,8 @@
       "arguments": {
         "bin": "git",
         "args": [
-          "pull",
-          "--ff-only",
+          "status",
+          "--short",
           {
             "x": 1
           }
@@ -553,8 +798,8 @@
         "bin": "git",
         "args": [
           [
-            "pull",
-            "--ff-only"
+            "status",
+            "--short"
           ]
         ],
         "timeout": 60,
@@ -570,7 +815,7 @@
       "server": "exec",
       "tool": "exec",
       "arguments": {
-        "cmd": "git pull --ff-only",
+        "cmd": "git status --short",
         "timeout": 60
       }
     },
@@ -585,8 +830,8 @@
       "arguments": {
         "bin": "git",
         "args": [
-          "pull",
-          "--ff-only"
+          "status",
+          "--short"
         ],
         "timeout": 60,
         "cwd": "/home/browser/work/app",
@@ -604,8 +849,8 @@
       "arguments": {
         "bin": "git",
         "args": [
-          "pull",
-          "--ff-only"
+          "status",
+          "--short"
         ],
         "timeout": 60,
         "cwd": "/home/browser/work/app",
@@ -623,8 +868,8 @@
       "arguments": {
         "bin": "git",
         "args": [
-          "pull",
-          "--ff-only"
+          "status",
+          "--short"
         ],
         "cwd": "/home/browser/work/app"
       }
@@ -640,8 +885,8 @@
       "arguments": {
         "bin": "git",
         "args": [
-          "pull",
-          "--ff-only"
+          "status",
+          "--short"
         ],
         "timeout": "60",
         "cwd": "/home/browser/work/app"
@@ -658,8 +903,8 @@
       "arguments": {
         "bin": "git",
         "args": [
-          "pull",
-          "--ff-only"
+          "status",
+          "--short"
         ],
         "timeout": 0,
         "cwd": "/home/browser/work/app"
@@ -676,8 +921,8 @@
       "arguments": {
         "bin": "git",
         "args": [
-          "pull",
-          "--ff-only"
+          "status",
+          "--short"
         ],
         "timeout": 60,
         "cwd": "/home/browser/work/app"
@@ -694,8 +939,8 @@
       "arguments": {
         "bin": "git",
         "args": [
-          "pull",
-          "--ff-only"
+          "status",
+          "--short"
         ],
         "timeout": 60,
         "cwd": "/home/browser/work/app"

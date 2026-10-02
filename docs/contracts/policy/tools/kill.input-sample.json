@@ -1,0 +1,8 @@
+{
+  "operation": "mcp_call_tool",
+  "server": "exec",
+  "tool": "kill",
+  "arguments": {
+    "id": "215e7d1d-cc35-47ac-8fd1-e018fd03d2b9"
+  }
+}

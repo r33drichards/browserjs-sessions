@@ -453,7 +453,7 @@ class Run:
     def mcp_exec(self):
         out = self.mcp.run_js("""
             const call = async (tool, args) => JSON.parse((await mcp.callTool("exec", tool, args)).content[0].text);
-            const { id } = await call("exec", { cmd: "id -u; echo $DISPLAY; echo $((6 * 7)) | tr 2 3; exit 3", timeout: 20 });
+            const { id } = await call("exec", { bin: "sh", args: ["-c", "id -u; echo $DISPLAY; echo $((6 * 7)) | tr 2 3; exit 3"], timeout: 20 });
             let r;
             for (let i = 0; i < 100; i++) {
               r = await call("stream_logs", { id, offset: 0 });
@@ -461,9 +461,16 @@ class Run:
               await new Promise((resolve) => setTimeout(resolve, 100));
             }
             const found = await call("search_logs", { id, pattern: "^4" });
-            console.log("exec", JSON.stringify(r.logs), r.status, "search", JSON.stringify(found.matches.map((m) => m.line)));
+            // No shell unless asked for one: the argument arrives as written.
+            const plain = await call("exec", { bin: "echo", args: ["$HOME; id"], timeout: 20 });
+            const long = await call("exec", { bin: "sleep", args: ["60"], timeout: 120 });
+            const killed = await call("kill", { id: long.id });
+            await new Promise((resolve) => setTimeout(resolve, 500));
+            const echoed = await call("stream_logs", { id: plain.id, offset: 0 });
+            console.log("exec", JSON.stringify(r.logs), r.status, "search", JSON.stringify(found.matches.map((m) => m.line)),
+              "plain", JSON.stringify(echoed.logs), "kill", killed.status);
         """)
-        expect('exec "1000\\n:99\\n43\\n" completed:3 search ["43"]' in out, "output: %s" % out[:500])
+        expect('exec "1000\\n:99\\n43\\n" completed:3 search ["43"] plain "$HOME; id\\n" kill cancelled' in out, "output: %s" % out[:500])
         return out.strip()[:120]
 
     def mcp_desktop(self):

@@ -3,17 +3,17 @@
     "mcp-exec": {
       "flake": false,
       "locked": {
-        "lastModified": 1790959000,
-        "narHash": "sha256-uNXkzpQ3OBppZyiThqJsDUPv6jOjb2qGFho/DyVNlgo=",
+        "lastModified": 1790962015,
+        "narHash": "sha256-bcujb7bXCwpU15/UsIF3BXUzOYfo32FlMoVNrSjQ6O0=",
         "owner": "r33drichards",
         "repo": "mcp-exec",
-        "rev": "38bb517fc037cd2d9a82ab3cd1e28b2d1d2be0ad",
+        "rev": "a0688bf628e6b5662431c8e990b69e9cbfcb7ef3",
         "type": "github"
       },
       "original": {
         "owner": "r33drichards",
         "repo": "mcp-exec",
-        "rev": "38bb517fc037cd2d9a82ab3cd1e28b2d1d2be0ad",
+        "rev": "a0688bf628e6b5662431c8e990b69e9cbfcb7ef3",
         "type": "github"
       }
     },
