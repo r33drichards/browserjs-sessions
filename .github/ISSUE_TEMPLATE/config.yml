@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/r33drichards/computer-use/security/advisories/new
+    about: Privately, to the maintainers. Please do not open a public issue.
+  - name: Documentation
+    url: https://computeruse.site
+    about: Tutorials, guides and the reference for the hosted service.

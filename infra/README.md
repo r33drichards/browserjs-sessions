@@ -88,12 +88,49 @@ gh variable set TOFU_APPLY_SA     --body "<value>"
 ```
 
 The `production` environment must exist (Settings, Environments); the apply
-job names it. On this repository's GitHub plan an environment cannot require a
-reviewer, so it gates nothing: the gate is the procedure in section 4.
+and deploy jobs name it. A private repository on GitHub's free plan cannot
+give an environment a required reviewer, and then it gates nothing: the gate
+is the procedure in section 4. A public repository can, and should (below).
 
 Protect `main` as far as the plan allows, and keep the list of people with
 write access short. Google hands `tofu-apply` (project Owner) to any workflow
 that runs on `main`, so whoever can change `main` can change the project.
+
+### Running the workflows in a public repository
+
+What a stranger can and cannot do, and the settings that make it so:
+
+- **A pull request from a fork gets no credentials.** GitHub gives it no
+  OIDC token and no secrets, and no workflow here uses `pull_request_target`,
+  `workflow_run` or `issue_comment`. Its "infra plan" fails at sign-in; the
+  tests and image builds run without access to anything. Keep it that way:
+  Settings, Actions, General, "Require approval for all external
+  contributors", and workflow permissions "Read repository contents".
+- **Starting a workflow by hand** (`deploy`, `infra apply`, `cluster info`,
+  `session public url`) needs write access to the repository. So does pushing
+  a branch, and a branch's workflows can sign in as `tofu-plan` (read-only on
+  the project, and it reads the OpenTofu state). Write access is the trust
+  boundary.
+- **`main` is what Google trusts.** `tofu-apply`, `images-push` and
+  `deployer` are granted to `<repository id>@refs/heads/main` and to nothing
+  else. Protect it: a ruleset on `main` that requires a pull request, blocks
+  force pushes and deletion, and requires review from code owners
+  (`.github/CODEOWNERS`) if there is more than one maintainer.
+- **The `production` environment**: add required reviewers, turn on "Prevent
+  self-review" only if there are two maintainers, and limit deployment
+  branches to `main`. Every job that changes the project or the cluster names
+  this environment, so each run then waits for a click. Move the secrets
+  (`DEX_*`, `STRIPE_*`, `METRONOME_*`) from repository secrets to this
+  environment's secrets, so that only those jobs can read them.
+- **Logs and summaries are public.** Plans show resource names, addresses and
+  the project number; none is a credential. `cluster info` would show pod
+  logs, which contain users' e-mail addresses: in a public repository it
+  refuses to run unless the variable `CLUSTER_INFO_AGE_RECIPIENT` holds an
+  [age](https://age-encryption.org) public key, and then it publishes nothing
+  but an artifact encrypted to that key. Runs made while the repository was
+  private become public with it: delete them first.
+- **Images** go to Artifact Registry in the project, which stays private;
+  nodes pull with their own service account.
 
 ## 3. Plan: open a pull request
 

@@ -1,0 +1,39 @@
+name: Bug report
+description: Something does not do what the documentation says
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Not for security problems: report those privately (SECURITY.md).
+        Leave out tokens, session URLs and e-mail addresses; issues are public.
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where
+      options:
+        - The hosted service (computeruse.site)
+        - A local cluster (hack/local-up.sh)
+        - My own deployment
+        - The Terraform provider
+        - The documentation site
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The smallest run_js program, policy or sequence of clicks that shows it.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Commit or date
+      description: The commit you built, or when you saw it on the hosted service (with time zone).
