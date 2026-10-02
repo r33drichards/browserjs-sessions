@@ -159,6 +159,62 @@ loads it, and waits for both Deployments, which is immediate while they
 have no pods. Then `hack/policy-stage.sh local enforcing`, and
 `hack/local-up.sh` again.
 
+## Desktop control under enforcement
+
+`desktop_execute` (the mouse, keyboard and screen of the session's display)
+goes the same way as `browser_execute`: mcp-js asks its own file policy,
+which allows both tools, and then OPA, at the same decision path, with
+`input.tool` naming the tool. So a session's policy can allow or deny it.
+
+What the policies of today do with it: **every JSON policy denies it**,
+the unrestricted one and every preset included, because the Rego a JSON
+policy compiles to begins with `input.tool == "browser_execute"`
+(`contracts/policy/json-to-rego.md`). Only a `kind: rego` policy that names
+`desktop_execute` allows it. Both are checked on kind (item 5).
+
+So with enforcement on, nothing restrictive leaves the desktop open: a
+session restricted to one site cannot be walked around with the mouse. And
+desktop control does not work at all in a session made after `enforcing`,
+unless its owner writes a Rego policy for it. That is safe, and it is a
+loss of a feature for those sessions. Making it a choice needs a change to
+the contract, not to the deployment: a field of the JSON format for the
+desktop tool, its translation and cases (`json-policy.schema.json`,
+`json-to-rego.md`, `examples/`; then the operator's translator and the
+UI), and a decision on whether the default policy of a new session allows
+it.
+
+## Rolling out on production, from workflows only
+
+Each step is a pull request made with the commands shown, merged, and then
+the `deploy` workflow on `main` (confirm: `deploy`). `cluster info` is the
+read-only workflow; its summary has a "Session policies" section.
+
+| Step | Pull request | After `deploy`, in `cluster info` | In the UI |
+|---|---|---|---|
+| 0. Install | this one | `opa` and `policy-operator`: WANTED 0. Both CRDs `established=True`. Secrets `policy-tokens` (3 keys) and `api-tokens` (1 key) exist. No `POLICY_OPERATOR_URL`. Every template and Sandbox `asks-opa=no`. Warm pool unchanged (7 waiting, same ages) | nothing new; create a session, it is taken warm and works |
+| 1. Serving | `hack/pin-images.sh policy-operator=sha256:…` (digest from the `images` run on `main` after step 0) and `hack/policy-stage.sh gke serving` | `policy-operator` READY 1, `opa` READY 2 (ready means the bundle is active), the `opa` EndpointSlice with two ready addresses, pods on the system node, no restarts. Still no `POLICY_OPERATOR_URL`, still `asks-opa=no`, warm pool untouched | nothing new |
+| 2. Enforcing | `hack/policy-stage.sh gke enforcing`; the pinned backend must have the policy API | `POLICY_OPERATOR_URL` set. `SandboxTemplate/session asks-opa=yes`. The 7 warm Sandboxes are new (ages) and `asks-opa=yes`; older Sandboxes `asks-opa=no`. After creating a session: a `SessionPolicy` of its name, Ready `True`, Loaded naming 2 replicas | create a session: Policy section on the create page, Policy tab on the session; the browser works; saving a policy that denies `evaluate` makes that call fail. A session from before: policy `unsupported`, works as before |
+| 3. API tokens | `ALLOWED_EMAILS` in `deploy/gke/patch-backend.yaml` (above) | `API_URL` and `ALLOWED_EMAILS` both shown | the Tokens page makes a token; `curl -H "Authorization: Bearer …"` against the API host lists sessions |
+
+Rollback, each a pull request and a `deploy`:
+
+- From 1: `hack/policy-stage.sh gke off`. Nothing depended on the pods.
+- From 2: `hack/policy-stage.sh gke serving`. New sessions are as before
+  the feature; the warm pool is replaced once more. **Do not go to `off`
+  while `cluster info` lists a Sandbox with `asks-opa=yes`**: delete those
+  sessions first, or their browser calls are denied (5 s each).
+- From 3: remove `ALLOWED_EMAILS`. Tokens are refused; the objects stay.
+- If step 1 or 2 fails in the `deploy` run itself (the step "Policy
+  operator and OPA" prints the Deployment and its log): at step 1 nothing
+  uses the pods, so revert at leisure. At step 2 the pod templates are
+  already applied: revert to `serving` and deploy at once.
+
+Not checked anywhere but on kind, so look for it at step 1: that the
+operator becomes ready on GKE (its NetworkPolicy rule for the API server),
+and at step 2: that a gVisor session pod reaches OPA under Dataplane V2
+(the first browser call of a new session answers quickly, and is not a
+5 s denial).
+
 ## API tokens
 
 Separate from the stages above, and independent of them except that a
@@ -258,7 +314,9 @@ those of run 36971833355, the first.
    0.25 s later; a source that does not compile gives `Compiled=False`
    with errors while the previous policy stays in force; a delete goes
    through the finalizer and the session is denied 0.18 s later; the
-   operator is not restarted over 75 s (kopf's liveness on 8081).
+   operator is not restarted over 75 s (kopf's liveness on 8081). Under
+   the unrestricted JSON policy `desktop_execute` is denied; under a Rego
+   policy that names it, it runs, and `browser_execute` still does.
 
 Three things this found:
 
