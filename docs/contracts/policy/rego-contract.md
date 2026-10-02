@@ -28,7 +28,7 @@ Reserved rule names, which a policy may define but nothing reads:
 
 ## The input
 
-mcp-js v0.21.0-rc.3 builds it in `server/src/engine/mcp_client.rs`
+mcp-js v0.21.0-rc.4 builds it in `server/src/engine/mcp_client.rs`
 (`McpToolPolicyInput`), for each `mcp.callTool(server, tool, arguments)` made
 from `run_js`:
 
@@ -195,9 +195,13 @@ it allows, which is the description people see.
 ## How mcp-js asks
 
 `POST {url}/v1/data/{policy_path}` with body `{"input": <input>}`, no
-headers of its own, 5 second timeout (`server/src/engine/opa.rs`). It allows
-only when the answer is 2xx and `result.allow` is `true`. A missing
-`result`, a non-2xx status, an unparsable body or a timeout denies.
+headers of its own, 5 second timeout, 1 second to connect
+(`server/src/engine/opa.rs`). It allows only when the answer is 2xx and
+`result.allow` is `true`. A request that fails in transport (it could not be
+sent, it timed out, or the status is 502, 503 or 504) is made once more, on
+a new connection; if that fails too, the call is denied. An answer is never
+asked for twice: a missing `result`, any other non-2xx status or an
+unparsable body denies at once.
 
 In a session pod:
 

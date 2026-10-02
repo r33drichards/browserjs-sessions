@@ -25,7 +25,7 @@ Agent code in `run_js` calls
 await mcp.callTool("exec", "exec", { bin: "git", args: ["status", "--short"], cwd: "/data/chrome/home/work/app", timeout: 60 });
 ```
 
-and mcp-js v0.21.0-rc.3 asks the policy before it forwards the call, with
+and mcp-js v0.21.0-rc.4 asks the policy before it forwards the call, with
 (`server/src/engine/mcp_client.rs`, `McpToolPolicyInput`):
 
 ```json

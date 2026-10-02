@@ -258,7 +258,7 @@ every token is then refused, and none can be made.
 request that touches the manifests. Real: the OPA image with the contract's
 configuration and `system.authz`, the Services, Roles, Secret wiring and
 NetworkPolicies of `deploy/base`, both CRDs, and the mcp-js image
-(v0.21.0-rc.3) with the variable `hack/policy-stage.sh` writes. Stand-ins
+(v0.21.0-rc.4) with the variable `hack/policy-stage.sh` writes. Stand-ins
 (`test/policy/stub.py`): the operator (a bundle server publishing bundles
 the script builds from the contract's examples with the image's own `opa`),
 the browser container (an MCP server that runs nothing) and the backend (a
