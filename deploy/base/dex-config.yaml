@@ -20,7 +20,7 @@ oauth2:
 
 staticClients:
   - id: pomerium
-    name: browserjs sessions
+    name: computeruse sessions
     secretEnv: POMERIUM_CLIENT_SECRET
     redirectURIs:
       - https://authenticate.example.com/oauth2/callback
