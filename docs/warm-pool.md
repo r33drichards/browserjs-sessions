@@ -48,7 +48,7 @@ Two things follow from "the ID is the Sandbox's name":
   `MCP_V8_PUBLIC_URL=https://$(SESSION_ID).sessions.browserjs.com`. No image
   changes.
 
-**Delete** removes the claim first, then the Sandbox. A Sandbox deleted from
+**Delete** removes the session's snapshots, then the claim, then the Sandbox. A Sandbox deleted from
 under its claim would be replaced: the claim controller binds the claim to
 another one. This holds whether or not `WARM_POOL` is still set.
 
@@ -60,6 +60,30 @@ so `Store.RecoverClaims` finishes the job at the backend's next start.
 `browserjs.dev/owner`. A claim may only add pod labels from the controller's
 allow-list (`sandbox.users.io` by default), and nothing reads the pod's
 label; the Sandbox has it.
+
+## With Pod Snapshots
+
+A session from the pool sleeps to a snapshot and wakes from it like any
+other ([gke-deployment.md](gke-deployment.md)); nothing in that path looks at
+where the Sandbox came from.
+
+- The `PodSnapshotPolicy` selects pods by `app: browserjs-session`, which
+  the template has, and groups by `agents.x-k8s.io/sandbox-name-hash`, which
+  the Sandbox controller derives from the Sandbox's name. Adoption changes
+  neither.
+- The pin to the snapshot's node pool is written into the Sandbox's
+  `podTemplate.spec.nodeSelector`. The claim controller only ever rewrites
+  the pod template's labels and annotations, so the pin stays.
+- Delete removes the snapshots first, as before: a failure there leaves the
+  whole session to delete again. Then the claim, then the Sandbox.
+- **Names come round again.** A pod is restored from the newest snapshot of
+  its Sandbox's name, and the pool has about 14 million names where the
+  backend's own IDs have 2^50. A session removed without its snapshots (with
+  kubectl rather than through the app) leaves one that a later pooled
+  Sandbox of the same name would be restored from. So before a pooled
+  Sandbox is given to anyone, the backend looks for snapshots under its
+  name; if there are any, the Sandbox and then the snapshots are deleted and
+  the session starts cold.
 
 ## What a waiting session is
 
@@ -126,6 +150,11 @@ node is $0.169/h on demand, about $135 a month all in.
   pool is wasted. Check before relying on it: `hack/gke-status.sh --full`
   prints the fields the served `v1beta1` schemas accept and each Sandbox's
   owner.
+- **UNVERIFIED on the cluster, with snapshots:** that a pod adopted from the
+  pool restores (GKE restores "into an identical pod spec"; the spec is the
+  same, but the pod's labels were changed by adoption between its start and
+  its snapshot), and that the waiting pod, which matches the snapshot
+  policy's selector, is left alone until the backend triggers a snapshot.
 - **UNVERIFIED on the cluster:** that adoption does not restart the pod
   (the claim controller rewrites the Sandbox's pod labels), sleep and wake of
   an adopted Sandbox, and how the pool behaves when a Spot node is reclaimed.

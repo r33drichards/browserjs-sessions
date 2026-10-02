@@ -104,6 +104,9 @@ func (s *Store) adopt(ctx context.Context, claimName string, wait time.Duration)
 	if owner == "" {
 		return Session{}, fmt.Errorf("claim %s names no owner", claimName)
 	}
+	if err := s.refuseRestored(ctx, claimName, id); err != nil {
+		return Session{}, err
+	}
 	var adopted *unstructured.Unstructured
 	err := s.modify(ctx, id, func(obj *unstructured.Unstructured) (bool, error) {
 		adopted = obj
@@ -133,6 +136,38 @@ func (s *Store) adopt(ctx context.Context, claimName string, wait time.Duration)
 		return Session{}, err
 	}
 	return FromSandbox(adopted), nil
+}
+
+// refuseRestored keeps a pooled Sandbox that has snapshots from becoming a
+// session. A pod is restored from the newest snapshot of its Sandbox's name
+// (deploy/gke/snapshots.yaml), and the pool's names are short enough to come
+// round again: a Sandbox named like a session that was removed without its
+// snapshots (by hand, not by Delete) may be running that session's memory.
+// The claim, and with it the Sandbox, is deleted before the snapshots are, so
+// that the pool's next Sandbox of that name starts clean.
+func (s *Store) refuseRestored(ctx context.Context, claimName, id string) error {
+	if s.snap == nil {
+		return nil
+	}
+	obj, err := s.client.Get(ctx, id, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	if obj.GetAnnotations()[AnnOwner] != "" {
+		return nil // a session already: its snapshots are its own
+	}
+	stale, err := s.snap.of(ctx, id)
+	if err != nil {
+		return fmt.Errorf("list snapshots: %w", err)
+	}
+	if len(stale) == 0 {
+		return nil
+	}
+	if err := s.claims.Delete(ctx, claimName, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("Sandbox %s has snapshots %v from an earlier session and its claim could not be deleted: %w", id, stale, err)
+	}
+	s.snap.pruneLogged(ctx, id, "")
+	return fmt.Errorf("Sandbox %s had snapshots %v from an earlier session of that name; it was deleted", id, stale)
 }
 
 // RecoverClaims finishes what a backend that died in the middle of Create

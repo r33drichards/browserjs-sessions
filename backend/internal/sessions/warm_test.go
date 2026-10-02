@@ -208,3 +208,74 @@ func TestRecoverClaimsFinishesAnAdoption(t *testing.T) {
 		t.Errorf("List after recovery = %+v, %v", mine, err)
 	}
 }
+
+// A session that came from the pool sleeps to a snapshot, wakes from it and
+// is deleted like any other: the snapshot's pin goes on the same Sandbox,
+// and delete takes the snapshots, the claim and the Sandbox.
+func TestAWarmSessionSleepsToASnapshotAndWakes(t *testing.T) {
+	ctx := t.Context()
+	store, client, _ := sessionstest.NewWithSnapshots(t, sessions.SnapshotOptions{Timeout: 2 * time.Second})
+	store.EnableWarmPool(sessionstest.WarmPoolName, time.Second)
+	sessionstest.PlayClaimController(t, client, "s-bcdfg")
+	s, err := store.Create(ctx, "a", "user-1")
+	if err != nil || s.ID != "s-bcdfg" {
+		t.Fatalf("Create = %+v, %v", s, err)
+	}
+	sessionstest.SetStatus(t, client, s.ID, sessionstest.Ready("10.0.0.7"))
+
+	if err := store.Suspend(ctx, s.ID, sessions.StoppedByIdle); err != nil {
+		t.Fatal(err)
+	}
+	obj := sandbox(t, client, s.ID)
+	if mode(obj) != "Suspended" || obj.GetAnnotations()[sessions.AnnSnapshot] == "" || pin(obj) != sessionstest.Pool {
+		t.Errorf("asleep: mode %q, snapshot %q, pin %q", mode(obj), obj.GetAnnotations()[sessions.AnnSnapshot], pin(obj))
+	}
+	if err := store.Wake(ctx, s.ID); err != nil {
+		t.Fatal(err)
+	}
+	if obj = sandbox(t, client, s.ID); mode(obj) != "Running" || pin(obj) != sessionstest.Pool {
+		t.Errorf("awake: mode %q, pin %q", mode(obj), pin(obj))
+	}
+	if len(sessionstest.Claims(t, client)) != 1 {
+		t.Error("the claim did not outlive sleep and wake")
+	}
+
+	if err := store.Delete(ctx, s.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := sessionstest.Snapshots(t, client); len(got) != 0 {
+		t.Errorf("snapshots left after delete: %v", got)
+	}
+	if len(sessionstest.Claims(t, client)) != 0 {
+		t.Error("the claim was left after delete")
+	}
+	if _, err := store.Get(ctx, s.ID); !errors.Is(err, sessions.ErrNotFound) {
+		t.Errorf("session still there: %v", err)
+	}
+}
+
+// Pool names are short and come round again. A pod is restored from the
+// newest snapshot of its Sandbox's name: a pooled Sandbox named like a
+// session that was removed without its snapshots would come up as that
+// session, memory and all. It is never given to anyone.
+func TestCreateRefusesAWarmSandboxThatHasSnapshots(t *testing.T) {
+	ctx := t.Context()
+	store, client, _ := sessionstest.NewWithSnapshots(t, sessions.SnapshotOptions{Timeout: 2 * time.Second})
+	store.EnableWarmPool(sessionstest.WarmPoolName, time.Second)
+	sessionstest.PlayClaimController(t, client, "s-bcdfg")
+	addSnapshot(t, client, "left-behind", "s-bcdfg")
+
+	s, err := store.Create(ctx, "a", "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.ID == "s-bcdfg" {
+		t.Error("user-1 was given a Sandbox that may have been restored from somebody's snapshot")
+	}
+	if got := sessionstest.Snapshots(t, client); len(got) != 0 {
+		t.Errorf("the stale snapshots are still there: %v", got)
+	}
+	if len(sessionstest.Claims(t, client)) != 0 {
+		t.Error("the refused Sandbox's claim was kept")
+	}
+}
