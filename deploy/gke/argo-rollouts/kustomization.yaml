@@ -59,8 +59,8 @@ patches:
       $patch: delete
   # The Role, as little as the backend's and the site's Rollouts need. The
   # release's own also has: every verb on Ingresses, eviction of pods,
-  # creating and deleting Services, and reading SECRETS, which in this
-  # namespace are Pomerium's, Dex's, Stripe's and the canary's token. The
+  # creating and deleting Services, and reading every SECRET, which in
+  # this namespace are Pomerium's, Dex's, Stripe's and the canary's token. The
   # checks' Jobs get their token from the kubelet, not from the controller.
   - target:
       kind: Role
@@ -108,6 +108,13 @@ patches:
           # Watched, like experiments; there are none.
           - apiGroups: ["networking.k8s.io"]
             resources: ["ingresses"]
+            verbs: ["get", "list", "watch"]
+          # One Secret by name: its own, for notifications, which is empty.
+          # The controller will not start without watching it. No other
+          # Secret of the namespace can be read with this.
+          - apiGroups: [""]
+            resources: ["secrets"]
+            resourceNames: ["argo-rollouts-notification-secret"]
             verbs: ["get", "list", "watch"]
           - apiGroups: ["coordination.k8s.io"]
             resources: ["leases"]

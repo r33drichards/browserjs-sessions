@@ -114,8 +114,9 @@ is "the controller asks for what its kustomization says" "25m 96Mi" \
 is "the controller's image is named by digest" "1" \
   "$(k get deployment argo-rollouts -o jsonpath='{.spec.template.spec.containers[0].image}' | grep -c '^quay.io/argoproj/argo-rollouts@sha256:[0-9a-f]\{64\}$')"
 controller="system:serviceaccount:$NS:argo-rollouts"
-is "the controller cannot read Secrets" "no no" \
-  "$(kubectl -n "$NS" auth can-i get secrets --as="$controller" 2>/dev/null | tail -1) $(kubectl -n "$NS" auth can-i list secrets --as="$controller" 2>/dev/null | tail -1)"
+# But for its own, empty, notification Secret, which it must watch to start.
+is "the controller cannot read the namespace's Secrets" "no no no" \
+  "$(kubectl -n "$NS" auth can-i list secrets --as="$controller" 2>/dev/null | tail -1) $(kubectl -n "$NS" auth can-i get secrets/release-canary --as="$controller" 2>/dev/null | tail -1) $(kubectl -n "$NS" auth can-i get secrets/pomerium --as="$controller" 2>/dev/null | tail -1)"
 is "nor anything outside its namespace" "no no" \
   "$(kubectl -n default auth can-i list pods --as="$controller" 2>/dev/null | tail -1) $(kubectl auth can-i list rollouts.argoproj.io -A --as="$controller" 2>/dev/null | tail -1)"
 is "there is no cluster-wide role of its own" "" "$(kubectl get clusterroles,clusterrolebindings -o name | grep -i argo-rollouts || true)"

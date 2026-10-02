@@ -83,8 +83,25 @@ order asked, and none is built, because the backend cannot use one yet:
    file is a new ConfigMap and a restart of Pomerium. Driving it would be a
    controller of our own, which is the hand-rolling this was meant to avoid.
 
-When the backend can run twice, (3) with Argo's pod-ratio canary (no router
-at all, as the site) is the first thing to try, then (1).
+**When that changes.** The stateless backend (its own pull request:
+activity on the Sandbox, signed tickets, the passes on one elected replica)
+lets two versions serve at once. Its first release must still not overlap
+with today's backend, which blue-green gives it. From the release after,
+the backend can become a canary by weight: first by pod ratio, with no
+router, as the site is; then, if a share smaller than one pod in two or
+three is wanted, with the Argo Rollouts Gateway API plugin and (1). Two
+things have to hold then, and are agreed with that work: a pod that is not
+the active one never campaigns for the passes (the label this change
+introduces is the switch), and its metrics
+(`browserjs_http_requests_total`, wake failures) become an analysis beside
+the canary, once something scrapes them. With two users a rate says little;
+the canary script stays the judge.
+
+**The operators are not released by Rollouts.** Each must be exactly one
+(two policy operators would publish two bundles, two billing observers
+would send every second twice), neither has a Service to switch, and a
+second one beside the first is the very thing to avoid. They stay
+`Recreate`, and are covered by the canary after the apply and the rollback.
 
 **What it costs.** One more controller pod. During a release: a second
 backend pod for the minutes of its check (100m CPU, 128Mi), four site pods
@@ -225,8 +242,18 @@ apply still runs, and still rolls back.
 
 ## The backend and the site: Argo Rollouts
 
-`deploy/gke/argo-rollouts/` is the controller (the release's manifest,
-vendored, applied before the rest). `deploy/gke/rollouts.yaml` is the two
+`deploy/gke/argo-rollouts/` is the controller and nothing else of Argo: no
+Argo CD, no dashboard. Version 1.10.0, its manifests vendored and its image
+named by digest, applied before the rest. It is the release's *namespace
+install*: one pod (25m CPU and 96Mi asked for) in the product's namespace
+with `--namespaced`, a Role there and no right anywhere else in the cluster.
+That Role is cut down from the release's to what these two Rollouts use: it
+cannot read the namespace's Secrets (only its own, empty, notification
+Secret by name, without which it does not start), cannot create or delete
+Services, evict pods or write Ingresses. Its NetworkPolicy lets it reach
+the API server and DNS, and lets nothing reach it. `release kind` runs the
+whole of a release with exactly this Role and fails if the controller's log
+has a refusal in it. `deploy/gke/rollouts.yaml` is the two
 Rollouts, their extra Services, the two checks and the checks'
 NetworkPolicy. `deploy/gke/patch-rollouts.yaml` leaves the two Deployments
 without pods of their own and gives the backend its labels as a file. The
