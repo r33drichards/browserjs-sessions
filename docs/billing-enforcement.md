@@ -179,14 +179,22 @@ cd backend && go vet ./... && go test -race ./...
 ## The Stripe side
 
 Track C's package (`backend/internal/billing/stripe`) has the checkout
-route and the webhook handler. Until it is merged the scenarios post their
-correctly signed events to `billingtest.StripeStub`, which implements
-`ensurePaymentMethods`, `decideSignupCredit` and `ensurePurchase` of
-`stripe.md` against the same interfaces. The stub is deleted when C merges,
-and the scenarios must then pass unchanged with C's handler in its place.
+route and the webhook handler, over the same `Accounts` and `Ledger`. The
+scenarios run it for real: `stripe.New(...)` over the fake Stripe, its
+routes on the API mux and its webhook at `/stripe/webhook`, posted the
+events the fake returns, signed with a made-up secret. There is no stub.
+(The handler verifies with Stripe's SDK, which reads the machine's clock
+for a signature's age, so the scenarios sign at the real time.)
 
-The balance pass offers auto-recharge to a `metronome.Recharger` (nil until
-C supplies one), with the balance it has just read.
+In a deployment `STRIPE_WEBHOOK_SECRET` comes from the Secret
+`stripe-webhook`, which OpenTofu (`infra/billing`) writes when it makes the
+webhook endpoint. `TestStartsWithMeterAndStripeTest` (`cmd/server`) reads
+the configuration from the environment with `BILLING=meter` and
+`STRIPE_MODE=test` and makes billing's and Stripe's parts as `run()` does.
+
+The balance pass offers auto-recharge to the Stripe service
+(`metronome.Recharger`) when `AUTO_RECHARGE` is on, with the balance it has
+just read.
 
 ## Metronome: what is not verified
 

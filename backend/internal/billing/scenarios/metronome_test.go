@@ -62,7 +62,7 @@ func TestMetronomeWebhook(t *testing.T) {
 			t.Fatalf("after the alert again: %+v", again)
 		}
 		// Credit is bought; the old alert arrives late.
-		w.buy(user, "credit-5")
+		w.buy(user, "cu_credit_5_v1")
 		if res := w.alert(alerts[0]); res.Code != http.StatusOK {
 			t.Fatalf("a stale alert = %d", res.Code)
 		}
@@ -251,7 +251,7 @@ func TestMetronomeUnreachable(t *testing.T) {
 		if !w.credit(user).Exhausted {
 			t.Fatal("setup: not exhausted")
 		}
-		if res := w.api(user, "POST", "/api/billing/checkout", `{"item":"credit-5"}`); res.Code != http.StatusOK {
+		if res := w.api(user, "POST", "/api/billing/checkout", `{"item":"cu_credit_5_v1"}`); res.Code != http.StatusOK {
 			t.Fatal(res.body())
 		}
 		all := w.stripe.CheckoutSessions()

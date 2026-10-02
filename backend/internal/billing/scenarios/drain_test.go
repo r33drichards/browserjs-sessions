@@ -109,7 +109,7 @@ func TestExhaustionDrain(t *testing.T) {
 		}
 
 		// 7: credit arrives. The session stays asleep; resume now works.
-		w.buy(user, "credit-5")
+		w.buy(user, "cu_credit_5_v1")
 		w.tick()
 		w.sweep()
 		if s := w.session(id); s.State != sessions.Asleep {
@@ -136,7 +136,7 @@ func TestExhaustionDrain(t *testing.T) {
 	t.Run("6: credit arrives during the drain; the stop is called off", func(t *testing.T) {
 		w, id := draining(t)
 		forwarded := w.podCalls.Load()
-		w.buy(user, "credit-5")
+		w.buy(user, "cu_credit_5_v1")
 		w.tick()
 		w.sweep()
 		if s := w.session(id); s.State != sessions.Running || s.Draining != "" || w.sessions.Snapshots(id) != 0 {
