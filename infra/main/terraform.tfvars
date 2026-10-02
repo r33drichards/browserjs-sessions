@@ -41,7 +41,9 @@ kubernetes_version = "1.36"
 # session_max_nodes is the ceiling on what sessions can cost.
 session_machine_type = "n2-standard-4"
 session_max_nodes    = 3
-session_spot         = false
+# Spot: cheaper, but Compute Engine can take a node back with 30 seconds'
+# notice; sessions on it restart from their disks (tabs reopen, pages reload).
+session_spot = true
 
 # us-west1-a alone had no n2-standard-4 capacity when the first session was
 # created ("GCE out of resources"), so session nodes may start in any zone of
