@@ -3,7 +3,10 @@
 VNC's clipboard carries text only. Files move through one folder in the
 session, shown under the Clipboard box on the session page:
 
-- **Send**: drop files on the Files box, or choose them. They land in the
+- **Send**: drop files anywhere on the session page (the remote screen
+  included), paste a copied file or screenshot (click the Files box and press
+  Ctrl+V or ⌘V; a paste while the remote screen has the focus is the remote
+  browser's), or choose them. They land in the
   folder; attach them on a website with the browser's file chooser, which
   opens there.
 - **Save**: what the session's browser downloads lands in the same folder and

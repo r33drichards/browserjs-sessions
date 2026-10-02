@@ -1,11 +1,13 @@
 import Button from "@cloudscape-design/components/button"
 import SpaceBetween from "@cloudscape-design/components/space-between"
 import { useCallback, useEffect, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import { api } from "../api"
 import type { SessionFile } from "../api"
 import { ApiError } from "../api"
 import { signedOutHandled } from "../auth/signedOut"
 import { fileErrorText, fileUrl, formatSize, uploadFile } from "../files"
+import { ClipboardReadError, dragHasFiles, pasteIsForSession, pastedFiles, readClipboardFiles } from "../filesInput"
 import { usePolling } from "../usePolling"
 import "./FilesBox.css"
 
@@ -17,6 +19,11 @@ interface Upload {
 
 const DEFAULT_MAX_BYTES = 100 * 1024 * 1024
 const POLL_MS = 5000
+// A drag that stops arriving has left the page (or ended): no event says so
+// reliably.
+const DRAG_GONE_MS = 200
+
+const PASTE_KEY = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘V" : "Ctrl+V"
 
 // The clipboard carries text; this carries files. They go to, and come from,
 // the one folder the session's browser downloads to and opens its file
@@ -107,6 +114,66 @@ export function FilesBox({ sessionId }: { sessionId: string }) {
     })
   }
 
+  // The page's listeners outlive a render; they send with the latest state.
+  const sendRef = useRef(send)
+  sendRef.current = send
+
+  // Files pasted or dropped anywhere on the session page are for the session.
+  useEffect(() => {
+    let dragGone: ReturnType<typeof setTimeout> | undefined
+    function onPaste(e: ClipboardEvent) {
+      if (!pasteIsForSession(e)) return
+      e.preventDefault()
+      sendRef.current(pastedFiles(e.clipboardData))
+    }
+    function onDragOver(e: DragEvent) {
+      if (!dragHasFiles(e.dataTransfer)) return
+      e.preventDefault() // or the drop is not ours to take
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy"
+      setOver(true)
+      clearTimeout(dragGone)
+      dragGone = setTimeout(() => setOver(false), DRAG_GONE_MS)
+    }
+    function onDrop(e: DragEvent) {
+      if (!dragHasFiles(e.dataTransfer)) return
+      // Wherever it lands, the remote screen included: the browser must not
+      // open the file in place of the app, and nothing below gets the drop.
+      e.preventDefault()
+      e.stopPropagation()
+      clearTimeout(dragGone)
+      setOver(false)
+      sendRef.current(Array.from(e.dataTransfer?.files ?? []))
+    }
+    document.addEventListener("paste", onPaste)
+    // Capturing: before the remote screen's own handlers.
+    window.addEventListener("dragenter", onDragOver, true)
+    window.addEventListener("dragover", onDragOver, true)
+    window.addEventListener("drop", onDrop, true)
+    return () => {
+      clearTimeout(dragGone)
+      document.removeEventListener("paste", onPaste)
+      window.removeEventListener("dragenter", onDragOver, true)
+      window.removeEventListener("dragover", onDragOver, true)
+      window.removeEventListener("drop", onDrop, true)
+    }
+  }, [])
+
+  // The button, for a picture on this computer's clipboard; the browser asks
+  // the user first, and some do not allow it at all.
+  async function pasteMine() {
+    setErrors([])
+    try {
+      send(await readClipboardFiles())
+    } catch (err) {
+      const reason = err instanceof ClipboardReadError ? err.reason : "denied"
+      setErrors([
+        reason === "empty"
+          ? `There is no picture on your clipboard that this button can read. For a copied file, click this box and press ${PASTE_KEY}.`
+          : `This browser does not let the page read your clipboard. Click this box and press ${PASTE_KEY} instead.`,
+      ])
+    }
+  }
+
   async function remove(file: SessionFile) {
     if (!window.confirm(`Delete "${file.name}" from the session? This cannot be undone.`)) return
     setErrors([])
@@ -122,37 +189,30 @@ export function FilesBox({ sessionId }: { sessionId: string }) {
     await load()
   }
 
-  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes("Files")
-
   return (
-    <div
-      className={over ? "wf-files wf-files-over" : "wf-files"}
-      onDragOver={e => {
-        if (!hasFiles(e)) return
-        e.preventDefault()
-        e.dataTransfer.dropEffect = "copy"
-        setOver(true)
-      }}
-      onDragLeave={e => {
-        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(false)
-      }}
-      onDrop={e => {
-        if (!hasFiles(e)) return
-        e.preventDefault()
-        setOver(false)
-        send(Array.from(e.dataTransfer.files))
-      }}
-    >
+    // Focusable, so there is somewhere obvious to click and paste.
+    <div className="wf-files" tabIndex={0} aria-label="Files: click here and paste, or drop files">
+      {over &&
+        createPortal(
+          <div className="wf-drop-overlay" aria-hidden="true">
+            <div>Drop to send to the browser</div>
+          </div>,
+          document.fullscreenElement ?? document.body,
+        )}
       <SpaceBetween size="xs">
         <strong>Files</strong>
         <span className="wf-note">
-          Drop files here to put them in the browser's Downloads folder, where its file chooser opens. What the browser
-          downloads shows up here to save. A file you send is also copied to the browser's clipboard, so Ctrl+V there
+          Drop files anywhere on this page, or click here and paste ({PASTE_KEY}) a file or screenshot, to put them in
+          the browser's Downloads folder, where its file chooser opens. What the browser downloads shows up here to
+          save. A file you send is also copied to the browser's clipboard, so Ctrl+V there
           pastes it. Up to {formatSize(maxBytes)} each.
         </span>
         <SpaceBetween direction="horizontal" size="xs" alignItems="center">
           <Button iconName="upload" disabled={Boolean(unavailable) && files === null} onClick={() => input.current?.click()}>
             Send files to browser
+          </Button>
+          <Button iconName="copy" disabled={Boolean(unavailable) && files === null} onClick={pasteMine}>
+            Paste from my clipboard
           </Button>
           <input
             ref={input}
