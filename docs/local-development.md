@@ -48,7 +48,7 @@ security add-trusted-cert -r trustRoot -k ~/Library/Keychains/login.keychain-db 
 ```
 
 Clicking through the browser's warning instead is not enough: the session's
-screen is a websocket to another host (`<id>.sessions.localtest.me`), and a
+screen is a websocket to another host (`sessions.localtest.me`), and a
 browser gives no way to accept an untrusted certificate for that, so the
 screen stays on "Connecting". Restart the browser after trusting the CA.
 
@@ -72,11 +72,15 @@ editing the list, `kubectl apply -k deploy/local`.
 | What | Where |
 |---|---|
 | The app | `https://app.localtest.me` |
-| A session's MCP endpoint | `https://<id>.sessions.localtest.me/mcp` |
+| A session's MCP endpoint | `https://sessions.localtest.me/<id>/mcp` ([session-urls.md](session-urls.md)) |
 | Pomerium's sign-in host | `https://authenticate.localtest.me` |
 | Dex | `http://localhost:5556/dex` |
 
 `*.localtest.me` resolves to 127.0.0.1 with no `/etc/hosts` entry.
+
+A certificate made before the sessions had one host does not name
+`sessions.localtest.me`: `hack/local-up.sh` then makes a new CA and
+certificate, and the new CA has to be trusted again (above).
 
 ## Tests
 
@@ -113,15 +117,16 @@ existing session of alice's (`KEEP=1 node test/browser-e2e.mjs` leaves one and
 prints its ID):
 
 ```bash
-nix develop -c node test/mcp-client.mjs <id>.sessions.localtest.me alice@example.com   # works
-nix develop -c node test/mcp-client.mjs <id>.sessions.localtest.me bob@example.com     # 404: not his
+nix develop -c node test/mcp-client.mjs https://sessions.localtest.me/<id>/mcp alice@example.com   # works
+nix develop -c node test/mcp-client.mjs https://sessions.localtest.me/<id>/mcp bob@example.com     # 404: not his
+nix develop -c node test/mcp-client.mjs <id>.sessions.localtest.me alice@example.com               # the session's old host (deprecated): works
 ```
 
 `test/mcp-oauth.mjs` takes the same arguments and walks the same sign-in one
 request at a time, printing what each step answered.
 
 To point a real client at a local session, give it
-`https://<id>.sessions.localtest.me/mcp` and the CA
+`https://sessions.localtest.me/<id>/mcp` and the CA
 (`NODE_EXTRA_CA_CERTS=$PWD/.local/tls/ca.crt` for Node-based clients). Only
 clients whose client ID document is under `claude.ai` are accepted. This has
 not been tried with Claude Code.

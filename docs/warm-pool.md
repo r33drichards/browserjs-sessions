@@ -45,7 +45,7 @@ Two things follow from "the ID is the Sandbox's name":
   (a claim with `env` is always started cold). But a Sandbox's pod has the
   Sandbox's name, which is the session ID from the start, so the template
   sets `SESSION_ID` from `metadata.name` and
-  `MCP_V8_PUBLIC_URL=https://$(SESSION_ID).sessions.browserjs.com`. No image
+  `MCP_V8_PUBLIC_URL=https://sessions.browserjs.com/$(SESSION_ID)`. No image
   changes.
 
 **Delete** removes the session's snapshots, then the claim, then the Sandbox. A Sandbox deleted from

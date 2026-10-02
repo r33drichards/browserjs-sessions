@@ -9,7 +9,7 @@ collected at the end.
 | | |
 |---|---|
 | App | `https://app.browserjs.com` |
-| A session | `https://<id>.sessions.browserjs.com/mcp` |
+| A session | `https://sessions.browserjs.com/<id>/mcp` ([session-urls.md](session-urls.md); the older `https://<id>.sessions.browserjs.com/mcp` still answers) |
 | Pomerium's sign-in host | `https://authenticate.browserjs.com` |
 | Dex | `https://dex.browserjs.com/dex` |
 | Address | `8.231.155.139` (the address resource `browserjs-edge`) |
@@ -41,10 +41,12 @@ collected at the end.
     the class is what selects the backend-service-based load balancer on GKE
     1.33.1 to 1.36, the annotation needs GKE 1.29 and that class, and the
     class cannot be changed on an existing Service.
-  - One `Certificate` for `app`, `authenticate`, `dex` and
-    `*.sessions.browserjs.com` into the Secret `pomerium-tls`.
-  - Pomerium's and Dex's production configuration: the four session routes
-    and the app route as locally, MCP settings as locally, the allow-list
+  - One `Certificate` for `app`, `authenticate`, `dex`, `sessions` and
+    `*.sessions.browserjs.com` (the old session hosts, deprecated) into the
+    Secret `pomerium-tls`.
+  - Pomerium's and Dex's production configuration: the three session routes
+    on `sessions.browserjs.com`, the four deprecated ones on the old session
+    hosts, and the app route as locally, MCP settings as locally, the allow-list
     `rwendt1337@gmail.com` and `browserjs06@gmail.com`; Dex with the issuer
     `https://dex.browserjs.com/dex`, the Google and GitHub connectors and no
     passwords. Pomerium's databroker is on a 1 GiB Persistent Disk.
@@ -340,12 +342,15 @@ restarts it, then the backend.
 test/smoke.sh
 ```
 
-19 checks, no sign-in: valid certificates for the four names (a random
+30 checks, no sign-in: valid certificates for the five names (a random
 `s-….sessions` host proves the wildcard), the redirect to
 `authenticate.browserjs.com`, Pomerium's keys, Dex's issuer and its two
-connectors and no password login, and that a session host answers the OAuth
-metadata, 401 on `/mcp`, 404 on an upload to a session that does not exist
-(no redirect to sign-in) and 426 on `/vnc`.
+connectors and no password login; that on `sessions.browserjs.com` Pomerium
+answers the OAuth metadata for a session, `/<id>/mcp` is 401 and points a
+client at that metadata, an upload to a session that does not exist is 404
+(no redirect to sign-in), `/<id>/vnc` is 426 and nothing else has a route;
+and that an old session host still answers its metadata, 401 and 426
+(`LEGACY=0 test/smoke.sh` once those hosts are retired).
 
 ### 9. Sign in
 
@@ -358,7 +363,8 @@ shows "starting"). If it does not become running:
 Then: stop and resume it (tabs come back), let it idle 15 minutes (asleep,
 wakes on an MCP call; the test plan under "Sleep and wake from Pod
 Snapshots"), connect an MCP client to
-`https://<id>.sessions.browserjs.com/mcp`, delete it and see its disk go.
+`https://sessions.browserjs.com/<id>/mcp` (the test plan in
+[session-urls.md](session-urls.md)), delete it and see its disk go.
 
 ## Sleep and wake from Pod Snapshots
 
@@ -456,7 +462,7 @@ After the deploy, with `gh workflow run cluster-info.yml --ref main` (add
    with a new name. Browse for a while after the wake and check that the
    sites' storage (step 2) is intact: this is the disk question above.
 6. **Wake by MCP.** With the session asleep, make an MCP call to
-   `https://<id>.sessions.browserjs.com/mcp`; it answers after the restore.
+   `https://sessions.browserjs.com/<id>/mcp`; it answers after the restore.
 7. **Fallback.** With a session asleep, delete its snapshot by hand
    (`kubectl -n browserjs-sessions delete podsnapshot <name>`), then open
    it: it cold starts, tabs restored by Chromium, and the status shows no

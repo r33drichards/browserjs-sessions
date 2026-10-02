@@ -22,7 +22,7 @@ session, shown under the Clipboard box on the session page:
 What keeps it safe:
 
 - Only the session's owner (or an admin) gets past the backend; anyone else is
-  answered as if the session did not exist. Nothing is added to a session's
+  answered as if the session did not exist. Nothing is added to the sessions'
   own host.
 - A name is one path segment that is not hidden: no `/`, `\`, control
   characters, leading dot, or more than 255 bytes. The backend and the pod
