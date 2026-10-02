@@ -111,6 +111,11 @@ spelled out and Phase 2 edits it; nothing in `deploy/gke` is templated.
 
 ## Runbook
 
+Where it stands: steps 1 to 3 are done. Phase 1 is merged and applied (7
+added). computeruse.site is delegated to `ns-cloud-d1` … `ns-cloud-d4.googledomains.com`
+and both public resolvers return them, with no DS record. Google has the new
+redirect URI. Next is step 4.
+
 "You" is whoever has the Namecheap account, the two OAuth apps and the right
 to merge. Every merge to `main` that touches `infra/main` starts `infra
 apply` by itself; `deploy` is started by hand.
@@ -286,22 +291,47 @@ Rollback, at any point after the merge:
    direction costs one.)
 
 Sessions made while the new domain was live keep its URL in their pods (see
-below); after a rollback their upload URLs are wrong until they are stopped
-and resumed with the patch described there, pointing the other way.
+below); after a rollback their upload URLs are wrong. The script takes the
+hosts from `OLD_HOST` and `NEW_HOST`, so it can point the other way, but the
+workflow does not pass them: that would be a change to it.
 
 ### 7. Verify (you)
 
+None of this needs `kubectl`. The deploy run's own log is the first check:
+its "Certificate" step ends with `certificate.cert-manager.io/pomerium-tls
+condition met`, and its summary shows the pods.
+
 ```sh
-kubectl -n browserjs-sessions get certificate pomerium-tls   # READY True
-# or, without kubectl: gh workflow run cluster-info.yml --ref main
+# DNS: the delegation, and every name at the address.
+dig +short NS computeruse.site @1.1.1.1     # ns-cloud-d1 … d4.googledomains.com.
+dig +short DS computeruse.site @1.1.1.1     # nothing
+for h in api app authenticate dex sessions x.sessions; do
+  printf '%-32s %s %s\n' "$h.computeruse.site" \
+    "$(dig +short "$h.computeruse.site" @1.1.1.1)" "$(dig +short "$h.computeruse.site" @8.8.8.8)"
+done                                        # 8.231.155.139 twice on every line
 
-echo | openssl s_client -connect app.computeruse.site:443 -servername app.computeruse.site 2>/dev/null \
-  | openssl x509 -noout -issuer -ext subjectAltName
-# Let's Encrypt; api., app., authenticate., dex., sessions., *.sessions. of computeruse.site
+# The certificate that is served: issuer, dates, names.
+echo | openssl s_client -connect app.computeruse.site:443 -servername app.computeruse.site 2>/dev/null |
+  openssl x509 -noout -issuer -dates -ext subjectAltName
+# issuer: Let's Encrypt (not "(STAGING)"); notBefore: today;
+# DNS: api., app., authenticate., dex., sessions., *.sessions. of computeruse.site,
+# and no browserjs.com name.
 
-test/smoke.sh                              # the default is computeruse.site now
-curl -sS https://dex.computeruse.site/dex/.well-known/openid-configuration | grep issuer
+# Each host presents it (curl verifies the chain and the name).
+for h in api app authenticate dex sessions s-smoke00000.sessions; do
+  curl -sS -o /dev/null -w "%{http_code} %{ssl_verify_result} $h\n" "https://$h.computeruse.site/"
+done                                        # ssl_verify_result 0 on every line
+
+test/smoke.sh                               # the default is computeruse.site now; "0 failed"
+curl -sS https://dex.computeruse.site/dex/.well-known/openid-configuration | grep -o '"issuer":"[^"]*"'
+# "issuer":"https://dex.computeruse.site/dex"
+
+# The old domain is not served: a certificate error, by name.
+curl -sS -o /dev/null https://app.browserjs.com/ ; echo "exit $?"   # exit 60
 ```
+
+For more than that (the Certificate's conditions, pods, logs):
+`gh workflow run cluster-info.yml --ref main`, which changes nothing.
 
 Then, in a browser:
 
@@ -375,25 +405,35 @@ session is created, and a change to the blueprint only reaches new sessions
 `get_artifact_upload_url` goes on returning
 `https://sessions.browserjs.com/<id>/api/artifact-uploads/…`, which nothing
 serves. MCP itself, the screen and downloads are unaffected. Either accept
-it for old sessions (anything new is fine), or per session:
+it for old sessions (anything new is fine), or rewrite the value with the
+workflow `session public url` (`.github/workflows/session-public-url.yml`,
+which runs `hack/session-public-url.sh`; no `kubectl` of your own needed):
 
-1. Stop it in the UI (a stop, not a sleep: a stop deletes the session's
-   snapshots, and a pod restored from a snapshot comes back with the
-   environment it was checkpointed with).
-2. Rewrite the variable in its Sandbox:
+1. See what it would do; this changes nothing:
+   `gh workflow run session-public-url.yml --ref main -f session=all`.
+   The run's summary lists each session that still has the old host as
+   `WOULD` (stopped: would be changed) or `SKIP` (running or asleep).
+2. Stop the session in the UI. A stop, not a sleep: only a session stopped
+   by its user is changed. A running one is not touched because it is not
+   known whether the controller would replace its pod; a sleeping one has a
+   snapshot of a pod with the old value and would wake with it. A stop
+   deletes the snapshots.
+3. `gh workflow run session-public-url.yml --ref main -f session=s-… -f confirm=patch`
+   (or `-f session=all` for every stopped session). The summary says
+   `CHANGED`. The patch is a JSON patch that tests the old value before it
+   replaces it, on that one environment variable and nothing else.
+4. Resume the session: a cold start, with the tabs restored from disk. Check
+   with `get_artifact_upload_url`: the URL starts with
+   `https://sessions.computeruse.site/<id>/`.
 
-   ```sh
-   id=s-…
-   kubectl -n browserjs-sessions get sandboxes.agents.x-k8s.io "$id" -o json |
-     jq '(.spec.podTemplate.spec.containers[].env[]? | select(.name == "MCP_V8_PUBLIC_URL") | .value)
-           |= sub("sessions\\.browserjs\\.com"; "sessions.computeruse.site")' |
-     kubectl replace -f -
-   ```
+UNVERIFIED on the cluster: the script is tested against made-up Sandboxes
+only. Do one session that does not matter first. If the API server refuses
+the patch (an admission policy, a field the controller owns), the run fails
+and the Sandbox is unchanged; the fallback is to leave old sessions as they
+are.
 
-3. Resume it: a cold start, with the tabs restored from disk.
-
-UNVERIFIED on the cluster: this has not been run. Try it on one session that
-does not matter first.
+Delete the workflow and the script when no session from before the move is
+left.
 
 **The warm pool.** Its template changes (`MCP_V8_PUBLIC_URL`), so the pool
 replaces its warm pod. A session created in that minute starts cold.

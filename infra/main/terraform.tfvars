@@ -11,11 +11,15 @@
 # GCP_REGION.
 cluster_location = "us-west1-a"
 
-domain = "browserjs.com"
+# The domain everything is served under. Moving to another one is a
+# procedure, not this line alone: docs/domain-switch.md.
+domain = "computeruse.site"
 
-# The domain the deployment is moving to (docs/domain-switch.md): a second
-# zone with the same records. Nothing is served under it yet.
-additional_domains = ["computeruse.site"]
+# Where the deployment was until the move to computeruse.site. Its zone and
+# records stay, pointing at the same address, so that the move can be undone;
+# nothing is served under it. REMOVING THIS LINE DELETES the zone and every
+# record in it.
+previous_domain = "browserjs.com"
 
 # "pomerium_nlb": Pomerium terminates TLS behind a passthrough load balancer,
 #                 certificates from cert-manager (recommended).

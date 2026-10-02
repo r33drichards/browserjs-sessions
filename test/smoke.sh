@@ -3,7 +3,7 @@
 # sign-in and no session: it checks the edge (addresses, certificates,
 # routes) and what answers without an identity.
 #
-#   test/smoke.sh                      checks browserjs.com
+#   test/smoke.sh                      checks computeruse.site
 #   DOMAIN=example.org test/smoke.sh   another deployment
 #   INSECURE=1 test/smoke.sh           do not verify certificates (a Let's
 #                                      Encrypt staging certificate): the
@@ -13,7 +13,7 @@
 # Exits 0 only if every check passes.
 set -uo pipefail
 
-DOMAIN="${DOMAIN:-browserjs.com}"
+DOMAIN="${DOMAIN:-computeruse.site}"
 APP="app.$DOMAIN"
 AUTHENTICATE="authenticate.$DOMAIN"
 DEX="dex.$DOMAIN"

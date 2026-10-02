@@ -8,10 +8,10 @@ collected at the end.
 
 | | |
 |---|---|
-| App | `https://app.browserjs.com` |
-| A session | `https://sessions.browserjs.com/<id>/mcp` ([session-urls.md](session-urls.md); the older `https://<id>.sessions.browserjs.com/mcp` still answers) |
-| Pomerium's sign-in host | `https://authenticate.browserjs.com` |
-| Dex | `https://dex.browserjs.com/dex` |
+| App | `https://app.computeruse.site` |
+| A session | `https://sessions.computeruse.site/<id>/mcp` ([session-urls.md](session-urls.md); the older `https://<id>.sessions.computeruse.site/mcp` still answers) |
+| Pomerium's sign-in host | `https://authenticate.computeruse.site` |
+| Dex | `https://dex.computeruse.site/dex` |
 | Address | `8.231.155.139` (the address resource `browserjs-edge`) |
 | Cluster | `browserjs`, `us-west1-a`, project `browserjs-sessions` |
 | Namespace | `browserjs-sessions` (cert-manager in `cert-manager`) |
@@ -28,7 +28,7 @@ collected at the end.
   the annotation is part of the manifest instead of a second step.
 - **`deploy/gke/issuers.yaml`**: two `ClusterIssuer`s for Let's Encrypt,
   production and staging, both solving DNS-01 in the Cloud DNS zone
-  `browserjs-com` with ambient credentials (on by default for a
+  `computeruse-site` with ambient credentials (on by default for a
   ClusterIssuer; VERIFIED
   <https://cert-manager.io/docs/configuration/acme/dns01/google/>).
 - **`deploy/gke`** (kustomize, on `deploy/base`):
@@ -42,13 +42,13 @@ collected at the end.
     1.33.1 to 1.36, the annotation needs GKE 1.29 and that class, and the
     class cannot be changed on an existing Service.
   - One `Certificate` for `app`, `authenticate`, `dex`, `sessions` and
-    `*.sessions.browserjs.com` (the old session hosts, deprecated) into the
+    `*.sessions.computeruse.site` (the old session hosts, deprecated) into the
     Secret `pomerium-tls`.
   - Pomerium's and Dex's production configuration: the three session routes
-    on `sessions.browserjs.com`, the four deprecated ones on the old session
+    on `sessions.computeruse.site`, the four deprecated ones on the old session
     hosts, and the app route as locally, MCP settings as locally, the allow-list
     `rwendt1337@gmail.com` and `browserjs06@gmail.com`; Dex with the issuer
-    `https://dex.browserjs.com/dex`, the Google and GitHub connectors and no
+    `https://dex.computeruse.site/dex`, the Google and GitHub connectors and no
     passwords. Pomerium's databroker is on a 1 GiB Persistent Disk.
   - The backend with the production URLs and `ADMIN_EMAILS=rwendt1337@gmail.com`.
   - The session blueprint for GKE: `runtimeClassName: gvisor`, the gVisor
@@ -221,7 +221,7 @@ Do these in order. Steps 1 to 4 can be done in any order among themselves.
 
 ### 1. OAuth callbacks
 
-Dex's callback in production is `https://dex.browserjs.com/dex/callback`.
+Dex's callback in production is `https://dex.computeruse.site/dex/callback`.
 
 - **Google** (console, the OAuth client, Authorized redirect URIs): add it
   beside `http://localhost:5556/dex/callback`. The app is in testing mode:
@@ -344,8 +344,8 @@ test/smoke.sh
 
 30 checks, no sign-in: valid certificates for the five names (a random
 `s-….sessions` host proves the wildcard), the redirect to
-`authenticate.browserjs.com`, Pomerium's keys, Dex's issuer and its two
-connectors and no password login; that on `sessions.browserjs.com` Pomerium
+`authenticate.computeruse.site`, Pomerium's keys, Dex's issuer and its two
+connectors and no password login; that on `sessions.computeruse.site` Pomerium
 answers the OAuth metadata for a session, `/<id>/mcp` is 401 and points a
 client at that metadata, an upload to a session that does not exist is 404
 (no redirect to sign-in), `/<id>/vnc` is 426 and nothing else has a route;
@@ -354,7 +354,7 @@ and that an old session host still answers its metadata, 401 and 426
 
 ### 9. Sign in
 
-Open <https://app.browserjs.com>, sign in with Google as
+Open <https://app.computeruse.site>, sign in with Google as
 `rwendt1337@gmail.com`, create a session. The first one waits for the
 `sessions` node pool to grow from zero (UNVERIFIED: a few minutes; the UI
 shows "starting"). If it does not become running:
@@ -363,7 +363,7 @@ shows "starting"). If it does not become running:
 Then: stop and resume it (tabs come back), let it idle 15 minutes (asleep,
 wakes on an MCP call; the test plan under "Sleep and wake from Pod
 Snapshots"), connect an MCP client to
-`https://sessions.browserjs.com/<id>/mcp` (the test plan in
+`https://sessions.computeruse.site/<id>/mcp` (the test plan in
 [session-urls.md](session-urls.md)), delete it and see its disk go.
 
 ## Sleep and wake from Pod Snapshots
@@ -462,7 +462,7 @@ After the deploy, with `gh workflow run cluster-info.yml --ref main` (add
    with a new name. Browse for a while after the wake and check that the
    sites' storage (step 2) is intact: this is the disk question above.
 6. **Wake by MCP.** With the session asleep, make an MCP call to
-   `https://sessions.browserjs.com/<id>/mcp`; it answers after the restore.
+   `https://sessions.computeruse.site/<id>/mcp`; it answers after the restore.
 7. **Fallback.** With a session asleep, delete its snapshot by hand
    (`kubectl -n browserjs-sessions delete podsnapshot <name>`), then open
    it: it cold starts, tabs restored by Chromium, and the status shows no
@@ -488,7 +488,7 @@ events, logs and the description of every pod that is not ready.
 | deploy: cert-manager | webhook does not answer | `cluster info`: are the three cert-manager pods running on the system node? On a private cluster the control plane reaches webhooks on port 10250, which this manifest uses (`--secure-port=10250`) and GKE's default firewall rule allows (UNVERIFIED) |
 | deploy: Issuers | ClusterIssuer not Ready | cert-manager cannot reach Let's Encrypt (Cloud NAT), see cert-manager's log |
 | deploy: Certificate, after 15 min | `Challenge` pending, log says 403 from `dns.googleapis.com` | Workload Identity: the annotation on `cert-manager/cert-manager`, the binding `browserjs-sessions.svc.id.goog[cert-manager/cert-manager]`, the custom DNS role |
-| | `Challenge` says the TXT record is not found | propagation; or the domain is not delegated to Cloud DNS: `dig +short NS browserjs.com`, `dig +short TXT _acme-challenge.sessions.browserjs.com` |
+| | `Challenge` says the TXT record is not found | propagation; or the domain is not delegated to Cloud DNS: `dig +short NS computeruse.site`, `dig +short TXT _acme-challenge.sessions.computeruse.site` |
 | | `rateLimited` | production only: wait, and use staging to debug |
 | deploy: Apply | `spec.loadBalancerClass` is immutable | the Service was once applied without it: delete the Service by hand, run again |
 | | `ValidatingAdmissionPolicy 'sandbox-…' denied` | only when a session is created, not at deploy: see below |
@@ -498,7 +498,7 @@ events, logs and the description of every pod that is not ready.
 | deploy: Verdict | `does not serve agents.x-k8s.io/v1beta1` | finding 1 |
 | smoke: certificate checks | `unable to get local issuer` | a staging certificate: step 7 |
 | smoke: timeouts | nothing answers on 443 | forwarding rule or firewall: `describe service pomerium`; with `externalTrafficPolicy: Local` only Pomerium's node is healthy, which is intended |
-| sign-in | Pomerium shows an error after Dex | Pomerium cannot fetch `https://dex.browserjs.com/dex` from inside the cluster (its log says so): see "in-cluster access to the public address" below |
+| sign-in | Pomerium shows an error after Dex | Pomerium cannot fetch `https://dex.computeruse.site/dex` from inside the cluster (its log says so): see "in-cluster access to the public address" below |
 | sign-in | Google or GitHub says the redirect URI is wrong | step 1 |
 | sign-in | Pomerium's 403 page | the e-mail is not on the allow-list in `deploy/gke/pomerium-config.yaml` |
 | the app | every API call 401 after sign-in | the backend has not got Pomerium's keys (its log: "Failed to refresh HTTP JWK Set"): same cause as two rows up; it retries every few minutes and on a restart |
@@ -508,8 +508,8 @@ events, logs and the description of every pod that is not ready.
 | | runs, but the browser cannot reach sites | DNS: the `kube-dns` label in "Nodes"; the NetworkPolicy |
 
 **In-cluster access to the public address.** Pomerium (to Dex) and the
-backend (to Pomerium's keys) call `https://dex.browserjs.com` and
-`https://app.browserjs.com`, which resolve to the load balancer's address.
+backend (to Pomerium's keys) call `https://dex.computeruse.site` and
+`https://app.computeruse.site`, which resolve to the load balancer's address.
 From inside a GKE cluster that address is served by the Service directly
 (UNVERIFIED for this cluster, in particular with `externalTrafficPolicy:
 Local` and a pod calling itself). If it does not work: first try
@@ -592,7 +592,7 @@ Actions has on the cluster. It runs `get`, `describe` and `logs` only.
 10. The `sessions` pool scaling from zero for a Sandbox pod, and how long it
     takes; `browserjs-zonal` disks attaching under gVisor.
 11. GitHub OAuth Apps allowing only one callback URL (step 1).
-12. No port 80: `http://app.browserjs.com` does not answer. Browsers try
+12. No port 80: `http://app.computeruse.site` does not answer. Browsers try
     HTTPS first; add a second Service port and Pomerium's
     `http_redirect_addr` if that matters.
 

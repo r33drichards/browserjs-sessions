@@ -159,7 +159,7 @@ spec:
                 fieldRef:
                   fieldPath: metadata.name
             - name: MCP_V8_PUBLIC_URL
-              value: "https://sessions.browserjs.com/$(SESSION_ID)"
+              value: "https://sessions.computeruse.site/$(SESSION_ID)"
           ports:
             - name: mcp
               containerPort: 8080

@@ -269,7 +269,7 @@ jobs:
               openssl x509 -noout -fingerprint -sha256
           }
           served() {
-            openssl s_client -connect "$EDGE_IP:443" -servername app.browserjs.com </dev/null 2>/dev/null |
+            openssl s_client -connect "$EDGE_IP:443" -servername app.computeruse.site </dev/null 2>/dev/null |
               openssl x509 -noout -fingerprint -sha256 2>/dev/null || true
           }
           want="$(in_secret)"

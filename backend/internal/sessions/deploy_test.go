@@ -24,7 +24,7 @@ func TestWarmPoolTemplateMatchesBlueprint(t *testing.T) {
 	}
 	var rendered bytes.Buffer
 	if err := template.Must(template.New("blueprint").Option("missingkey=error").Parse(string(source))).Execute(&rendered, map[string]string{
-		"ID": "$(SESSION_ID)", "SessionURL": "https://sessions.browserjs.com/$(SESSION_ID)", "PublicURL": "https://app.browserjs.com",
+		"ID": "$(SESSION_ID)", "SessionURL": "https://sessions.computeruse.site/$(SESSION_ID)", "PublicURL": "https://app.computeruse.site",
 	}); err != nil {
 		t.Fatal(err)
 	}

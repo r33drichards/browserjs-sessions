@@ -29,16 +29,34 @@ locals {
 
   edge_ip = local.edge_nlb ? google_compute_address.edge[0].address : google_compute_global_address.edge[0].address
 
-  zone_name = replace(var.domain, ".", "-")
+  # The zones. previous_domain's is google_dns_managed_zone.this, as it was
+  # when that domain was the only one; every other domain's is
+  # google_dns_managed_zone.domains, keyed by domain. Which of them is served
+  # (var.domain) changes no zone and no record.
+  previous_zone = var.create_dns_zone && var.previous_domain != null
+  domains = setsubtract(
+    concat([var.domain], var.additional_domains),
+    var.previous_domain == null ? [] : [var.previous_domain],
+  )
+  zones = merge(
+    { for domain, zone in google_dns_managed_zone.domains : domain => zone },
+    local.previous_zone ? { (var.previous_domain) = google_dns_managed_zone.this[0] } : {},
+  )
 
-  # The same names again under each of additional_domains: every public name
-  # with the domain at its end exchanged, keyed "<domain>/<key of public_names>".
-  additional_records = merge([
-    for domain in var.additional_domains : {
+  # The public names under each domain: the domain at the end of the name
+  # exchanged. Those of google_dns_managed_zone.domains are keyed
+  # "<domain>/<key of public_names>", those of previous_domain by the key
+  # alone.
+  domain_records = merge([
+    for domain in local.domains : {
       for key, name in local.public_names :
       "${domain}/${key}" => { domain = domain, name = "${trimsuffix(name, var.domain)}${domain}" }
     }
   ]...)
+  previous_records = var.previous_domain == null ? {} : {
+    for key, name in local.public_names :
+    key => "${trimsuffix(name, var.domain)}${var.previous_domain}"
+  }
 }
 
 # --- Address ----------------------------------------------------------------------
@@ -73,38 +91,12 @@ resource "google_compute_global_address" "edge" {
 
 # --- DNS ----------------------------------------------------------------------------
 
-resource "google_dns_managed_zone" "this" {
-  count = var.create_dns_zone ? 1 : 0
-
-  name        = local.zone_name
-  dns_name    = "${var.domain}."
-  description = "browserjs sessions public zone"
-  visibility  = "public"
-
-  dnssec_config {
-    state = var.enable_dnssec ? "on" : "off"
-  }
-
-  depends_on = [google_project_service.this]
-}
-
-resource "google_dns_record_set" "public" {
-  for_each = var.create_dns_zone ? local.public_names : {}
-
-  managed_zone = google_dns_managed_zone.this[0].name
-  name         = "${each.value}."
-  type         = "A"
-  ttl          = var.dns_ttl
-  rrdatas      = [local.edge_ip]
-}
-
-# Further domains (additional_domains): a zone each, with the records of the
-# zone above, to the same address. Nothing is served under them until
-# deploy/gke names them (Pomerium's routes, the certificate, Dex); the zones
-# are there first so that a domain can be delegated, and its certificate
-# issued, before anything moves to it (docs/domain-switch.md).
+# A zone per domain, each with the same records, to the same address. Only
+# var.domain is served (deploy/gke names it: Pomerium's routes, the
+# certificate, Dex). The others are the domain the deployment was under
+# before, or one it moves to next (docs/domain-switch.md).
 resource "google_dns_managed_zone" "domains" {
-  for_each = var.create_dns_zone ? toset(var.additional_domains) : []
+  for_each = var.create_dns_zone ? local.domains : []
 
   name        = replace(each.value, ".", "-")
   dns_name    = "${each.value}."
@@ -119,10 +111,41 @@ resource "google_dns_managed_zone" "domains" {
 }
 
 resource "google_dns_record_set" "domains" {
-  for_each = var.create_dns_zone ? local.additional_records : {}
+  for_each = var.create_dns_zone ? local.domain_records : {}
 
   managed_zone = google_dns_managed_zone.domains[each.value.domain].name
   name         = "${each.value.name}."
+  type         = "A"
+  ttl          = var.dns_ttl
+  rrdatas      = [local.edge_ip]
+}
+
+# previous_domain: the zone and records of the domain the deployment began
+# under, at the resource addresses they have always had. They are kept apart
+# from the ones above so that moving to another domain, and moving back,
+# never renames them in the state: a rename gone wrong deletes the zone, and
+# a zone made again has other nameservers than the registrar knows. Deleted
+# by unsetting previous_domain; this block and the next can go after that.
+resource "google_dns_managed_zone" "this" {
+  count = local.previous_zone ? 1 : 0
+
+  name        = replace(var.previous_domain, ".", "-")
+  dns_name    = "${var.previous_domain}."
+  description = "browserjs sessions public zone"
+  visibility  = "public"
+
+  dnssec_config {
+    state = var.enable_dnssec ? "on" : "off"
+  }
+
+  depends_on = [google_project_service.this]
+}
+
+resource "google_dns_record_set" "public" {
+  for_each = local.previous_zone ? local.previous_records : {}
+
+  managed_zone = google_dns_managed_zone.this[0].name
+  name         = "${each.value}."
   type         = "A"
   ttl          = var.dns_ttl
   rrdatas      = [local.edge_ip]
@@ -142,7 +165,7 @@ resource "google_service_account" "cert_manager" {
 
 # The permissions cert-manager's documentation lists as the least-privilege
 # alternative to roles/dns.admin. Granted on the project (below), so they
-# cover every zone in it, those of additional_domains too.
+# cover every zone in it.
 resource "google_project_iam_custom_role" "dns01_solver" {
   count = local.edge_nlb ? 1 : 0
 
@@ -205,7 +228,7 @@ resource "google_certificate_manager_dns_authorization" "this" {
 resource "google_dns_record_set" "dns_authorization" {
   for_each = local.edge_alb && var.create_dns_zone ? local.fqdn : {}
 
-  managed_zone = google_dns_managed_zone.this[0].name
+  managed_zone = local.zones[var.domain].name
   name         = google_certificate_manager_dns_authorization.this[each.key].dns_resource_record[0].name
   type         = google_certificate_manager_dns_authorization.this[each.key].dns_resource_record[0].type
   ttl          = 300

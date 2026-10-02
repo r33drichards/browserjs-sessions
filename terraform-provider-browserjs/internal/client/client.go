@@ -137,7 +137,7 @@ type Client struct {
 func New(endpoint, token, version string) (*Client, error) {
 	u, err := url.Parse(endpoint)
 	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
-		return nil, fmt.Errorf("endpoint must be an http(s) URL such as https://api.browserjs.com")
+		return nil, fmt.Errorf("endpoint must be an http(s) URL such as https://api.computeruse.site")
 	}
 	if token == "" {
 		return nil, errors.New("token is empty")

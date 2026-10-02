@@ -25,12 +25,12 @@ func serve(t *testing.T, h http.HandlerFunc) *Client {
 }
 
 func TestNew(t *testing.T) {
-	for _, endpoint := range []string{"", "api.browserjs.com", "ftp://api.browserjs.com", "https://"} {
+	for _, endpoint := range []string{"", "api.computeruse.site", "ftp://api.computeruse.site", "https://"} {
 		if _, err := New(endpoint, token, "1"); err == nil {
 			t.Errorf("endpoint %q accepted", endpoint)
 		}
 	}
-	if _, err := New("https://api.browserjs.com", "", "1"); err == nil {
+	if _, err := New("https://api.computeruse.site", "", "1"); err == nil {
 		t.Error("an empty token accepted")
 	}
 }

@@ -20,7 +20,7 @@ terraform {
 
 # The token is best left out of the configuration: set BROWSERJS_TOKEN.
 provider "browserjs" {
-  endpoint = "https://api.browserjs.com" # the default; or BROWSERJS_ENDPOINT
+  endpoint = "https://api.computeruse.site" # the default; or BROWSERJS_ENDPOINT
 }
 ```
 
@@ -29,5 +29,5 @@ provider "browserjs" {
 
 ### Optional
 
-- `endpoint` (String) Base URL of the API host, without `/v1`. May be set with the environment variable `BROWSERJS_ENDPOINT`. Defaults to `https://api.browserjs.com`.
+- `endpoint` (String) Base URL of the API host, without `/v1`. May be set with the environment variable `BROWSERJS_ENDPOINT`. Defaults to `https://api.computeruse.site`.
 - `token` (String, Sensitive) An API token (`bjs_…`). May be set with the environment variable `BROWSERJS_TOKEN`, which keeps it out of the configuration. Sessions need the scopes `sessions:read` and `sessions:write`; policies need `policies:read` and `policies:write`.
