@@ -21,12 +21,15 @@ info:
 
     Changes to existing responses, only while BILLING is not off:
     - a session (`GET /api/sessions`, `GET /api/sessions/{id}`) gains
-      `stoppedBy` (`user`, `idle`, `credit`, `payment-method`, `blocked`)
-      when it is asleep or stopped, `draining` (the same reasons) while it
-      is finishing calls before such a sleep, and `deleteAfter` (date-time)
-      when it is due for deletion;
-    - `POST /api/sessions`, `PATCH /api/sessions/{id}` and proxied requests
-      can answer with the `Error` below (enforcement.md).
+      `stoppedBy` (`user` for a stop, `sleep` for a sleep its user asked
+      for, `idle`, `credit`, `payment-method`, `blocked`) when it is asleep
+      or stopped, `draining` (billing's reasons) while it is finishing
+      calls before such a sleep, and `deleteAfter` (date-time) when it is
+      due for deletion;
+    - `POST /api/sessions`, `PATCH /api/sessions/{id}`,
+      `POST /api/sessions/{id}/wake` and proxied requests can answer with
+      the `Error` below (enforcement.md). `POST /api/sessions/{id}/sleep`
+      is never refused for billing.
 paths:
   /api/billing:
     get:

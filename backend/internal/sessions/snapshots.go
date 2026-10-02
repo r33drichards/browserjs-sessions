@@ -58,8 +58,8 @@ type snapshotter struct {
 	timeout, poll       time.Duration
 }
 
-// EnableSnapshots makes the store snapshot a session before an idle sleep
-// and wake it from that snapshot. Without it (a cluster with no Pod
+// EnableSnapshots makes the store snapshot a session before a sleep (for
+// being idle, or asked for) and wake it from that snapshot. Without it (a cluster with no Pod
 // Snapshots, such as kind) a session sleeps and wakes cold, and the store
 // asks the cluster for nothing but Sandboxes.
 func (s *Store) EnableSnapshots(client dynamic.Interface, namespace string, o SnapshotOptions) {
@@ -292,8 +292,8 @@ func (s *Store) keepOrDropSnapshot(ctx context.Context, obj *unstructured.Unstru
 	return setSnapshot(obj, nil)
 }
 
-// Sleep puts a session to sleep, recording why (by: StoppedByIdle, or one of
-// billing's reasons): with snapshots enabled it snapshots the pod first, so
+// Sleep puts a session to sleep, recording why (by: StoppedByIdle,
+// StoppedBySleep for its user asking, or one of billing's reasons): with snapshots enabled it snapshots the pod first, so
 // that the session wakes as it was. A snapshot that fails or runs out of
 // time does not stop the sleep; the session then wakes cold. A session put
 // to sleep for billing before it ever ran has no pod worth a snapshot.

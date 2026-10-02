@@ -49,13 +49,13 @@ func id(n int) string {
 }
 
 func (s *Sessions) run(e *session) {
-	e.State, e.StoppedBy = sessions.Running, ""
+	e.State, e.StoppedBy, e.StateSaved = sessions.Running, "", false
 	e.PodIP = "10.0.0.1"
 	e.readySince = s.clock.Now()
 }
 
 func (s *Sessions) suspend(e *session, state sessions.State, by string) {
-	e.State, e.StoppedBy, e.PodIP = state, by, ""
+	e.State, e.StoppedBy, e.PodIP, e.StateSaved = state, by, "", false
 	e.Draining, e.DrainingSince = "", time.Time{}
 }
 
@@ -120,7 +120,7 @@ func (s *Sessions) ListAll(context.Context) ([]sessions.Session, error) {
 // a no discards the snapshot.
 func (s *Sessions) Sleep(_ context.Context, id, stoppedBy string, stillWanted func() bool) error {
 	switch stoppedBy {
-	case sessions.StoppedByIdle, sessions.StoppedByCredit, sessions.StoppedByPaymentMethod, sessions.StoppedByBlocked:
+	case sessions.StoppedByIdle, sessions.StoppedBySleep, sessions.StoppedByCredit, sessions.StoppedByPaymentMethod, sessions.StoppedByBlocked:
 	default:
 		return fmt.Errorf("sleep: unknown reason %q", stoppedBy)
 	}
@@ -157,6 +157,7 @@ func (s *Sessions) Sleep(_ context.Context, id, stoppedBy string, stillWanted fu
 		state = sessions.Stopped
 	}
 	s.suspend(e, state, stoppedBy)
+	e.StateSaved = snapshot
 	s.sleeps = append(s.sleeps, stoppedBy)
 	return nil
 }

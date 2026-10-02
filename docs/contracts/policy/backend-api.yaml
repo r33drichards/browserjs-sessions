@@ -107,6 +107,33 @@ paths:
       responses:
         "204": {description: Deleted, or there was none.}
         "404": {description: Not the caller's., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /sessions/{id}/sleep:
+    parameters: [{$ref: "#/components/parameters/id"}]
+    post:
+      summary: Put a running session to sleep (unchanged by policies).
+      description: |
+        What the idle sweep does, asked for: a snapshot of the pod, then the
+        suspend. Answers when the snapshot is done (seconds; at most the
+        snapshot timeout). The session wakes on the next request to it, an
+        MCP call included, or on `wake`. A snapshot that fails does not stop
+        the sleep: the session then has no `stateSaved` and starts fresh.
+        No-op on a session that is asleep. A token needs `sessions:write`.
+      responses:
+        "200": {description: "The session, suspended.", content: {application/json: {schema: {$ref: "#/components/schemas/Session"}}}}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {description: "The session is starting, stopping, stopped or failed: there is no running state to save.", content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /sessions/{id}/wake:
+    parameters: [{$ref: "#/components/parameters/id"}]
+    post:
+      summary: Start a session that is asleep or stopped (PATCH's `resume`, as a route).
+      description: |
+        Restores from the snapshot if the session has one that is ready,
+        starts fresh otherwise. Does not wait for the session to run. No-op
+        on one that is awake. A token needs `sessions:write`. With billing
+        on it can be refused (docs/contracts/billing/backend-api.yaml).
+      responses:
+        "200": {description: The session after the change., content: {application/json: {schema: {$ref: "#/components/schemas/Session"}}}}
+        "404": {$ref: "#/components/responses/NotFound"}
   /sessions/{id}/policy:
     parameters: [{$ref: "#/components/parameters/id"}]
     get:
@@ -322,6 +349,7 @@ components:
         owner: {type: string}
         state: {type: string, description: As today. A new session stays `starting` until its policy is `ready`.}
         mcp_url: {type: string}
+        stateSaved: {type: boolean, description: "Present, and true, when a session that is asleep (or on its way there) holds a snapshot to wake from."}
         policy: {$ref: "#/components/schemas/PolicySummary"}
     PolicySummary:
       type: object

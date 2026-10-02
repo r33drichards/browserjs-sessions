@@ -102,7 +102,7 @@ export function createBillingMock(options: BillingMockOptions) {
   }
 
   function sleepAll(by: string, extra: Partial<BillingSession> = {}) {
-    for (const s of sessions.values()) Object.assign(s, { state: "asleep", stoppedBy: by }, extra)
+    for (const s of sessions.values()) Object.assign(s, { state: "asleep", stoppedBy: by, stateSaved: true }, extra)
   }
 
   function payg() {
@@ -257,7 +257,7 @@ export function createBillingMock(options: BillingMockOptions) {
     if (!on) return
     // Two awake, the rest asleep since they were last used.
     ;[...sessions.values()].forEach((s, i) => {
-      if (i >= 2) Object.assign(s, { state: "asleep", stoppedBy: "idle" })
+      if (i >= 2) Object.assign(s, { state: "asleep", stoppedBy: "idle", stateSaved: true })
     })
     const start = iso(-12 * DAY)
     const end = iso(18 * DAY)
