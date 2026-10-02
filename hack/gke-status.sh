@@ -149,6 +149,8 @@ show kubectl -n "$NS" get lease billing-observer -o 'custom-columns=NAME:.metada
 # The mode is not a secret; of the Secrets, key names and sizes only.
 show kubectl -n "$NS" get configmap billing-mode -o 'jsonpath={.data}'
 show kubectl -n "$NS" describe secret stripe
+# Written by the "billing apply" workflow; its label says for which mode.
+show kubectl -n "$NS" describe secret stripe-webhook
 show kubectl -n "$NS" describe secret metronome
 printf '```\n'
 kubectl get crd accounts.browserjs.dev -o json 2>&1 | jq -r '

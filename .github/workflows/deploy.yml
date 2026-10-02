@@ -23,8 +23,9 @@ name: deploy
 #
 # Billing (docs/billing-deployment.md). The repository VARIABLE STRIPE_MODE is
 # test, live or not set. Not set, no Stripe secret is needed or looked at.
-# Set, the two secrets of that mode (STRIPE_TEST_API_KEY and
-# STRIPE_TEST_WEBHOOK_SECRET, or the STRIPE_LIVE_ pair) must be set.
+# Set, that mode's key (STRIPE_TEST_API_KEY or STRIPE_LIVE_API_KEY) must be
+# set, and the cluster must already have the Secret stripe-webhook of that
+# mode, which the "billing apply" workflow writes (docs/billing-iac.md).
 # Metronome's two secrets are needed once billing is not off in deploy/gke
 # (hack/billing-stage.sh): METRONOME_SANDBOX_API_TOKEN and
 # METRONOME_SANDBOX_WEBHOOK_SECRET, or the METRONOME_PRODUCTION_ pair when
@@ -106,9 +107,7 @@ jobs:
         env:
           STRIPE_MODE: ${{ vars.STRIPE_MODE }}
           STRIPE_TEST_API_KEY: ${{ secrets.STRIPE_TEST_API_KEY }}
-          STRIPE_TEST_WEBHOOK_SECRET: ${{ secrets.STRIPE_TEST_WEBHOOK_SECRET }}
           STRIPE_LIVE_API_KEY: ${{ secrets.STRIPE_LIVE_API_KEY }}
-          STRIPE_LIVE_WEBHOOK_SECRET: ${{ secrets.STRIPE_LIVE_WEBHOOK_SECRET }}
           METRONOME_SANDBOX_API_TOKEN: ${{ secrets.METRONOME_SANDBOX_API_TOKEN }}
           METRONOME_SANDBOX_WEBHOOK_SECRET: ${{ secrets.METRONOME_SANDBOX_WEBHOOK_SECRET }}
           METRONOME_PRODUCTION_API_TOKEN: ${{ secrets.METRONOME_PRODUCTION_API_TOKEN }}
@@ -286,9 +285,7 @@ jobs:
         env:
           STRIPE_MODE: ${{ vars.STRIPE_MODE }}
           STRIPE_TEST_API_KEY: ${{ secrets.STRIPE_TEST_API_KEY }}
-          STRIPE_TEST_WEBHOOK_SECRET: ${{ secrets.STRIPE_TEST_WEBHOOK_SECRET }}
           STRIPE_LIVE_API_KEY: ${{ secrets.STRIPE_LIVE_API_KEY }}
-          STRIPE_LIVE_WEBHOOK_SECRET: ${{ secrets.STRIPE_LIVE_WEBHOOK_SECRET }}
           METRONOME_SANDBOX_API_TOKEN: ${{ secrets.METRONOME_SANDBOX_API_TOKEN }}
           METRONOME_SANDBOX_WEBHOOK_SECRET: ${{ secrets.METRONOME_SANDBOX_WEBHOOK_SECRET }}
           METRONOME_PRODUCTION_API_TOKEN: ${{ secrets.METRONOME_PRODUCTION_API_TOKEN }}

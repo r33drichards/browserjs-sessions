@@ -9,10 +9,13 @@
 #                                    current kubectl context:
 #
 #   Stripe, by STRIPE_MODE
-#       test or live      Secret "stripe" (STRIPE_API_KEY,
-#                         STRIPE_WEBHOOK_SECRET, from that mode's secrets)
-#                         and ConfigMap "billing-mode" (STRIPE_MODE)
-#       unset or empty    both are deleted if they are there
+#       test or live      Secret "stripe" (STRIPE_API_KEY, from that mode's
+#                         secret) and ConfigMap "billing-mode" (STRIPE_MODE).
+#                         The Secret "stripe-webhook" must be there already
+#                         and be that mode's: the billing-apply workflow
+#                         writes it (docs/billing-iac.md), never this
+#       unset or empty    both are deleted if they are there; "stripe-webhook"
+#                         is left alone
 #   Metronome, by the stage of billing in deploy/gke (hack/billing-stage.sh)
 #       meter or enforce  Secret "metronome" (METRONOME_API_TOKEN,
 #                         METRONOME_WEBHOOK_SECRET): the sandbox's pair while
@@ -20,8 +23,7 @@
 #                         is live
 #       off               it is deleted if it is there
 #
-# The environment: STRIPE_MODE; STRIPE_TEST_API_KEY,
-# STRIPE_TEST_WEBHOOK_SECRET, STRIPE_LIVE_API_KEY, STRIPE_LIVE_WEBHOOK_SECRET;
+# The environment: STRIPE_MODE; STRIPE_TEST_API_KEY, STRIPE_LIVE_API_KEY;
 # METRONOME_SANDBOX_API_TOKEN, METRONOME_SANDBOX_WEBHOOK_SECRET,
 # METRONOME_PRODUCTION_API_TOKEN, METRONOME_PRODUCTION_WEBHOOK_SECRET; NS
 # (default browserjs-sessions); BILLING_STAGE in place of the files' stage
@@ -81,9 +83,7 @@ need() { # variable, why it is needed
 
 if [ -n "$mode" ]; then
   key_name="STRIPE_${upper}_API_KEY"
-  secret_name="STRIPE_${upper}_WEBHOOK_SECRET"
   need "$key_name" "STRIPE_MODE is $mode"
-  need "$secret_name" "STRIPE_MODE is $mode"
 fi
 if [ "$stage" != off ]; then
   token_name="METRONOME_${environment}_API_TOKEN"
@@ -101,14 +101,10 @@ if [ -n "$mode" ]; then
     rk_"$mode"_* | sk_"$mode"_*) ;;
     *) fail "the repository secret $key_name is not a $mode-mode Stripe key (it does not start with rk_${mode}_ or sk_${mode}_)" ;;
   esac
-  case "${!secret_name}" in
-    whsec_*) ;;
-    *) fail "the repository secret $secret_name is not a webhook signing secret (it does not start with whsec_)" ;;
-  esac
 fi
 
 if [ "${1:-}" = --check ]; then
-  echo "billing-secrets: STRIPE_MODE is ${mode:-not set}$([ -z "$mode" ] || echo "; both Stripe secrets of that mode are set")"
+  echo "billing-secrets: STRIPE_MODE is ${mode:-not set}$([ -z "$mode" ] || echo "; that mode's Stripe key is set")"
   echo "billing-secrets: billing is $stage in deploy/gke$([ "$stage" = off ] || echo "; both Metronome secrets of $(tr '[:upper:]' '[:lower:]' <<<"$environment") are set")"
   exit 0
 fi
@@ -129,15 +125,29 @@ changed() { # what
   [ -z "${GITHUB_OUTPUT:-}" ] || echo "$1_changed=true" >>"$GITHUB_OUTPUT"
 }
 
+# The webhook's signing secret is billing-apply's to write. Without it, or
+# with the other mode's, a backend told STRIPE_MODE would not start: said
+# here, before anything is changed.
+if [ -n "$mode" ]; then
+  if ! kubectl -n "$NS" get secret stripe-webhook >/dev/null 2>&1; then
+    fail "STRIPE_MODE is $mode and the cluster has no secret/stripe-webhook: run the workflow \"billing apply\" with mode $mode first (docs/billing-iac.md)"
+  fi
+  have="$(kubectl -n "$NS" get secret stripe-webhook -o jsonpath='{.metadata.labels.browserjs\.dev/stripe-mode}')"
+  if [ "$have" != "$mode" ]; then
+    fail "STRIPE_MODE is $mode and secret/stripe-webhook is of mode \"$have\": run the workflow \"billing apply\" with mode $mode first (docs/billing-iac.md)"
+  fi
+  if [ -z "$(kubectl -n "$NS" get secret stripe-webhook -o jsonpath='{.data.STRIPE_WEBHOOK_SECRET}')" ]; then
+    fail "secret/stripe-webhook has no STRIPE_WEBHOOK_SECRET: run the workflow \"billing apply\" with mode $mode again (docs/billing-iac.md)"
+  fi
+  echo "secret/stripe-webhook is there, of mode $mode"
+fi
+
 before="$(versions secret/stripe configmap/billing-mode)"
 if [ -z "$mode" ]; then
   kubectl -n "$NS" delete secret/stripe configmap/billing-mode --ignore-not-found >/dev/null
   echo "STRIPE_MODE is not set: secret/stripe and configmap/billing-mode are absent"
 else
-  {
-    echo "STRIPE_API_KEY=${!key_name}"
-    echo "STRIPE_WEBHOOK_SECRET=${!secret_name}"
-  } | secret_from_stdin stripe
+  echo "STRIPE_API_KEY=${!key_name}" | secret_from_stdin stripe
   kubectl -n "$NS" create configmap billing-mode --from-literal=STRIPE_MODE="$mode" --dry-run=client -o yaml |
     kubectl apply -f - >/dev/null
   echo "configmap/billing-mode applied: STRIPE_MODE=$mode"

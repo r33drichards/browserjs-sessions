@@ -357,9 +357,14 @@ secrets() {
   shift 2
   : >"$work/github_output"
   env NS="$NS" BILLING_STAGE="$stage" STRIPE_MODE="$mode" GITHUB_OUTPUT="$work/github_output" \
-    STRIPE_TEST_API_KEY="$fake_key" STRIPE_TEST_WEBHOOK_SECRET="$fake_secret" \
+    STRIPE_TEST_API_KEY="$fake_key" \
     METRONOME_SANDBOX_API_TOKEN="$fake_token" METRONOME_SANDBOX_WEBHOOK_SECRET="$fake_hook" \
     "$@" hack/billing-secrets.sh >"$work/secrets.log" 2>&1
+}
+# The Secret the "billing apply" workflow writes, made the way it makes it.
+webhook() { # mode
+  k create secret generic stripe-webhook --from-literal=STRIPE_WEBHOOK_SECRET="$fake_secret" --dry-run=client -o yaml |
+    kubectl label --local -f - "browserjs.dev/stripe-mode=$1" -o yaml | k apply -f - >/dev/null
 }
 value() { k get "$1" -o "jsonpath={.data.$2}" 2>/dev/null; }
 objects() { k get secret/stripe secret/metronome configmap/billing-mode --ignore-not-found -o name | xargs; }
@@ -374,7 +379,7 @@ silent() { # nothing of any value in what it wrote
 }
 
 # Off and no mode: nothing is needed, nothing is made.
-if secrets off "" STRIPE_TEST_API_KEY= STRIPE_TEST_WEBHOOK_SECRET= METRONOME_SANDBOX_API_TOKEN= METRONOME_SANDBOX_WEBHOOK_SECRET=; then
+if secrets off "" STRIPE_TEST_API_KEY= METRONOME_SANDBOX_API_TOKEN= METRONOME_SANDBOX_WEBHOOK_SECRET=; then
   pass "billing off and no STRIPE_MODE needs no secret at all"
 else
   fail "billing off and no STRIPE_MODE needs no secret at all" "$(tail -3 "$work/secrets.log")"
@@ -385,10 +390,10 @@ is "and makes nothing" "" "$(objects)"
 if secrets meter "" METRONOME_SANDBOX_API_TOKEN= METRONOME_SANDBOX_WEBHOOK_SECRET=; then fail "meter without Metronome's secrets stops it"; else
   is "meter without Metronome's secrets stops it, naming both" "2" "$(grep -c '^::error::billing is at meter .* the repository secret METRONOME_SANDBOX_' "$work/secrets.log")"
 fi
-if secrets meter test STRIPE_TEST_API_KEY= STRIPE_TEST_WEBHOOK_SECRET=; then fail "a missing Stripe secret stops it"; else
-  is "a missing Stripe secret stops it, naming both" "2" "$(grep -c '^::error::STRIPE_MODE is test and the repository secret STRIPE_TEST_' "$work/secrets.log")"
+if secrets meter test STRIPE_TEST_API_KEY=; then fail "a missing Stripe key stops it"; else
+  is "a missing Stripe key stops it, naming it" "1" "$(grep -c '^::error::STRIPE_MODE is test and the repository secret STRIPE_TEST_API_KEY' "$work/secrets.log")"
 fi
-if secrets meter live STRIPE_LIVE_API_KEY="rk_live_$(random)" STRIPE_LIVE_WEBHOOK_SECRET="whsec_$(random)"; then
+if secrets meter live STRIPE_LIVE_API_KEY="rk_live_$(random)"; then
   fail "live with only the sandbox's Metronome secrets stops it"
 else
   is "live with only the sandbox's Metronome secrets stops it, naming production's" "2" "$(grep -c 'the repository secret METRONOME_PRODUCTION_' "$work/secrets.log")"
@@ -407,12 +412,25 @@ is "secret/metronome has the sandbox's webhook secret" "$fake_hook" "$(value sec
 is "secret/metronome has those two keys only" "METRONOME_API_TOKEN METRONOME_WEBHOOK_SECRET" "$(k get secret metronome -o json | jq -r '.data | keys | join(" ")')"
 is "the change is reported, for the restarts" "metronome_changed=true" "$(outputs)"
 
-# Stage 2: meter and test payments.
+# Stage 2: meter and test payments. The webhook's signing secret is not
+# this script's: "billing apply" must have put it in the cluster, for this
+# mode.
+if secrets meter test; then fail "test mode with no secret/stripe-webhook stops it"; else
+  is "test mode with no secret/stripe-webhook stops it, naming the workflow to run" "1" \
+    "$(grep -c '^::error::STRIPE_MODE is test and the cluster has no secret/stripe-webhook: run the workflow "billing apply" with mode test first' "$work/secrets.log")"
+fi
+webhook live
+if secrets meter test; then fail "test mode with the live mode's secret/stripe-webhook stops it"; else
+  is "test mode with the live mode's secret/stripe-webhook stops it" "1" \
+    "$(grep -c '^::error::STRIPE_MODE is test and secret/stripe-webhook is of mode "live"' "$work/secrets.log")"
+fi
+is "and neither made secret/stripe or the ConfigMap" "secret/metronome" "$(objects)"
+is "nor reported a change" "" "$(outputs)"
+webhook test
 if secrets meter test; then pass "meter with STRIPE_MODE=test"; else fail "meter with STRIPE_MODE=test" "$(tail -3 "$work/secrets.log")"; fi
 silent "making them"
 is "secret/stripe has the key" "$fake_key" "$(value secret/stripe STRIPE_API_KEY | base64 -d)"
-is "secret/stripe has the webhook secret" "$fake_secret" "$(value secret/stripe STRIPE_WEBHOOK_SECRET | base64 -d)"
-is "secret/stripe has those two keys only" "STRIPE_API_KEY STRIPE_WEBHOOK_SECRET" "$(k get secret stripe -o json | jq -r '.data | keys | join(" ")')"
+is "secret/stripe has that key only" "STRIPE_API_KEY" "$(k get secret stripe -o json | jq -r '.data | keys | join(" ")')"
 is "configmap/billing-mode says test" "test" "$(value configmap/billing-mode STRIPE_MODE)"
 is "only Stripe's change is reported" "stripe_changed=true" "$(outputs)"
 secrets enforce test
@@ -424,7 +442,7 @@ for deployment in backend billing-operator; do k rollout status "deploy/$deploym
 have() { k exec "deploy/$1" -- printenv "$2" 2>/dev/null; }
 is "the backend's STRIPE_MODE is the ConfigMap's" "test" "$(have backend STRIPE_MODE)"
 is "the backend's STRIPE_API_KEY is the Secret's" "$fake_key" "$(have backend STRIPE_API_KEY)"
-is "the backend's STRIPE_WEBHOOK_SECRET is the Secret's" "$fake_secret" "$(have backend STRIPE_WEBHOOK_SECRET)"
+is "the backend's STRIPE_WEBHOOK_SECRET is secret/stripe-webhook's" "$fake_secret" "$(have backend STRIPE_WEBHOOK_SECRET)"
 is "the backend's METRONOME_API_TOKEN is the Secret's" "$fake_token" "$(have backend METRONOME_API_TOKEN)"
 is "the backend's METRONOME_WEBHOOK_SECRET is the Secret's" "$fake_hook" "$(have backend METRONOME_WEBHOOK_SECRET)"
 is "the operator's METRONOME_API_TOKEN is the Secret's" "$fake_token" "$(have billing-operator METRONOME_API_TOKEN)"
@@ -432,7 +450,14 @@ is "the operator has the token and nothing else of either" "METRONOME_API_TOKEN 
   "$(k exec deploy/billing-operator -- sh -c 'env | grep -E "^(STRIPE|METRONOME)" | cut -d= -f1 | sort' | xargs)"
 
 # Stage 4: live. Metronome's environment follows.
-if secrets enforce live STRIPE_LIVE_API_KEY="rk_live_$(random)" STRIPE_LIVE_WEBHOOK_SECRET="whsec_$(random)" \
+live=(STRIPE_LIVE_API_KEY="rk_live_$(random)" METRONOME_PRODUCTION_API_TOKEN="$fake_production" METRONOME_PRODUCTION_WEBHOOK_SECRET="$(random)")
+if secrets enforce live "${live[@]}"; then fail "live with the test mode's secret/stripe-webhook stops it"; else
+  is "live with the test mode's secret/stripe-webhook stops it" "1" \
+    "$(grep -c '^::error::STRIPE_MODE is live and secret/stripe-webhook is of mode "test"' "$work/secrets.log")"
+fi
+is "and secret/metronome is still the sandbox's" "$fake_token" "$(value secret/metronome METRONOME_API_TOKEN | base64 -d)"
+webhook live
+if secrets enforce live STRIPE_LIVE_API_KEY="rk_live_$(random)" \
   METRONOME_PRODUCTION_API_TOKEN="$fake_production" METRONOME_PRODUCTION_WEBHOOK_SECRET="$(random)"; then
   pass "enforce with STRIPE_MODE=live"
 else
@@ -446,6 +471,7 @@ is "both changes are reported" "metronome_changed=true stripe_changed=true" "$(o
 # And back to nothing.
 if secrets off ""; then pass "billing off and STRIPE_MODE empty"; else fail "billing off and STRIPE_MODE empty" "$(tail -3 "$work/secrets.log")"; fi
 is "all three are removed" "" "$(objects)"
+is "and secret/stripe-webhook is left alone" "secret/stripe-webhook" "$(k get secret/stripe-webhook --ignore-not-found -o name)"
 is "which is reported as a change of both" "metronome_changed=true stripe_changed=true" "$(outputs)"
 secrets off ""
 is "and removing nothing is not" "" "$(outputs)"
