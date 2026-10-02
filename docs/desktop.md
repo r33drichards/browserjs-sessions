@@ -55,11 +55,14 @@ in Chromium's own interface and in pages that ask for a generic family too.
   refits maximised windows when the screen changes size
   (`clientScreenResize` in its `client.c` calls `clientUpdateMaximizeSize`
   for every maximised window on GDK's `size-changed`), and the panel moves
-  to the new bottom edge. One thing did not hold in the test: after some
-  changes of size (1920x1080 to 1280x800) the panel's strip was not
-  reserved again, and Chromium reached under the panel until another window
-  opened. The entrypoint watches for size changes (`xev`) and states the
-  panel's strut itself when none is in effect. The smoke test resizes six
+  to the new bottom edge. One thing did not hold in the test: after most
+  changes of size the panel's strip was not reserved again, and Chromium
+  reached under the panel until another window opened. The panel sets its
+  strut for the new size before xfwm4 has taken the new size in; xfwm4
+  discards it and does not recompute the work area when the size arrives
+  (xfwm4 4.20.0, `workspaceUpdateArea`). The entrypoint watches for size
+  changes (`xev`) and, when no strip is in effect, removes the panel's strut
+  and sets it again, which xfwm4 does act on. The smoke test resizes six
   times and checks the work area and Chromium each time.
 - **Chromium is always there.** The restart loop is unchanged: close the
   last window, or kill it, and it is back in two seconds with the same

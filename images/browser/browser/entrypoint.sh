@@ -231,11 +231,14 @@ keep_running xfce4-panel --disable-wm-check
 keep_running xfdesktop --disable-wm-check
 
 # The panel reserves its strip of the screen (a strut), which is what keeps a
-# maximised window from reaching under it. After some changes of the screen's
-# size the strip is not reserved again (seen going from 1920x1080 to
-# 1280x800: the work area stayed the whole screen until another window
-# opened). So after each change, if a panel along the top or bottom edge has
-# no strip, state it for the panel: xfwm4 then refits the maximised windows.
+# maximised window from reaching under it. After a change of the screen's
+# size the strip is often lost: the panel states its strut for the new size
+# before xfwm4 has taken the new size in, xfwm4 finds the strut outside the
+# screen it still knows, and does not look again when the size arrives
+# (workspaceUpdateArea runs when a strut changes, not when the screen does).
+# So after each change, if a panel along the top or bottom edge has no strip
+# in effect, take its strut away and state it again: xfwm4 then counts it
+# and refits the maximised windows.
 reserve_panel_strip() {
   local id x=0 y=0 w=0 h=0 sh work_h
   id="$({ wmctrl -lx 2>/dev/null || true; } | awk 'tolower($3) ~ /xfce4-panel/ { print $1; exit }')"
@@ -249,13 +252,17 @@ reserve_panel_strip() {
   work_h="$(xprop -root _NET_WORKAREA 2>/dev/null | sed 's/.*= //; s/,//g' | awk '{ print $4 }')"
   # Only a horizontal panel on an edge, and only when nothing is reserved.
   [ "$w" -gt "$h" ] && [ "${work_h:-0}" -ge "$sh" ] || return 0
+  local strut=""
   if [ $((y + h)) -ge "$sh" ]; then
-    xprop -id "$id" -f _NET_WM_STRUT_PARTIAL 32c -set _NET_WM_STRUT_PARTIAL \
-      "0, 0, 0, $h, 0, 0, 0, 0, 0, 0, $x, $((x + w - 1))"
+    strut="0, 0, 0, $h, 0, 0, 0, 0, 0, 0, $x, $((x + w - 1))"
   elif [ "$y" -le 0 ]; then
-    xprop -id "$id" -f _NET_WM_STRUT_PARTIAL 32c -set _NET_WM_STRUT_PARTIAL \
-      "0, 0, $h, 0, 0, 0, 0, 0, $x, $((x + w - 1)), 0, 0"
+    strut="0, 0, $h, 0, 0, 0, 0, 0, $x, $((x + w - 1)), 0, 0"
   fi
+  [ -n "$strut" ] || return 0
+  echo "the panel's strip was not reserved after a resize to ${sh} high; reserving it" >&2
+  xprop -id "$id" -remove _NET_WM_STRUT_PARTIAL
+  sleep 0.2
+  xprop -id "$id" -f _NET_WM_STRUT_PARTIAL 32c -set _NET_WM_STRUT_PARTIAL "$strut"
 }
 watch_screen_size() {
   stdbuf -oL xev -root -event randr 2>/dev/null | while read -r line; do
