@@ -31,7 +31,7 @@ are in section 1 of the design.
 | | Makes it | With |
 |---|---|---|
 | The Stripe account, its sandbox, the webhook endpoint, the API keys, the Radar setting | the product owner, by hand in the Dashboard | the to-do list of the design |
-| Products, Prices, the Customer Portal configuration | `backend/cmd/stripe-setup`, run by the manual workflow `stripe-setup.yml` | `STRIPE_SETUP_KEY` |
+| Products, Prices, the Customer Portal configuration | **OpenTofu** (`infra/billing`), planned and applied from GitHub Actions; no setup command (changed 2026-10-02) | `STRIPE_SETUP_KEY` |
 | Customers, Checkout Sessions, Portal sessions, off-session PaymentIntents (auto-recharge) | the backend, at run time | `STRIPE_API_KEY` |
 | SetupIntents, PaymentMethods, Subscriptions, Invoices, Refunds, Disputes | Stripe | |
 
@@ -40,8 +40,11 @@ Stripe. The operator does not.
 
 ## Object catalogue
 
-Made from `catalogue.yaml` by the setup command. It is idempotent: run
-twice, the second run changes nothing and says so.
+Defined in OpenTofu (`infra/billing`) from `catalogue.yaml`; a second
+plan shows no change. The backend finds them by the identities below
+(product IDs, lookup keys, the portal configuration's metadata), not by
+anything from OpenTofu's state. Where this file says "run the setup
+again", read "apply `infra/billing`".
 
 | Object | Identity | Fields |
 |---|---|---|
@@ -49,7 +52,7 @@ twice, the second run changes nothing and says so.
 | Product for credit | `id` = `cu_credit` | `name` "Computer Use credit" |
 | Price, one per plan (three recurring Prices) | `lookup_key`: `cu_starter_monthly_v1`, `cu_pro_monthly_v1`, `cu_scale_monthly_v1` | `unit_amount`, `currency: usd`, `recurring.interval: month`, licensed (not metered), `metadata.credit_micros` (for people; the backend does not read it) |
 | Price, one per pack (three one-off Prices) | `lookup_key`: `cu_credit_5_v1`, `cu_credit_20_v1`, `cu_credit_50_v1` | `unit_amount`, one-off, `metadata.credit_micros` |
-| Customer Portal configuration | the one with `metadata.managed_by = stripe-setup`; made if none | below |
+| Customer Portal configuration | the one with `metadata.managed_by = stripe-setup` (OpenTofu sets it; the value is kept so that the backend's lookup does not change) | below |
 
 A price's amount cannot be edited in Stripe. To change one: add an entry
 with a new `lookupKey` (`..._v2`) to `catalogue.yaml`, keep the old entry

@@ -18,7 +18,7 @@ checks at the end, before code depends on them.
 | | Makes it | With |
 |---|---|---|
 | The Metronome account, its sandbox and production environments, the API tokens, the webhook destination and its secret | the product owner, by hand in Metronome's dashboard | the to-do list of the design |
-| Billable metrics, products, the rate card and its rates, the zero-balance alert, custom field keys | `backend/cmd/metronome-setup`, run by the manual workflow `metronome-setup.yml` | `METRONOME_API_TOKEN` |
+| Billable metrics, products, the rate card and its rates, the zero-balance alert, custom field keys | **OpenTofu**: `infra/billing`, with `terraform-provider-metronome` (ours), planned and applied from GitHub Actions like the rest of `infra/`. Nothing is made by hand in the dashboard, and there is no setup command. | the Metronome token of that environment, from GitHub's secrets |
 | Customers, contracts, credits (grants), balance and usage reads | the backend, at run time | `METRONOME_API_TOKEN` |
 | Usage events | the observer (the billing operator), at run time | `METRONOME_API_TOKEN` |
 | Burn-down, balances, the alert | Metronome | |
@@ -33,13 +33,19 @@ credits, payment-gated commits and auto-recharge are not used (design,
 Two processes hold a Metronome token: the backend and the observer.
 Nothing else does.
 
-## Objects made by the setup command
+## Objects defined in OpenTofu
 
-`backend/cmd/metronome-setup --catalogue <catalogue.yaml>` finds each
-object by name (or alias) and creates what is missing; `--apply=false`
-prints what it would do; a second run changes nothing. Billable metrics
-are immutable in Metronome: a changed definition is a new metric with a
-new name suffix (`_v2`), never an edit.
+Defined in `infra/billing` from the numbers of `catalogue.yaml`, once per
+Metronome environment (sandbox, production). The backend and the observer
+find them **by the names and aliases below**, looked up at start; they
+take no ID from OpenTofu's state or outputs. So a name here is a contract:
+changing one is a change to this file.
+
+Billable metrics are immutable in Metronome: a changed definition is a new
+metric with a new name suffix (`_v2`) and a new product on it, never an
+edit, and the plan must show a create, not a replace of the one in use.
+`tofu destroy` is never run against production: archiving a metric, a
+product or the rate card would stop rating for every customer.
 
 | Object | Name | Definition |
 |---|---|---|
@@ -275,6 +281,7 @@ into `docs/billing-metronome.md`). A check that fails is fixed here first.
 | # | Check | If it fails |
 |---|---|---|
 | M1 | A credit made with `uniqueness_key` twice answers 409 the second time; the key stays taken after the credit is archived and after it expires. | the sign-up key also goes on the Account as a label |
+| M0 | `tofu apply` of `infra/billing` against the sandbox makes every object of the table above, and a second plan shows no change. | the provider or the definitions are fixed before anything else is checked |
 | M2 | With list rate 0 and a commit rate, usage draws a `COMMIT_RATE` customer-level credit at the commit rate; after it is used up the balance is 0, the draft invoice total is 0, and nothing more is owed. | credits become prepaid commits with `do_not_invoice` |
 | M3 | 3600 `seconds` cost exactly 20 cents; 2628000 `gb_seconds` exactly 28. | the conversion or the unit changes |
 | M4 | The alert with `threshold: 0` is accepted, applies to customer-level credits, and fires when usage takes the balance to 0. How long after the event (ten trials). Whether it fires again after credit is added and used up again, and whether it fires when credit expires. | the balance pass is the only signal: its period becomes 1 minute |

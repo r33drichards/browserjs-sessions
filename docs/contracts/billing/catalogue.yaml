@@ -1,8 +1,8 @@
 # What is sold, what it costs to use, and what each option gives. DATA, not
 # code: it is a ConfigMap (`billing-catalogue`) read by the backend and the
 # billing operator and re-read when it changes, so a number here changes with
-# a manifest apply and no image build. The Stripe setup command makes
-# Stripe's Products and Prices from the same file; the UI and the public
+# a manifest apply and no image build. OpenTofu (infra/billing) makes
+# Stripe's Products and Prices, and Metronome's rates, from the same file; the UI and the public
 # site get it from GET /api/billing/catalogue. Nothing takes an entitlement
 # from Stripe.
 #
