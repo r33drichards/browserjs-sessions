@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/r33drichards/browserjs-sessions/sdk/go/computeruse"
+	"github.com/r33drichards/computer-use/sdk/go/computeruse"
 )
 
 const execJS = `
