@@ -4,7 +4,7 @@ import logging
 
 import pytest
 
-from billing_operator.events import AWAKE, KEPT, HourlyDisk, awake_event, hour_of, kept_event
+from billing_operator.events import AWAKE, KEPT, Windows, awake_event, kept_event, window_of
 from billing_operator.meter import ts
 from billing_operator.sender import FakeMetronome, Metronome, Rejected, Retry, Sender
 
@@ -15,57 +15,97 @@ C = {"s-aaaaa": "acct-a", "s-bbbbb": "acct-b"}
 
 
 def events(n, now=T0):
-    return [awake_event(f"s-{i:05d}", "acct-a", now, 60) for i in range(n)]
+    return [awake_event(f"s-{i:05d}", "acct-a", now, now + 300, 300) for i in range(n)]
 
 
 # --- the events ---------------------------------------------------------------------
 
+def awake_windows():
+    return Windows(300, awake_event)
+
+
+def disk_windows():
+    return Windows(21600, kept_event)
+
+
 def test_the_events_are_metronome_mds():
-    assert awake_event("s-aaaaa", "acct-a", ts("2026-10-02T10:01:00Z"), 60).body() == {
-        "transaction_id": "awake/s-aaaaa/1790935260", "customer_id": "acct-a", "event_type": "session.awake",
-        "timestamp": "2026-10-02T10:01:00Z", "properties": {"session_id": "s-aaaaa", "seconds": "60"}}
-    assert kept_event("s-aaaaa", "acct-a", T0, T0 + 3600, 18000).body() == {
-        "transaction_id": f"kept/s-aaaaa/{T0}", "customer_id": "acct-a", "event_type": "session.kept",
-        "timestamp": "2026-10-02T11:00:00Z", "properties": {"session_id": "s-aaaaa", "gb_seconds": "18000"}}
+    assert awake_event("s-aaaaa", "acct-a", T0, T0 + 300, 300).body() == {
+        "transaction_id": f"awake/s-aaaaa/{T0}", "customer_id": "acct-a", "event_type": "session.awake",
+        "timestamp": "2026-10-02T10:05:00Z", "properties": {"session_id": "s-aaaaa", "seconds": "300"}}
+    six = ts("2026-10-02T06:00:00Z")
+    assert kept_event("s-aaaaa", "acct-a", six, six + 21600, 108000).body() == {
+        "transaction_id": f"kept/s-aaaaa/{six}", "customer_id": "acct-a", "event_type": "session.kept",
+        "timestamp": "2026-10-02T12:00:00Z", "properties": {"session_id": "s-aaaaa", "gb_seconds": "108000"}}
 
 
-def test_the_tick_at_the_hour_completes_the_hour_before():
-    assert hour_of(T0 + 1) == T0 == hour_of(T0 + 3600) and hour_of(T0) == T0 - 3600 and hour_of(T0 + 3601) == T0 + 3600
+def test_windows_are_aligned_to_the_clock_and_the_tick_at_the_end_completes_one():
+    assert window_of(T0 + 1, 300) == T0 == window_of(T0 + 300, 300) and window_of(T0, 300) == T0 - 300
+    assert window_of(T0 + 301, 300) == T0 + 300
+    assert window_of(T0, 21600) == ts("2026-10-02T06:00:00Z") and window_of(ts("2026-10-02T12:00:01Z"), 21600) == ts("2026-10-02T12:00:00Z")
 
 
-def test_an_hour_of_disk_is_one_event_at_the_hour():
-    disk, sent = HourlyDisk(), []
-    for i in range(1, 121):  # two hours of ticks
-        sent += disk.tick(T0 + 60 * i, {"s-aaaaa": 300}, C)
-    assert [e.body() for e in sent] == [kept_event("s-aaaaa", "acct-a", T0, T0 + 3600, 18000).body(),
-                                        kept_event("s-aaaaa", "acct-a", T0 + 3600, T0 + 7200, 18000).body()]
-    assert len(disk) == 0
+def test_five_ticks_of_sixty_awake_seconds_make_one_event_of_three_hundred():
+    w, sent = awake_windows(), []
+    for i in range(1, 11):
+        due = w.tick(T0 + 60 * i, {"s-aaaaa": 60}, C, {"s-aaaaa"})
+        assert bool(due) == (i % 5 == 0)   # at the window's end, not before
+        sent += due
+    assert [e.body() for e in sent] == [awake_event("s-aaaaa", "acct-a", T0, T0 + 300, 300).body(),
+                                        awake_event("s-aaaaa", "acct-a", T0 + 300, T0 + 600, 300).body()]
+    assert len(w) == 0
 
 
-def test_a_session_deleted_in_the_hour_is_sent_at_its_last_sight():
-    disk = HourlyDisk()
-    assert disk.tick(T0 + 60, {"s-aaaaa": 300, "s-bbbbb": 300}, C) == []
-    assert disk.tick(T0 + 120, {"s-aaaaa": 300, "s-bbbbb": 300}, C) == []
-    gone = disk.tick(T0 + 180, {"s-bbbbb": 300}, {"s-bbbbb": "acct-b"})
-    assert [e.body() for e in gone] == [kept_event("s-aaaaa", "acct-a", T0, T0 + 120, 600).body()]
-    assert len(disk) == 1
+def test_a_session_that_falls_asleep_mid_window_is_sent_at_once():
+    w = awake_windows()
+    assert w.tick(T0 + 60, {"s-aaaaa": 60, "s-bbbbb": 60}, C, {"s-aaaaa", "s-bbbbb"}) == []
+    assert w.tick(T0 + 120, {"s-aaaaa": 60, "s-bbbbb": 60}, C, {"s-aaaaa", "s-bbbbb"}) == []
+    asleep = w.tick(T0 + 180, {"s-bbbbb": 60}, C, {"s-bbbbb"})   # s-aaaaa is there, and not awake
+    assert [e.body() for e in asleep] == [awake_event("s-aaaaa", "acct-a", T0, T0 + 120, 120).body()]  # at its last awake sight
+    assert len(w) == 1
 
 
-def test_an_hour_is_sent_when_it_is_over_even_if_the_tick_counted_nothing_and_late_ticks_split_by_hour():
-    disk = HourlyDisk()
-    disk.tick(T0 + 3540, {"s-aaaaa": 300}, C)
-    # The observer was away over the hour's end: the next tick counts nothing for s-aaaaa.
-    late = disk.tick(T0 + 3900, {}, C)
-    assert [(e.transaction_id, e.properties["gb_seconds"]) for e in late] == [(f"kept/s-aaaaa/{T0}", "300")]
-    assert disk.tick(T0 + 3960, {"s-aaaaa": 300}, C) == []
-    nxt = disk.tick(T0 + 7260, {"s-aaaaa": 5}, C)   # an hour's sum closed by a tick of the next hour
-    assert [(e.transaction_id, e.properties["gb_seconds"]) for e in nxt] == [(f"kept/s-aaaaa/{T0 + 3600}", "300")]
+def test_the_same_window_has_the_same_transaction_id_whoever_sends_it():
+    first, second = awake_windows(), awake_windows()   # the second: a restarted observer, in the same window
+    first.tick(T0 + 60, {"s-aaaaa": 60}, C, {"s-aaaaa"})
+    a = first.tick(T0 + 120, {}, C, set())
+    second.tick(T0 + 180, {"s-aaaaa": 60}, C, {"s-aaaaa"})
+    b = second.tick(T0 + 300, {"s-aaaaa": 120}, C, {"s-aaaaa"})
+    assert a[0].transaction_id == b[0].transaction_id == f"awake/s-aaaaa/{T0}"
 
 
-def test_nothing_counted_is_no_event():
-    disk = HourlyDisk()
-    disk.tick(T0 + 60, {"s-aaaaa": 0}, C)
-    assert disk.tick(T0 + 3600, {"s-aaaaa": 0}, C) == []
+def test_six_hours_of_disk_are_one_event():
+    six = ts("2026-10-02T06:00:00Z")
+    w, sent = disk_windows(), []
+    for i in range(1, 361):
+        sent += w.tick(six + 60 * i, {"s-aaaaa": 300}, C, {"s-aaaaa"})
+    assert [e.body() for e in sent] == [kept_event("s-aaaaa", "acct-a", six, six + 21600, 108000).body()]
+
+
+def test_a_session_deleted_in_the_window_is_sent_at_its_last_sight():
+    w = disk_windows()
+    assert w.tick(T0 + 60, {"s-aaaaa": 300, "s-bbbbb": 300}, C, set(C)) == []
+    assert w.tick(T0 + 120, {"s-aaaaa": 300, "s-bbbbb": 300}, C, set(C)) == []
+    gone = w.tick(T0 + 180, {"s-bbbbb": 300}, {"s-bbbbb": "acct-b"}, {"s-bbbbb"})
+    assert [e.body() for e in gone] == [kept_event("s-aaaaa", "acct-a", ts("2026-10-02T06:00:00Z"), T0 + 120, 600).body()]
+    assert len(w) == 1
+
+
+def test_a_window_is_sent_when_it_is_over_even_if_the_tick_counted_nothing():
+    w = awake_windows()
+    w.tick(T0 + 240, {"s-aaaaa": 60}, C, {"s-aaaaa"})
+    # The observer was away over the window's end: the next tick counts nothing for s-aaaaa.
+    late = w.tick(T0 + 600, {}, C, {"s-aaaaa"})
+    assert [(e.transaction_id, e.timestamp, e.properties["seconds"]) for e in late] == [
+        (f"awake/s-aaaaa/{T0}", "2026-10-02T10:05:00Z", "60")]
+    w.tick(T0 + 660, {"s-aaaaa": 60}, C, {"s-aaaaa"})
+    nxt = w.tick(T0 + 1260, {"s-aaaaa": 5}, C, {"s-aaaaa"})   # closed by a tick of a later window
+    assert [(e.transaction_id, e.properties["seconds"]) for e in nxt] == [(f"awake/s-aaaaa/{T0 + 600}", "60")]
+
+
+def test_a_window_with_zero_seconds_sends_nothing():
+    w = disk_windows()
+    w.tick(T0 + 60, {"s-aaaaa": 0}, C, {"s-aaaaa"})
+    assert w.tick(T0 + 21600, {"s-aaaaa": 0}, C, {"s-aaaaa"}) == []
 
 
 # --- delivery -------------------------------------------------------------------------
@@ -147,7 +187,7 @@ async def test_the_fake_ignores_a_key_it_has_seen():
     sink = FakeMetronome()
     await sink.ingest(events(2))
     await sink.ingest(events(3))
-    assert len(sink.events) == 3 and sink.total(AWAKE, "seconds") == 180 and sink.total(KEPT, "gb_seconds") == 0
+    assert len(sink.events) == 3 and sink.total(AWAKE, "seconds") == 900 and sink.total(KEPT, "gb_seconds") == 0
 
 
 # --- the real client, against an ingest endpoint over HTTP ---------------------------------

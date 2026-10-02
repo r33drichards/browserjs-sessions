@@ -2,7 +2,7 @@
 
   simulate <dir> <time> [<time> ...]   the pass over a directory of Sandbox YAML, once per
                                        time; prints the seconds counted and the usage
-                                       events each tick would send
+                                       events sent at each tick (windows that closed)
   vectors <metering-vectors.json>      every vector of the contract through the seconds function
 """
 from __future__ import annotations
@@ -77,10 +77,11 @@ def selfcheck(out) -> int:
     return 0 if ok else 1
 
 
-def simulate(directory: Path, times: list[str], catalogue: Path, max_gap: int, out) -> int:
+def simulate(directory: Path, times: list[str], catalogue: Path, max_gap: int, out,
+             awake_window: int = 300, kept_window: int = 21600) -> int:
     sink = FakeMetronome()
     observer = Observer(MemoryKube(read_sandboxes(directory)), sink, CatalogueFile(catalogue), max_gap=max_gap,
-                        holder="simulate")
+                        holder="simulate", awake_window=awake_window, kept_window=kept_window)
 
     async def go() -> None:
         for when in times:
@@ -104,6 +105,8 @@ def main(argv: list[str] | None = None, out=None) -> int:
     s.add_argument("directory", type=Path)
     s.add_argument("times", nargs="+", metavar="time", help="RFC 3339, e.g. 2026-10-02T10:00:00Z, in order")
     s.add_argument("--max-gap", type=int, default=MAX_GAP)
+    s.add_argument("--awake-window", type=int, default=300, help="seconds (AWAKE_WINDOW)")
+    s.add_argument("--kept-window", type=int, default=21600, help="seconds (KEPT_WINDOW)")
     s.add_argument("--catalogue", type=Path, default=None,
                    help="catalogue.yaml, for sessionDiskGB (default: $BILLING_CATALOGUE, or the contract's in a checkout)")
     v = sub.add_parser("vectors", help="run metering-vectors.json through the seconds function")
@@ -120,4 +123,4 @@ def main(argv: list[str] | None = None, out=None) -> int:
     if not catalogue.is_file():
         print(f"no catalogue at {catalogue}: pass --catalogue", file=sys.stderr)
         return 2
-    return simulate(args.directory, args.times, catalogue, args.max_gap, out)
+    return simulate(args.directory, args.times, catalogue, args.max_gap, out, args.awake_window, args.kept_window)

@@ -32,6 +32,8 @@ class Config:
     billing: str = "off"
     tick: int = 60
     max_gap: int = MAX_GAP
+    awake_window: int = 300      # what is sent is added up over these (metronome.md)
+    kept_window: int = 21600
     catalogue: str = "/etc/browserjs/catalogue.yaml"
     namespace: str = "browserjs-sessions"
     metronome_url: str = "https://api.metronome.com"
@@ -52,6 +54,8 @@ class Config:
             billing=billing,
             tick=seconds(env.get("TICK") or "60s", "TICK"),
             max_gap=seconds(env.get("MAX_GAP") or f"{MAX_GAP}s", "MAX_GAP"),
+            awake_window=seconds(env.get("AWAKE_WINDOW") or "5m", "AWAKE_WINDOW"),
+            kept_window=seconds(env.get("KEPT_WINDOW") or "6h", "KEPT_WINDOW"),
             catalogue=env.get("BILLING_CATALOGUE") or cls.catalogue,
             namespace=env.get("BILLING_NAMESPACE") or cls.namespace,
             metronome_url=env.get("METRONOME_URL") or cls.metronome_url,
@@ -61,6 +65,9 @@ class Config:
             raise ConfigError("METRONOME_API_TOKEN is not set (the Secret metronome): required when BILLING is not off")
         if cfg.tick < 1:
             raise ConfigError("TICK must be at least a second")
+        for name, window in (("AWAKE_WINDOW", cfg.awake_window), ("KEPT_WINDOW", cfg.kept_window)):
+            if window < cfg.tick:
+                raise ConfigError(f"{name} ({window}s) must be at least TICK ({cfg.tick}s)")
         if cfg.max_gap <= cfg.tick:
             # Two sights a TICK apart would never be within MAX_GAP: nothing
             # would ever be charged, silently.

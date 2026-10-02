@@ -1,13 +1,19 @@
 """Usage events, as Metronome takes them (metronome.md, "Usage events").
 
-  session.awake   one per awake session per tick that counted more than
-                  zero seconds; transaction_id awake/<session>/<tick>
-  session.kept    a session's GB-seconds added up over an hour and sent
-                  once, at the hour (or at the session's last sight);
-                  transaction_id kept/<session>/<hour start>
+The observer looks every tick; what it sends is added up over a window,
+because Metronome charges by the event.
 
-The transaction_id is the idempotency key: the same tick, or the same
-hour, always has the same one, and Metronome ignores a repeat.
+  session.awake   a session's awake seconds over a window (AWAKE_WINDOW, 5
+                  minutes, aligned to the clock), sent at the window's end,
+                  or at once when the session stops being awake;
+                  transaction_id awake/<session>/<window start>
+  session.kept    a session's GB-seconds over a window (KEPT_WINDOW, 6
+                  hours, aligned to UTC), sent at the window's end, or at
+                  the session's last sight;
+                  transaction_id kept/<session>/<window start>
+
+The transaction_id is the idempotency key: the same window always has the
+same one, and Metronome ignores a repeat.
 """
 from __future__ import annotations
 
@@ -33,64 +39,67 @@ class Event:
                 "event_type": self.event_type, "timestamp": self.timestamp, "properties": dict(self.properties)}
 
 
-def awake_event(session: str, customer: str, now: int, secs: int) -> Event:
-    return Event(f"awake/{session}/{now}", customer, AWAKE, iso(now), {"session_id": session, "seconds": str(secs)})
+def awake_event(session: str, customer: str, window_start: int, at: int, secs: int) -> Event:
+    return Event(f"awake/{session}/{window_start}", customer, AWAKE, iso(at), {"session_id": session, "seconds": str(secs)})
 
 
-def kept_event(session: str, customer: str, hour_start: int, last: int, gb_seconds: int) -> Event:
-    return Event(f"kept/{session}/{hour_start}", customer, KEPT, iso(last),
+def kept_event(session: str, customer: str, window_start: int, at: int, gb_seconds: int) -> Event:
+    return Event(f"kept/{session}/{window_start}", customer, KEPT, iso(at),
                  {"session_id": session, "gb_seconds": str(gb_seconds)})
 
 
-def hour_of(now: int) -> int:
-    """The start of the hour a tick's seconds belong to: the hour that ends
-    at or after the tick, so that the tick at 11:00:00 completes 10:00."""
-    return (now - 1) // HOUR * HOUR
+def window_of(now: int, size: int) -> int:
+    """The start of the window a tick's seconds belong to: the window that
+    ends at or after the tick, so that the tick at 10:05:00 completes the
+    window that began at 10:00:00."""
+    return (now - 1) // size * size
 
 
 @dataclass
-class _Hour:
+class _Sum:
     customer: str
     start: int
-    gb_seconds: int = 0
+    total: int = 0
     last: int = 0  # the last tick that added to it
 
 
-class HourlyDisk:
-    """The hour's GB-seconds of each session, in memory. Losing it (a
-    restart) loses that hour's disk, which is then free."""
+class Windows:
+    """Each session's sum over the open window, in memory. Losing it (a
+    restart) loses the open windows, which are then free."""
 
-    def __init__(self) -> None:
-        self._hours: dict[str, _Hour] = {}
+    def __init__(self, size: int, make) -> None:
+        self.size = size
+        self._make = make  # awake_event or kept_event
+        self._open: dict[str, _Sum] = {}
 
     def __len__(self) -> int:
-        return len(self._hours)
+        return len(self._open)
 
-    def tick(self, now: int, counted: dict[str, int], customers: dict[str, str]) -> list[Event]:
-        """Add this tick's GB-seconds (by session; `customers` names each
-        observed session's customer) and return the events that are due: an
-        hour that is over, and a session that is no longer there."""
+    def tick(self, now: int, counted: dict[str, int], customers: dict[str, str], going: set[str]) -> list[Event]:
+        """Add this tick's amounts (by session; `customers` names the
+        customer of each) and return the events that are due: a window that
+        is over, and a session that is not in `going` (it is no longer
+        awake, or no longer there), which is sent at once."""
         due: list[Event] = []
 
         def close(session: str) -> None:
-            h = self._hours.pop(session)
-            if h.gb_seconds > 0:
-                due.append(kept_event(session, h.customer, h.start, h.last, h.gb_seconds))
+            w = self._open.pop(session)
+            if w.total > 0:
+                # At the window's end when it ran to its end; otherwise at its last sight.
+                over = now >= w.start + self.size
+                due.append(self._make(session, w.customer, w.start, w.start + self.size if over else w.last, w.total))
 
         for session in sorted(counted):
-            start = hour_of(now)
-            h = self._hours.get(session)
-            if h is not None and h.start != start:
+            start = window_of(now, self.size)
+            w = self._open.get(session)
+            if w is not None and w.start != start:
                 close(session)
-                h = None
-            if h is None:
-                h = self._hours[session] = _Hour(customers[session], start)
-            h.gb_seconds += counted[session]
-            h.last = now
-        for session in sorted(self._hours):
-            h = self._hours[session]
-            # Over (this tick is at or past the hour's end), or the session
-            # was not observed: sent at its last sight.
-            if now >= h.start + HOUR or session not in customers:
+                w = None
+            if w is None:
+                w = self._open[session] = _Sum(customers[session], start)
+            w.total += counted[session]
+            w.last = now
+        for session in sorted(self._open):
+            if now >= self._open[session].start + self.size or session not in going:
                 close(session)
         return due

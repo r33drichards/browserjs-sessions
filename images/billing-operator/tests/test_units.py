@@ -99,6 +99,16 @@ def test_durations_and_the_url():
     assert (cfg.tick, cfg.max_gap, cfg.catalogue, cfg.metronome_url) == (30, 120, "/c.yaml", "http://fake")
 
 
+def test_the_windows_are_settings():
+    cfg = Config.from_env({})
+    assert (cfg.awake_window, cfg.kept_window) == (300, 21600)
+    cfg = Config.from_env({"AWAKE_WINDOW": "1m", "KEPT_WINDOW": "1h"})
+    assert (cfg.awake_window, cfg.kept_window) == (60, 3600)
+    for env in ({"AWAKE_WINDOW": "30s"}, {"KEPT_WINDOW": "10"}, {"AWAKE_WINDOW": "often"}):
+        with pytest.raises(ConfigError):
+            Config.from_env(env)
+
+
 def test_billing_on_needs_the_token_and_the_token_is_never_shown():
     with pytest.raises(ConfigError, match="METRONOME_API_TOKEN"):
         Config.from_env({"BILLING": "meter"})

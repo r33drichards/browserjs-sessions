@@ -5,7 +5,7 @@
 changed it: a [kopf](https://kopf.readthedocs.io/) process that, once a
 minute, looks at every session's Sandbox, counts the seconds each was awake
 and the GB-seconds its disk was kept, and sends them to Metronome as usage
-events. Contracts: [`metronome.md`](contracts/billing/metronome.md) ("Usage
+events, one per session per window. Contracts: [`metronome.md`](contracts/billing/metronome.md) ("Usage
 events"), the seconds of [`metering.md`](contracts/billing/metering.md), the
 operator's rows of [`deploy.md`](contracts/billing/deploy.md).
 
@@ -22,7 +22,7 @@ are the same to it.
 |---|---|
 | `billing_operator/meter.py` | `seconds(sessions, observed, now)`: the gap rule of `metering.md`, a pure function |
 | `billing_operator/observe.py` | what is seen of a Sandbox: whose it is, awake or not, since when |
-| `billing_operator/events.py` | the two events and their `transaction_id`s; the hour's sum of each session's GB-seconds |
+| `billing_operator/events.py` | the two events and their `transaction_id`s; each session's sums over the open windows |
 | `billing_operator/sender.py` | delivery: the sink interface (`async ingest(events)`), `Metronome` (`POST /v1/ingest`), `FakeMetronome` (in memory), and the `Sender` with its batches, retry and give-up |
 | `billing_operator/passes.py` | the pass and the loop |
 | `billing_operator/kube.py` | the calls to the API server: list Sandboxes; get, create, update the Lease |
@@ -43,12 +43,19 @@ Every `TICK` (60 s), never two at once:
    warm-pool Sandbox has no owner and is never counted.
 3. `seconds` counts, for each session, against the observer's memory of the
    last tick (`lastSeen`, `awake`).
-4. For each session that counted awake seconds, one `session.awake` event.
-   Each session's GB-seconds are added to its hour's sum; the sum is sent
-   as one `session.kept` event at the first tick at or after the hour's
-   end, or at the tick where the session is no longer there.
-5. Everything waiting is delivered. If nothing is left waiting, the Lease
-   `billing-observer` is renewed (`renewTime` = `now`).
+4. The seconds are added to each session's open windows: awake seconds to
+   a 5-minute window (`AWAKE_WINDOW`), GB-seconds to a 6-hour window
+   (`KEPT_WINDOW`), both aligned to the clock in UTC. A window becomes one
+   event at the first tick at or after its end. A session that is no
+   longer awake has its awake window sent at once; a session that is no
+   longer there has both sent at once.
+5. Everything waiting is delivered. After each window that was delivered
+   (and at start), the Lease `billing-observer` is renewed (`renewTime` =
+   `now`): at most once per awake window when nothing is happening, and
+   not while anything is waiting to be sent.
+
+The observer looks every minute because the gap rule needs it; it sends by
+the window because Metronome charges by the event.
 
 The customer of an event is `acct-<the session's browserjs.dev/owner
 label>`: the Account's name, which the backend gives Metronome as the
@@ -57,8 +64,11 @@ customer's ingest alias. The observer does not look the Account up.
 One line per pass:
 
 ```
-pass now=2026-10-02T10:01:00Z sessions=2 awake_seconds=60 disk_gb_seconds=600 events=1 sent=1 pending=0 dropped=0 lease=renewed duration_ms=3
+pass now=2026-10-02T10:05:00Z sessions=2 awake_seconds=60 disk_gb_seconds=600 events=1 sent=1 pending=0 dropped=0 lease=renewed duration_ms=3
 ```
+
+`awake_seconds` and `disk_gb_seconds` are what this tick counted; `events`
+the windows it closed.
 
 ### What is seen
 
@@ -72,17 +82,23 @@ pass now=2026-10-02T10:01:00Z sessions=2 awake_seconds=60 disk_gb_seconds=600 ev
 
 | | `session.awake` | `session.kept` |
 |---|---|---|
-| `transaction_id` | `awake/<session>/<tick, unix seconds>` | `kept/<session>/<hour start, unix seconds>` |
-| `timestamp` | the tick | the last tick that added to the sum (the hour's end, for a whole hour) |
+| Window | `AWAKE_WINDOW`, 5 minutes: :00, :05, ... | `KEPT_WINDOW`, 6 hours: 00:00, 06:00, ... UTC |
+| `transaction_id` | `awake/<session>/<window start, unix seconds>` | `kept/<session>/<window start, unix seconds>` |
+| `timestamp` | the window's end; for a window sent early, the last tick that added to it | the same |
 | `properties` | `session_id`, `seconds` | `session_id`, `gb_seconds` |
 
-An hour is `(start, start + 3600]`: the tick at 11:00:00 completes the hour
-that began at 10:00:00, so a session kept for the whole hour sends
-`gb_seconds: 18000` at 11:00:00.
+A window is `(start, start + size]`: the tick at 10:05:00 completes the
+window that began at 10:00:00, so five ticks of 60 awake seconds are one
+event of 300 at 10:05:00, and a session kept for six hours sends
+`gb_seconds: 108000` at 12:00:00. A window with nothing counted sends
+nothing.
 
-The key depends only on the session and the tick (or the hour), so the
-same tick looked at twice, by this process or by one that replaced it,
-makes the same key, and Metronome ignores the repeat.
+The key depends only on the session and the window, so the same window
+sent twice (by this process, or by one that replaced it after a restart)
+has the same key, and Metronome ignores the repeat. That also means a
+session that falls asleep, is sent, and wakes again inside the same five
+minutes is not charged for the rest of that window: the second event has
+the first one's key.
 
 ### Delivery
 
@@ -95,7 +111,8 @@ makes the same key, and Metronome ignores the repeat.
 - Any other 4xx: the batch is dropped, with its keys in the log.
 - The Lease is not renewed while anything is waiting.
 - A restart forgets what was waiting, each session's last sight and the
-  hour's GB-seconds.
+  open windows' sums (at most 5 minutes awake and 6 hours of disk a
+  session).
 
 Every one of these losses is time the user is not charged for. Nothing
 charges time that was not observed.
@@ -126,6 +143,8 @@ fake Metronome ports the reference; it should take the same line.
 | `BILLING` | `off` | `off`: idle. `meter`, `enforce`: observe and send. Anything else: refuses to start |
 | `TICK` | `60s` | between passes |
 | `MAX_GAP` | `150s` | the longest gap between two sights that is counted; must be longer than `TICK` |
+| `AWAKE_WINDOW` | `5m` | awake seconds are added up over this and sent at its end; at least `TICK` |
+| `KEPT_WINDOW` | `6h` | the same for the disk's GB-seconds |
 | `BILLING_CATALOGUE` | `/etc/browserjs/catalogue.yaml` | for `sessionDiskGB`. With `BILLING` on, the observer refuses to start without a catalogue that parses; later, a bad file keeps the last good one |
 | `METRONOME_API_TOKEN` | | from the Secret `metronome`. Required when `BILLING` is not `off`. Sent as the bearer token of ingest requests; never logged, never in an error |
 | `METRONOME_URL` | `https://api.metronome.com` | |
@@ -149,37 +168,38 @@ Metronome is the Lease's age, which the backend reads.
 ```
 cd images/billing-operator
 nix develop -c python -m billing_operator simulate examples \
-    2026-10-02T10:00:00Z 2026-10-02T10:01:00Z 2026-10-02T11:00:00Z
+    2026-10-02T10:00:00Z 2026-10-02T10:01:00Z 2026-10-02T10:02:00Z 2026-10-02T10:05:00Z
 ```
 
 `simulate <dir> <time> [<time> ...]` reads every Sandbox from the
 directory's YAML files (multi-document files and `kubectl get sandboxes -o
 yaml` lists both work), runs the observer's own pass at each time with the
 fake Metronome as its sink, and prints after each tick the pass's line, the
-sessions remembered and the events that tick sent. With `examples/` (one
-session awake since 09:59:40, one asleep, one warm-pool Sandbox), shortened:
+sessions remembered and the events sent at that tick. `--awake-window` and
+`--kept-window` (seconds) set the windows. With `examples/` (one session
+awake since 09:59:40, one asleep, one warm-pool Sandbox), shortened:
 
 ```yaml
 ---
 tick: '2026-10-02T10:00:00Z'
 events:
-- transaction_id: awake/s-aaaaa/1790935200
+- transaction_id: awake/s-aaaaa/1790934900      # the window that ends at 10:00:00
   customer_id: acct-7615aafcb45bcc853c4ed32cc5539842
   event_type: session.awake
   timestamp: '2026-10-02T10:00:00Z'
   properties: {session_id: s-aaaaa, seconds: '20'}     # since Ready
 ---
-tick: '2026-10-02T10:01:00Z'
-events:
-- transaction_id: awake/s-aaaaa/1790935260
-  properties: {session_id: s-aaaaa, seconds: '60'}
+tick: '2026-10-02T10:01:00Z'       # 60 s counted, nothing sent
+events: []
 ---
-tick: '2026-10-02T11:00:00Z'       # 59 minutes later: beyond the gap, nothing more is counted
+tick: '2026-10-02T10:02:00Z'
+events: []
+---
+tick: '2026-10-02T10:05:00Z'       # three minutes later is beyond the gap: not counted
 events:
-- transaction_id: kept/s-aaaaa/1790935200
-  properties: {session_id: s-aaaaa, gb_seconds: '300'}   # the hour's disk, as far as it was seen
-- transaction_id: kept/s-bbbbb/1790935200
-  properties: {session_id: s-bbbbb, gb_seconds: '300'}
+- transaction_id: awake/s-aaaaa/1790935200
+  timestamp: '2026-10-02T10:05:00Z'
+  properties: {session_id: s-aaaaa, seconds: '120'}    # the two minutes that were seen
 ```
 
 The contract's vectors, through the seconds function:
@@ -198,8 +218,8 @@ Docker, no network, no token.
 |---|---|
 | `test_vectors.py` | every vector's `awakeSeconds` and `diskGBSeconds` |
 | `test_step_properties.py` | generated histories: awake seconds never exceed `now - lastSeen`; nothing negative; a repeated tick counts nothing; a gap over `MAX_GAP` counts at most `MAX_GAP`; an hour awake in any pattern of ticks is 3600 seconds; and the seconds against `spike/meter_ref.py` |
-| `test_sender.py` | the events' shape; the hour's disk; batches of at most 100; a 429, 5xx or no answer retried with the same keys and backoff; given up after an hour; a 4xx dropped and logged; the real client against an ingest endpoint over HTTP; the token in no error |
-| `test_pass.py` | the pass: one event per awake session per tick, one per kept session per hour; a warm-pool Sandbox sends nothing; the same tick twice has the same `transaction_id`s; a restart counts nothing for the time it was down beyond `MAX_GAP`; Metronome away (the Lease waits; after an hour that usage is free) |
+| `test_sender.py` | the events' shape; the windows (five ticks of 60 s make one event of 300; falling asleep sends at once; the same window has the same key); batches of at most 100; a 429, 5xx or no answer retried with the same keys and backoff; given up after an hour; a 4xx dropped and logged; the real client against an ingest endpoint over HTTP; the token in no error |
+| `test_pass.py` | the pass: one event per awake session per 5 minutes, one per kept session per 6 hours; a warm-pool Sandbox sends nothing; the same window sent twice has the same `transaction_id`; the Lease renewed once a window; a restart counts nothing for the time it was down beyond `MAX_GAP`; Metronome away (the Lease waits; after an hour that usage is free) |
 | `test_kube.py` | the real client over HTTP: the paged list, the Lease made then renewed, a conflict, the ServiceAccount token read again |
 | `test_units.py`, `test_cli.py` | the catalogue, the configuration, the observation of a Sandbox; the command above |
 | `test_handlers.py` | the switch, start and stop, the watchdog, and the whole observer under `kopf run` as `deploy.md` starts it, against a fake API server and a fake ingest endpoint |
