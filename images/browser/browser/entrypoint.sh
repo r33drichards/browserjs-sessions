@@ -371,6 +371,10 @@ fi
 browser-mcp &
 pids+=($!)
 
+# Shell commands for run_js (mcp-exec, on loopback only): see exec-server.sh.
+EXEC_LOG_DIR="${EXEC_LOG_DIR:-$PROFILE_DIR/exec-logs}" bash "$EXEC_SERVER" &
+pids+=($!)
+
 # Exit (and let Railway restart us) if any core process dies.
 wait -n "${pids[@]}"
 echo "a core process exited; shutting down" >&2

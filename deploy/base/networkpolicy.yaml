@@ -60,6 +60,16 @@ spec:
               - 192.168.0.0/16
               - 100.64.0.0/10
               - 169.254.0.0/16
+    # The one thing in the cluster a session reaches: the shared OPA, which
+    # its mcp-js asks for a decision on every browser call. OPA's API gives a
+    # session nothing but decisions (docs/contracts/policy/system-authz.rego).
+    - to:
+        - podSelector:
+            matchLabels:
+              app: opa
+      ports:
+        - port: 8181
+          protocol: TCP
 ---
 # Identity is whatever Pomerium says it is, and the upload and VNC routes
 # have no login at all: nothing but Pomerium talks to the backend.
@@ -79,4 +89,120 @@ spec:
               app: pomerium
       ports:
         - port: 8080
+          protocol: TCP
+---
+# OPA answers the sessions and the operator, and fetches its bundle from the
+# operator. It reaches nothing else: not the internet, not the API server.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: opa
+spec:
+  podSelector:
+    matchLabels:
+      app: opa
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: browserjs-session
+        # Reading what each replica has loaded.
+        - podSelector:
+            matchLabels:
+              app: policy-operator
+      ports:
+        - port: 8181
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+        # NodeLocal DNSCache on GKE: see session-pods.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: node-local-dns
+        - ipBlock:
+            cidr: 169.254.20.10/32
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app: policy-operator
+      ports:
+        - port: 8080
+          protocol: TCP
+---
+# The operator holds every session's policy. Only OPA (the bundle) and the
+# backend (validate, evaluate) reach it; a session pod does not.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: policy-operator
+spec:
+  podSelector:
+    matchLabels:
+      app: policy-operator
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: opa
+        - podSelector:
+            matchLabels:
+              app: backend
+      ports:
+        - port: 8080
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+        # NodeLocal DNSCache on GKE: see session-pods.
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: node-local-dns
+        - ipBlock:
+            cidr: 169.254.20.10/32
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app: opa
+      ports:
+        - port: 8181
+          protocol: TCP
+    # The API server. A NetworkPolicy cannot name it: it is an address
+    # outside the pod network, private on GKE and the node's own on kind, on
+    # 443 or 6443. So this is those two ports, anywhere.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
           protocol: TCP

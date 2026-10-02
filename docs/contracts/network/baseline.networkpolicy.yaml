@@ -1,0 +1,38 @@
+# What deploy/base/networkpolicy.yaml's "session-pods" becomes: the
+# platform's needs only. Egress to DNS and to the internet moves into each
+# session's own <session>-egress policy, because NetworkPolicy can only add:
+# while this policy allows the internet, no session can have less.
+#
+# Do not apply this before every Sandbox has its own policy (design,
+# section 5: migration).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: session-pods
+spec:
+  podSelector:
+    matchLabels:
+      app: browserjs-session
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: backend
+      ports:
+        - port: 6080 # VNC (websockify)
+          protocol: TCP
+        - port: 8080 # mcp-js
+          protocol: TCP
+        - port: 8081 # the session's files
+          protocol: TCP
+  egress:
+    # The shared OPA (docs/contracts/policy/deploy.md). Until tool-call
+    # policies are deployed this rule is absent and the list is empty.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: opa
+      ports:
+        - port: 8181
+          protocol: TCP

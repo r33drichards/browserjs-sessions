@@ -5,34 +5,32 @@ const origin = "https://computeruse.site"
 const app = "https://app.computeruse.site"
 
 const tutorials = [
-  { text: "Your first desktop", link: "/tutorials/first-session" },
-  { text: "Connect an agent with Claude", link: "/tutorials/connect-claude" },
+  { text: "Create a desktop and connect an agent", link: "/tutorials/first-desktop" },
+  { text: "Your first run_js program", link: "/tutorials/first-program" },
 ]
 
 const guides = [
-  { text: "Create, stop, resume and delete", link: "/guides/manage-sessions" },
-  { text: "Watch an agent and take over", link: "/guides/take-over" },
-  { text: "Copy and paste", link: "/guides/copy-paste" },
-  { text: "Move files in and out", link: "/guides/files" },
-  { text: "Full screen and resize", link: "/guides/full-screen" },
-  { text: "Wake a sleeping session", link: "/guides/wake" },
-  { text: "Connect another MCP client", link: "/guides/mcp-clients" },
+  { text: "Sleep, wake, stop and resume", link: "/guides/sleep-wake-resume" },
+  { text: "Watch and take over", link: "/guides/take-over" },
+  { text: "Move files and the clipboard", link: "/guides/files-and-clipboard" },
+  { text: "Write a policy", link: "/guides/write-a-policy" },
+  { text: "Use it from code", link: "/guides/use-from-code" },
 ]
 
 const reference = [
-  { text: "What is on the desktop", link: "/reference/desktop" },
-  { text: "Session states", link: "/reference/session-states" },
-  { text: "MCP endpoint and tools", link: "/reference/mcp" },
+  { text: "Session lifecycle", link: "/reference/lifecycle" },
+  { text: "MCP endpoint and run_js", link: "/reference/mcp" },
+  { text: "Capabilities: browser, desktop, shell", link: "/reference/capabilities" },
+  { text: "Policy format", link: "/reference/policy" },
   { text: "Limits", link: "/reference/limits" },
   { text: "HTTP API", link: "/reference/api" },
   { text: "Live, coming and planned", link: "/reference/status" },
 ]
 
 const explanation = [
-  { text: "Computer use on a Linux desktop", link: "/explanation/computer-use" },
-  { text: "Sleep and wake", link: "/explanation/sleep-and-wake" },
-  { text: "What persists", link: "/explanation/persistence" },
-  { text: "Security model", link: "/explanation/security" },
+  { text: "Serverless, resumable desktop containers", link: "/explanation/desktop-containers" },
+  { text: "Why code mode", link: "/explanation/code-mode" },
+  { text: "The containment model", link: "/explanation/containment" },
 ]
 
 // Every docs page shows all four sections.
@@ -44,8 +42,8 @@ const docs = [
 ]
 
 export default defineConfig({
-  title: "computeruse",
-  description: "A small Linux desktop in the cloud that an AI agent operates over MCP, and that you can watch and take over.",
+  title: "Computer Use",
+  description: "Serverless, resumable desktop containers with a code-mode MCP tool, a light admin interface, and policy to contain what agents do.",
   lang: "en-US",
   cleanUrls: true,
   srcExclude: ["README.md"],

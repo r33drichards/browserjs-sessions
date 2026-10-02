@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://computeruse.site/contracts/policy/tools/kill.schema.json",
+  "title": "kill arguments (server \"exec\", tool \"kill\")",
+  "description": "The arguments of mcp-exec's kill tool (KillRequest): stop a running execution, with everything it started. It starts nothing.",
+  "type": "object",
+  "required": ["id"],
+  "properties": {
+    "id": { "type": "string", "description": "The execution's UUID, as exec returned it." }
+  }
+}

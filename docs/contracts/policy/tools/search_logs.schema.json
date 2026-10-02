@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://computeruse.site/contracts/policy/tools/search_logs.schema.json",
+  "title": "search_logs arguments (server \"exec\", tool \"search_logs\")",
+  "description": "The arguments of mcp-exec's search_logs tool (SearchLogsRequest): the lines of a command's output that match a regular expression. It starts nothing.",
+  "type": "object",
+  "required": ["id", "pattern"],
+  "properties": {
+    "id": { "type": "string", "description": "The execution's UUID, as exec returned it." },
+    "pattern": { "type": "string", "description": "A regular expression in the syntax of Rust's regex crate (no backtracking, so no expression is expensive to match)." }
+  }
+}

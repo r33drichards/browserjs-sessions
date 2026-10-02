@@ -1,0 +1,19 @@
+# SESSION POLICIES ARE OFF while this patch is listed in kustomization.yaml:
+# everything is installed (the CRDs, the Roles, the NetworkPolicies, the
+# Service names) and OPA and the operator have no pods.
+#
+# hack/policy-stage.sh local serving  takes it out of the list;
+# docs/policy-deployment.md says what has to be true first.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opa
+spec:
+  replicas: 0
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: policy-operator
+spec:
+  replicas: 0

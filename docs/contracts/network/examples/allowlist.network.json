@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "mode": "allowlist",
+  "dns": true,
+  "allow": [
+    { "cidr": "192.0.2.0/24", "ports": [ { "port": 443 } ], "description": "the staging site" },
+    { "cidr": "198.51.100.10/32", "ports": [ { "port": 5432 }, { "port": 8000, "endPort": 8099 } ] },
+    { "cidr": "0.0.0.0/0", "ports": [ { "port": 123, "protocol": "UDP" } ], "description": "NTP anywhere public" }
+  ]
+}

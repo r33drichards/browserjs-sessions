@@ -9,10 +9,12 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { ApiError, isSessionId } from "../api"
 import { useMe } from "../auth/MeProvider"
 import { signedOutHandled } from "../auth/signedOut"
+import { BlockedWake, DrainingNote, SessionState, useWakeBlock } from "../billing/SessionBilling"
+import { WAKE_BLOCK_LABEL } from "../billingApi"
 import { VncPane } from "../components/VncPane"
 import type { PolicySession as Session } from "../policyApi"
 import { isManagedAsCode, policySummaryLine } from "../policyApi"
-import { Shell, StateTag, api } from "../shell"
+import { Shell, api } from "../shell"
 import { usePolling } from "../usePolling"
 
 // Only a deployment with policies shows the tab, so only it loads the code.
@@ -57,6 +59,7 @@ export function SessionDetail({ id }: { id: string }) {
   }, [id])
 
   usePolling(load, !missing) // a 404 is final: stop asking
+  const blocked = useWakeBlock(session) // billing keeps it asleep: no credit, or no card
 
   if (missing) {
     return (
@@ -112,9 +115,14 @@ export function SessionDetail({ id }: { id: string }) {
     setTimeout(() => setCopied(null), 1500)
   }
 
-  const browser =
+  const browser = blocked ? (
+    <BlockedWake block={blocked} deleteAfter={session.deleteAfter} />
+  ) :
     session.state === "running" ? (
+      <>
+        <DrainingNote session={session} />
       <VncPane sessionId={session.id} controls={viewerControls} />
+      </>
     ) : (
       <div className="wf-placeholder">
         <div>
@@ -143,7 +151,12 @@ export function SessionDetail({ id }: { id: string }) {
               {awake ? (
                 <Button onClick={() => actAndReload(() => api.setRunning(session.id, false))}>Stop</Button>
               ) : (
-                <Button variant="primary" onClick={() => actAndReload(() => api.setRunning(session.id, true))}>
+                <Button
+                  variant="primary"
+                  disabled={!!blocked}
+                  disabledReason={blocked ? WAKE_BLOCK_LABEL[blocked] : undefined}
+                  onClick={() => actAndReload(() => api.setRunning(session.id, true))}
+                >
                   {session.state === "asleep" ? "Wake" : "Resume"}
                 </Button>
               )}
@@ -160,7 +173,7 @@ export function SessionDetail({ id }: { id: string }) {
                 rename
               </Button>
               <span className="wf-title-meta">
-                <StateTag state={session.state} />
+                <SessionState session={session} />
                 <span>created {new Date(session.created).toLocaleString()}</span>
                 {/* Only an admin looking at someone else's session needs telling whose it is. */}
                 {session.owner !== me.email && <span className="wf-mono">{session.owner}</span>}

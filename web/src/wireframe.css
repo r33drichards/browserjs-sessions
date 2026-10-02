@@ -316,3 +316,113 @@ a {
 [class*="awsui_alert_mx3cw_"] [class*="awsui_icon_"] {
   color: var(--ink) !important;
 }
+
+/* Billing. The balance in the header; at zero it is the one thing in red. */
+.wf-balance {
+  white-space: nowrap;
+}
+.wf-balance-zero {
+  color: #b00020;
+  font-weight: bold;
+}
+.wf-figure {
+  font-size: 40px;
+  font-weight: bold;
+  line-height: 1.1;
+}
+.wf-figure[data-zero] {
+  color: #b00020;
+}
+.wf-state[data-blocked] {
+  border-style: double;
+  border-width: 4px;
+  color: var(--ink);
+}
+.wf-state[data-blocked] {
+  white-space: nowrap;
+}
+.wf-delete-after {
+  display: block;
+  max-width: 15em;
+}
+.wf-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+/* 11huc is ProgressBar: filled with ink, not a colour. */
+[class*="awsui_progress_11huc_"]::-webkit-progress-value {
+  background-color: var(--ink) !important;
+}
+[class*="awsui_progress_11huc_"]::-moz-progress-bar {
+  background-color: var(--ink) !important;
+}
+/* The buttons of a banner are drawn for a coloured background: outline them. */
+.wf-flash [class*="awsui_button_vjswe_"] {
+  border-color: var(--ink) !important;
+  background: #fff !important;
+}
+/* Charges by day: solid ink is awake, hatching is disk. */
+.wf-chart {
+  margin: 0;
+}
+.wf-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.wf-chart-key {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  vertical-align: -2px;
+  border: 1.5px solid var(--ink);
+}
+.wf-chart-plot {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  border-bottom: 1.5px solid var(--pencil);
+}
+.wf-chart-day {
+  flex: 1;
+  min-width: 3px;
+  max-width: 28px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 2px;
+}
+.wf-chart-day > div {
+  border: 1.5px solid var(--ink);
+  border-bottom: 0;
+  box-sizing: border-box;
+}
+.wf-chart-day > div:first-child {
+  border-radius: 4px 4px 0 0;
+}
+.wf-chart-day[data-hover],
+.wf-chart-day:focus-visible {
+  outline: 1.5px dashed var(--pencil);
+  outline-offset: 1px;
+}
+.wf-chart-awake {
+  background: var(--ink);
+}
+.wf-chart-disk {
+  background: repeating-linear-gradient(45deg, #fff, #fff 3px, var(--pencil) 3px, var(--pencil) 4px);
+}
+.wf-chart-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 2px;
+}
+/* A table or cards inside a box that is already outlined: no second outline. */
+.wf-plain [class*="awsui_root_14iqq_"] {
+  border: 0 !important;
+  border-radius: 0 !important;
+  overflow: visible !important;
+}

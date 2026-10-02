@@ -263,7 +263,12 @@ cannot reach:
   `desktop_execute` altogether, and holds. A Rego policy that allows
   `desktop_execute` while restricting `browser_execute` (hosts, operations)
   restricts nothing any more: allowing the desktop now means allowing a
-  shell. Policies bind the agent's calls, never the person at the live
+  shell. The same holds for the `exec` tool (mcp-exec, port 8082): a
+  policy that limits `exec` to some programs is walked around through a
+  terminal on the desktop unless it also denies `desktop_execute`. `exec`
+  starts in the same `HOME`, `/data/chrome/home`, which is what the example
+  policies in `docs/contracts/policy` name.
+  Policies bind the agent's calls, never the person at the live
   view, who could always do by hand what a policy forbids the agent.
 - **mcp-js's own files stay out of reach.** `/data/memory` and `/data/mcp`
   are mounted in the other container only.

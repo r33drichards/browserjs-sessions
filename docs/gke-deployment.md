@@ -177,7 +177,7 @@ policy is edited and no namespace is exempted. There is no `seccompProfile`:
 GKE Sandbox does not support seccomp and the policies do not ask for one.
 
 The browser image used to have no user but root. It now has the user
-`browser` (uid 1000, home `/home/browser`) and an entrypoint that needs
+`browser` (uid 1000, home then `/home/browser`) and an entrypoint that needs
 nothing of root:
 
 - `images/browser/Dockerfile`: a passwd and a group entry for uid 1000

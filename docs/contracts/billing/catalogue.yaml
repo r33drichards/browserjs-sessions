@@ -1,0 +1,104 @@
+# What is sold, what it costs to use, and what each option gives. DATA, not
+# code: it is a ConfigMap (`billing-catalogue`) read by the backend and the
+# billing operator and re-read when it changes, so a number here changes with
+# a manifest apply and no image build. OpenTofu (infra/billing) makes
+# Stripe's Products and Prices, and Metronome's rates, from the same file; the UI and the public
+# site get it from GET /api/billing/catalogue. Nothing takes an entitlement
+# from Stripe.
+#
+# Money is US dollars; `amount` is in cents (what Stripe charges), credit and
+# rates are in micro-dollars (1 USD = 1000000). PROPOSED numbers: the
+# arithmetic is section 7 of the design.
+version: 1
+currency: usd
+
+# One balance of credit per account, in dollars. It is used up by:
+rates:
+  awakeMicrosPerHour: 200000     # $0.20 for each hour a session is awake
+  diskMicrosPerGBHour: 384       # $0.28 per GB-month (730 h): $1.40 a month for a 5 GB session, awake or asleep
+sessionDiskGB: 5
+
+# Given once, when the first card is saved.
+signupCredit:
+  amountMicros: 5000000          # $5.00: 25 awake hours, or less with disks kept
+  validDays: 90
+  refuseFunding: [prepaid]       # card.funding values that save the card but earn no credit
+  refuseWallets: true            # a card saved through Apple Pay or Google Pay earns none (its fingerprint is the device's)
+
+# Without a subscription. Not a Stripe object. Requires a saved card, like
+# everything else.
+payg:
+  name: Pay as you go
+  maxSessions: 3
+  maxAwake: 2
+
+# Subscriptions: a monthly price that buys more credit than it costs. One
+# Stripe Product each (the Customer Portal can only switch between
+# Products), one monthly Price each. The credit is granted when the period
+# is paid and expires at its end: it does not roll over.
+plans:
+  - key: starter
+    name: Starter
+    productId: cu_plan_starter
+    lookupKey: cu_starter_monthly_v1
+    amount: 500                  # $5 a month
+    creditMicros: 10000000       # $10 of credit: about 40 awake hours with one session kept
+    maxSessions: 3
+    maxAwake: 2
+    enabled: true
+  - key: pro
+    name: Pro
+    productId: cu_plan_pro
+    lookupKey: cu_pro_monthly_v1
+    amount: 2000                 # $20 a month
+    creditMicros: 44000000       # $44: about 200 awake hours with three sessions kept
+    maxSessions: 10
+    maxAwake: 4
+    enabled: true
+  - key: scale
+    name: Scale
+    productId: cu_plan_scale
+    lookupKey: cu_scale_monthly_v1
+    amount: 10000                # $100 a month
+    creditMicros: 240000000      # $240: about 1100 awake hours with ten sessions kept
+    maxSessions: 25
+    maxAwake: 8
+    # Not sold until the project's CPU quota is raised: eight awake sessions
+    # of one account would be most of today's eleven places.
+    enabled: false
+
+# Credit packs: one-off payments, a dollar of credit for a dollar. They are
+# "pay as you go", the subscriber's "top-up", and what auto-recharge buys:
+# one mechanism. Valid 12 months.
+packs:
+  - key: credit-5
+    name: $5 of credit
+    productId: cu_credit
+    lookupKey: cu_credit_5_v1
+    amount: 500
+    creditMicros: 5000000
+    validDays: 365
+    enabled: true
+  - key: credit-20
+    name: $20 of credit
+    productId: cu_credit
+    lookupKey: cu_credit_20_v1
+    amount: 2000
+    creditMicros: 20000000
+    validDays: 365
+    enabled: true
+  - key: credit-50
+    name: $50 of credit
+    productId: cu_credit
+    lookupKey: cu_credit_50_v1
+    amount: 5000
+    creditMicros: 50000000
+    validDays: 365
+    enabled: true
+
+# Optional, off for every account until its owner turns it on.
+autoRecharge:
+  defaultThresholdMicros: 2000000   # recharge when the balance falls below $2
+  defaultPack: credit-20
+  defaultMonthlyCapCents: 5000      # at most $50 of automatic charges a calendar month
+  maxMonthlyCapCents: 50000

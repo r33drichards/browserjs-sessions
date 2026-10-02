@@ -1,0 +1,9 @@
+{
+  "operation": "mcp_call_tool",
+  "server": "exec",
+  "tool": "stream_logs",
+  "arguments": {
+    "id": "215e7d1d-cc35-47ac-8fd1-e018fd03d2b9",
+    "offset": 0
+  }
+}

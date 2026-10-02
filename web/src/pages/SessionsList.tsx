@@ -9,14 +9,18 @@ import { Link, useNavigate } from "react-router-dom"
 import type { Session } from "../api"
 import { useMe } from "../auth/MeProvider"
 import { signedOutHandled } from "../auth/signedOut"
+import { useBilling } from "../billing/BillingProvider"
+import { SessionState } from "../billing/SessionBilling"
+import { WAKE_BLOCK_LABEL, wakeBlock } from "../billingApi"
 import type { PolicySession } from "../policyApi"
 import { isManagedAsCode, policySummaryLine } from "../policyApi"
-import { Shell, StateTag, api } from "../shell"
+import { Shell, api } from "../shell"
 import { usePolling } from "../usePolling"
 
 export function SessionsList() {
   const navigate = useNavigate()
   const me = useMe()
+  const { billing } = useBilling()
   const [sessions, setSessions] = useState<PolicySession[] | null>(null)
   const [error, setError] = useState("") // last poll failure; cleared by the next good poll
   const [actionError, setActionError] = useState("") // last failed action; polling leaves it alone
@@ -88,7 +92,7 @@ export function SessionsList() {
         }
         columnDefinitions={[
           { id: "name", header: "Name", cell: s => <Link to={`/sessions/${s.id}`}>{s.name}</Link> },
-          { id: "state", header: "State", cell: s => <StateTag state={s.state} /> },
+          { id: "state", header: "State", cell: s => <SessionState session={s} /> },
           ...(showAll ? [{ id: "owner", header: "Owner", cell: (s: Session) => <span className="wf-mono">{s.owner}</span> }] : []),
           // Only where the backend has policies: without them no session carries one.
           ...(sessions?.some(s => s.policy)
@@ -123,7 +127,14 @@ export function SessionsList() {
                 {s.state === "running" || s.state === "starting" ? (
                   <Button onClick={() => act(() => api.setRunning(s.id, false))}>Stop</Button>
                 ) : (
-                  <Button onClick={() => act(() => api.setRunning(s.id, true))}>Resume</Button>
+                  // A session billing keeps asleep says why instead of resuming.
+                  <Button
+                    disabled={!!wakeBlock(s, billing)}
+                    disabledReason={WAKE_BLOCK_LABEL[wakeBlock(s, billing) ?? "credit"]}
+                    onClick={() => act(() => api.setRunning(s.id, true))}
+                  >
+                    Resume
+                  </Button>
                 )}
                 <Button
                   onClick={() => {

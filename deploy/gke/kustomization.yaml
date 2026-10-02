@@ -26,9 +26,15 @@ resources:
 # the script copies them there. The deploy workflow refuses to run while a
 # REPLACE_ placeholder is left or the files disagree.
 images:
+  # Not pinned yet. hack/pin-images.sh accepts the placeholder only while
+  # session policies are off (patch-policy-off.yaml, below), when the
+  # operator has no pods.
+  - name: browserjs/policy-operator
+    newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/policy-operator
+    digest: sha256:9112d8f9b774c499ef0c2d62fe0cb836d53ed76358411cc1c7f8c3282ce6af65
   - name: browserjs/backend
     newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/backend
-    digest: sha256:1a7da088f456bb845ec96b34d7b52f7a7c1226a421027da93482accb7c30e31a
+    digest: sha256:e9887294e3923c6a28a60efc1d9ece6e2a889378c8866e0e890af465f6b3f454
   - name: browserjs/browser
     newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/browser
     digest: sha256:e5d7fc774911669a1921dc13d2b04bebec70a20b4817a8d13b205f8e431744fb
@@ -37,7 +43,7 @@ images:
     digest: sha256:c7f95389964e6b1e6d978d287925e9ffae04b79658e589c46354e86c05e7b365
   - name: browserjs/site
     newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/site
-    digest: sha256:02114fbe0dbc06b57d3bf22bdff38746adc925901a3b29d2f40b26978abf613e
+    digest: sha256:68c85ef7444b3a2e607487f8b193bb267c615241c1d1d54e3195f7cd4e533c34
 
 configMapGenerator:
   - name: session-blueprint
@@ -66,3 +72,8 @@ patches:
       - op: add
         path: /spec/volumeClaimTemplates/0/spec/storageClassName
         value: browserjs-zonal
+  # The stage of session policies: off with both lines, serving with the
+  # second only, enforcing with neither. They are the last patches, and are
+  # switched by hack/policy-stage.sh (docs/policy-deployment.md).
+  # - path: patch-policy-off.yaml
+  - path: patch-policy-backend-off.yaml

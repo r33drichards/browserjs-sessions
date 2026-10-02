@@ -91,7 +91,58 @@ printf '```\n'
 # autoscaler may evict them to remove their node.
 show kubectl -n "$NS" get pods -l app=browserjs-session -o 'custom-columns=NAME:.metadata.name,NODE:.spec.nodeName,PHASE:.status.phase,CLAIM:.metadata.labels.agents\.x-k8s\.io/claim-uid,SAFE-TO-EVICT:.metadata.annotations.cluster-autoscaler\.kubernetes\.io/safe-to-evict'
 
+section "Session policies"
+cat <<'TEXT'
+The stage (docs/policy-deployment.md) as the cluster has it. Off: opa and
+policy-operator want 0 replicas. Serving: both are ready, and every
+SessionPolicy is Ready. Enforcing: the SandboxTemplate, and the Sandboxes
+made since, are listed below as asking OPA.
+TEXT
+# OPA's readiness probe is /health?bundles: a ready replica has the
+# operator's bundle active. Per policy, the Loaded column further down says
+# how many replicas serve it.
+show kubectl -n "$NS" get deployment opa policy-operator -o 'custom-columns=NAME:.metadata.name,READY:.status.readyReplicas,WANTED:.spec.replicas,IMAGE:.spec.template.spec.containers[0].image'
+show kubectl -n "$NS" get pods -l 'app in (opa,policy-operator)' -o wide
+show kubectl -n "$NS" get endpointslices -l 'kubernetes.io/service-name in (opa,policy-operator)' -o wide
+show kubectl -n "$NS" get poddisruptionbudget opa
+# Key names and sizes only; describe never prints a value.
+show kubectl -n "$NS" describe secret policy-tokens
+show kubectl -n "$NS" describe secret api-tokens
+echo "API tokens are on when the backend has both of these (docs/api-tokens.md):"
+show kubectl -n "$NS" get deployment backend -o 'jsonpath={range .spec.template.spec.containers[0].env[?(@.name=="API_URL")]}{.name}={.value}{"\n"}{end}{range .spec.template.spec.containers[0].env[?(@.name=="ALLOWED_EMAILS")]}{.name}={.value}{"\n"}{end}'
+# Names and expiry only: the owner is an email address, the hash stays put.
+show kubectl -n "$NS" get apitokens.browserjs.dev -o 'custom-columns=NAME:.metadata.name,SCOPES:.spec.scopes,EXPIRES:.spec.expiresAt,LAST-USED:.status.lastUsedTime'
+printf '```\n'
+kubectl get crd sessionpolicies.browserjs.dev apitokens.browserjs.dev -o json 2>&1 | jq -r '
+  .items[] | "\(.metadata.name)  served=\([.spec.versions[] | select(.served) | .name] | join(","))  established=\([.status.conditions[]? | select(.type == "Established") | .status] | join(","))"' 2>&1
+printf '```\n'
+show kubectl -n "$NS" get sessionpolicies.browserjs.dev -o wide
+echo "Whether the backend is told about the operator (nothing: policies are off):"
+show kubectl -n "$NS" get deployment backend -o 'jsonpath={range .spec.template.spec.containers[0].env[?(@.name=="POLICY_OPERATOR_URL")]}{.name}={.value}{"\n"}{end}'
+echo "Which pod templates ask OPA (a session that does not is unrestricted, and \"unsupported\" in the API):"
+printf '```\n'
+kubectl -n "$NS" get sandboxtemplates.extensions.agents.x-k8s.io,sandboxes.agents.x-k8s.io -o json 2>&1 | jq -r '
+  .items[] | . as $o |
+  ([.spec.podTemplate.spec.containers[]? | select(.name == "mcp-js") | .env[]? |
+    select(.name == "MCP_V8_POLICIES_JSON") | .value] | join("")) as $v |
+  "\($o.kind)/\($o.metadata.name)  asks-opa=\(if ($v | contains("browserjs/decision/")) then "yes" else "no" end)"' 2>&1
+printf '```\n'
+
 [ -n "$full" ] || exit 0
+
+section "Session policies in full"
+show kubectl -n "$NS" get networkpolicies -o yaml
+# The API server's address, which the operator's NetworkPolicy must allow.
+show kubectl -n default get endpointslices -l kubernetes.io/service-name=kubernetes -o wide
+show kubectl -n "$NS" describe deployment opa policy-operator
+show kubectl -n "$NS" logs deployment/policy-operator --tail=100
+show kubectl -n "$NS" logs -l app=opa --prefix --tail=50
+# Status only: a policy's source is its owner's.
+printf '```\n'
+kubectl -n "$NS" get sessionpolicies.browserjs.dev -o json 2>&1 | jq '
+  .items[] | {name: .metadata.name, generation: .metadata.generation, kind: .spec.kind, management: .spec.management,
+    status: ((.status // {}) | del(.rego))}' 2>&1
+printf '```\n'
 
 section "Warm pool in full"
 show kubectl -n "$NS" get sandboxwarmpools.extensions.agents.x-k8s.io,sandboxtemplates.extensions.agents.x-k8s.io,sandboxclaims.extensions.agents.x-k8s.io -o yaml

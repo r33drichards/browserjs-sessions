@@ -1,0 +1,7 @@
+# One node, so one OPA: a second replica would add nothing here.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opa
+spec:
+  replicas: 1
