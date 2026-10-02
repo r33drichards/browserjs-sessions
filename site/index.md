@@ -1,12 +1,12 @@
 ---
 layout: home
 title: Computer Use
-titleTemplate: Serverless, resumable desktop containers with code-mode MCP
+titleTemplate: A JavaScript REPL for cloud computer use
 
 hero:
   name: Computer Use
-  text: Simple. Stateful. Scale to zero.
-  tagline: Serverless, resumable desktop containers with a code-mode MCP tool, a light admin interface, and policy to contain what agents do.
+  text: A JavaScript REPL for cloud computer use.
+  tagline: Simple. Stateful. Scale to zero. Serverless, resumable desktop containers with a code-mode MCP tool, a light admin interface, and policy to contain what agents do.
   actions:
     - theme: brand
       text: Create a desktop
