@@ -12,12 +12,36 @@ import (
 
 // fakeTokens knows tokens by their whole text.
 type fakeTokens struct {
-	tokens map[string]struct {
-		owner  string
-		scopes []string
+	tokens map[string]fakeToken
+	err    error
+	calls  int
+}
+
+type fakeToken struct {
+	owner   string
+	scopes  []string
+	session string
+}
+
+// ExchangeToken grants "access-<secret>" for the client "id-<secret>".
+func (f *fakeTokens) ExchangeToken(_ context.Context, id, secret string, scopes []string) (string, Grant, error) {
+	f.calls++
+	if f.err != nil {
+		return "", Grant{}, f.err
 	}
-	err   error
-	calls int
+	t, ok := f.tokens[secret]
+	if !ok || id != "id-"+secret {
+		return "", Grant{}, ErrInvalidToken
+	}
+	if len(scopes) == 0 {
+		scopes = t.scopes
+	}
+	for _, scope := range scopes {
+		if !(&TokenInfo{Scopes: t.scopes}).Has(scope) {
+			return "", Grant{}, ErrInvalidScope
+		}
+	}
+	return t.owner, Grant{AccessToken: "access-" + secret, Scopes: scopes, ExpiresIn: time.Hour}, nil
 }
 
 func (f *fakeTokens) VerifyToken(_ context.Context, token string) (string, TokenInfo, error) {
@@ -29,7 +53,7 @@ func (f *fakeTokens) VerifyToken(_ context.Context, token string) (string, Token
 	if !ok {
 		return "", TokenInfo{}, ErrInvalidToken
 	}
-	return t.owner, TokenInfo{Name: "ci", Scopes: t.scopes}, nil
+	return t.owner, TokenInfo{Name: "ci", Scopes: t.scopes, Session: t.session}, nil
 }
 
 type apiHostFixture struct {
@@ -41,22 +65,25 @@ type apiHostFixture struct {
 
 func newAPIHostFixture(allowed ...string) *apiHostFixture {
 	f := &apiHostFixture{clock: time.Unix(1_800_000_000, 0)}
-	f.tokens = &fakeTokens{tokens: map[string]struct {
-		owner  string
-		scopes []string
-	}{
-		"all":     {"alice@example.com", Scopes},
-		"read":    {"alice@example.com", []string{ScopeSessionsRead}},
-		"policy":  {"alice@example.com", []string{ScopePoliciesRead}},
-		"root":    {"root@example.com", Scopes},
-		"removed": {"mallory@example.com", Scopes},
+	f.tokens = &fakeTokens{tokens: map[string]fakeToken{
+		"all":     {owner: "alice@example.com", scopes: Scopes},
+		"read":    {owner: "alice@example.com", scopes: []string{ScopeSessionsRead}},
+		"policy":  {owner: "alice@example.com", scopes: []string{ScopePoliciesRead}},
+		"connect": {owner: "alice@example.com", scopes: []string{ScopeSessionsConnect}},
+		"bound":   {owner: "alice@example.com", scopes: Scopes, session: "s-abcdefghij"},
+		"root":    {owner: "root@example.com", scopes: Scopes},
+		"removed": {owner: "mallory@example.com", scopes: Scopes},
 	}}
 	limiter := NewFailureLimiter(3, 10*time.Second, func() time.Time { return f.clock })
 	api := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.seen = append(f.seen, r)
 		w.WriteHeader(http.StatusNoContent)
 	})
-	f.host = NewAPIHost(f.tokens, NewAllowList(allowed), limiter, api)
+	f.host = NewAPIHost(APIHostConfig{
+		Tokens: f.tokens, Allowed: NewAllowList(allowed), Limiter: limiter, App: api,
+		ValidSessionID: func(id string) bool { return strings.HasPrefix(id, "s-") && len(id) == 12 },
+		SessionBase:    func(id string) string { return "https://sessions.example.com/" + id },
+	})
 	return f
 }
 
@@ -212,7 +239,14 @@ func TestAPIHostServesNothingElse(t *testing.T) {
 	// Outside /v1 there is nothing at all, with or without a token: not the
 	// UI, not the app's API, not a session's endpoints.
 	for _, path := range []string{"/", "/index.html", "/config.js", "/healthz", "/api/me", "/api/sessions", "/api/tokens",
-		"/v1", "/mcp", "/vnc", "/api/artifact-uploads/abc", "/.well-known/oauth-authorization-server", "/sessions/create"} {
+		"/v1", "/mcp", "/vnc", "/api/artifact-uploads/abc", "/.well-known/oauth-authorization-server", "/sessions/create",
+		// Of a session, only its MCP endpoint: not its screen, not the
+		// upload URLs (those are on the sessions' host, where mcp-js makes
+		// them), not the rest of its pod.
+		"/s-abcdefghij", "/s-abcdefghij/", "/s-abcdefghij/vnc", "/s-abcdefghij/vnc?ticket=x",
+		"/s-abcdefghij/api/artifact-uploads/" + strings.Repeat("a", 64), "/s-abcdefghij/mcpx",
+		"/s-abcdefghij/api/exec", "/s-abcdefghij/../s-abcdefghij/mcp", "/s-abcdefghij//mcp", "/not-a-session/mcp",
+		"/oauth/token/", "/oauth", "/oauth/authorize"} {
 		for _, token := range []string{"", "all"} {
 			f := newAPIHostFixture("alice@example.com")
 			rec := f.do("GET", path, token)
@@ -364,5 +398,209 @@ func TestMiddlewareLetsTheAPIHostsCallerThrough(t *testing.T) {
 	}
 	if reached != 1 {
 		t.Errorf("reached %d times", reached)
+	}
+}
+
+func TestAPIHostMCP(t *testing.T) {
+	const id, other = "s-abcdefghij", "s-zyxwvutsrq"
+	for _, c := range []struct {
+		name, token, method, path string
+		want                      int
+	}{
+		{"with the scope", "connect", "POST", "/" + id + "/mcp", 204},
+		{"every scope", "all", "POST", "/" + id + "/mcp", 204},
+		{"the stream", "connect", "GET", "/" + id + "/mcp", 204},
+		{"a path under it", "connect", "DELETE", "/" + id + "/mcp/x/y", 204},
+		{"without the scope", "read", "POST", "/" + id + "/mcp", 403},
+		{"a policy token", "policy", "POST", "/" + id + "/mcp", 403},
+		{"bound to it", "bound", "POST", "/" + id + "/mcp", 204},
+		{"bound to another", "bound", "POST", "/" + other + "/mcp", 403},
+		{"no token", "", "POST", "/" + id + "/mcp", 401},
+		{"a bad token", "nope", "POST", "/" + id + "/mcp", 401},
+		{"its owner removed", "removed", "POST", "/" + id + "/mcp", 401},
+	} {
+		f := newAPIHostFixture("alice@example.com", "root@example.com")
+		rec := f.do(c.method, c.path, c.token, AssertionHeader, "forged", "Cookie", "_pomerium=forged")
+		if rec.Code != c.want {
+			t.Errorf("%s: %d %s, want %d", c.name, rec.Code, rec.Body, c.want)
+		}
+		if (c.want == 204) != (len(f.seen) == 1) {
+			t.Errorf("%s: reached the session proxy %d times", c.name, len(f.seen))
+		}
+		if c.want != 204 {
+			continue
+		}
+		// What goes on is the request the session's own URL would have been.
+		inner := f.seen[0]
+		if inner.Host != "sessions.example.com" || inner.URL.Path != c.path || inner.Method != c.method {
+			t.Errorf("%s: went on as %s %s%s", c.name, inner.Method, inner.Host, inner.URL.Path)
+		}
+		for _, h := range []string{AssertionHeader, "Cookie", "Authorization"} {
+			if inner.Header.Get(h) != "" {
+				t.Errorf("%s: %s was passed on", c.name, h)
+			}
+		}
+		if u, ok := UserFrom(inner.Context()); !ok || u.Subject != "alice@example.com" || u.Admin || u.Token == nil {
+			t.Errorf("%s: caller %+v", c.name, u)
+		}
+	}
+}
+
+func TestAPIHostMCPKeepsThePathAsSent(t *testing.T) {
+	f := newAPIHostFixture("alice@example.com")
+	rec := f.do("POST", "/s-abcdefghij/mcp/a%2Fb", "connect")
+	if rec.Code != 204 || len(f.seen) != 1 {
+		t.Fatalf("got %d", rec.Code)
+	}
+	// The session proxy refuses an encoded separator; it has to see it.
+	if got := f.seen[0].URL.EscapedPath(); got != "/s-abcdefghij/mcp/a%2Fb" {
+		t.Errorf("went on as %q", got)
+	}
+}
+
+func TestAPIHostSessionBoundToken(t *testing.T) {
+	const id, other = "s-abcdefghij", "s-zyxwvutsrq"
+	for _, c := range []struct {
+		method, path string
+		want         int
+	}{
+		{"GET", "/v1/me", 204},
+		{"GET", "/v1/sessions/" + id, 204},
+		{"PATCH", "/v1/sessions/" + id, 204},
+		{"PUT", "/v1/sessions/" + id + "/policy", 204},
+		{"GET", "/v1/sessions/" + other, 403},
+		{"DELETE", "/v1/sessions/" + other, 403},
+		{"GET", "/v1/sessions/" + other + "/policy", 403},
+		{"PUT", "/v1/sessions/" + other + "/policy/management", 403},
+		// What reaches beyond one session.
+		{"GET", "/v1/sessions", 403},
+		{"POST", "/v1/sessions", 403},
+	} {
+		f := newAPIHostFixture("alice@example.com")
+		if rec := f.do(c.method, c.path, "bound"); rec.Code != c.want {
+			t.Errorf("%s %s: %d %s, want %d", c.method, c.path, rec.Code, rec.Body, c.want)
+		}
+	}
+}
+
+func (f *apiHostFixture) exchange(body string, headers ...string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest("POST", "/oauth/token", strings.NewReader(body))
+	req.Host = "api.example.com"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for i := 0; i+1 < len(headers); i += 2 {
+		req.Header.Set(headers[i], headers[i+1])
+	}
+	rec := httptest.NewRecorder()
+	f.host.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestAPIHostTokenExchange(t *testing.T) {
+	f := newAPIHostFixture("alice@example.com")
+	rec := f.exchange("grant_type=client_credentials&client_id=id-all&client_secret=all&scope=sessions:connect+sessions:read")
+	want := `{"access_token":"access-all","expires_in":3600,"scope":"sessions:connect sessions:read","token_type":"Bearer"}`
+	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != want || rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("form: %d %s (Cache-Control %q)", rec.Code, rec.Body, rec.Header().Get("Cache-Control"))
+	}
+	// HTTP Basic, and no scope: all the token has.
+	basic := func(id, secret string) string {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.SetBasicAuth(id, secret)
+		return req.Header.Get("Authorization")
+	}
+	rec = f.exchange("grant_type=client_credentials", "Authorization", basic("id-read", "read"))
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"scope":"sessions:read"`) {
+		t.Errorf("basic: %d %s", rec.Code, rec.Body)
+	}
+	if len(f.seen) != 0 {
+		t.Error("the exchange reached the app")
+	}
+
+	for name, c := range map[string]struct {
+		body, authorization, contentType string
+		status                           int
+		code                             string
+	}{
+		"a wider scope":      {body: "grant_type=client_credentials&client_id=id-read&client_secret=read&scope=sessions:write", status: 400, code: "invalid_scope"},
+		"an unknown scope":   {body: "grant_type=client_credentials&client_id=id-read&client_secret=read&scope=admin", status: 400, code: "invalid_scope"},
+		"another grant":      {body: "grant_type=password&username=alice&password=x", status: 400, code: "unsupported_grant_type"},
+		"refresh":            {body: "grant_type=refresh_token&refresh_token=access-all", status: 400, code: "unsupported_grant_type"},
+		"no grant":           {body: "client_id=id-all&client_secret=all", status: 400, code: "unsupported_grant_type"},
+		"JSON":               {body: `{"grant_type":"client_credentials"}`, contentType: "application/json", status: 400, code: "invalid_request"},
+		"a bearer token":     {body: "grant_type=client_credentials", authorization: "Bearer all", status: 401, code: "invalid_client"},
+		"no credentials":     {body: "grant_type=client_credentials", status: 401, code: "invalid_client"},
+		"its owner removed":  {body: "grant_type=client_credentials&client_id=id-removed&client_secret=removed", status: 401, code: "invalid_client"},
+		"an unknown client":  {body: "grant_type=client_credentials&client_id=id-nope&client_secret=nope", status: 401, code: "invalid_client"},
+		"a wrong secret":     {body: "grant_type=client_credentials&client_id=id-all&client_secret=read", status: 401, code: "invalid_client"},
+		"another's id":       {body: "grant_type=client_credentials&client_id=id-read&client_secret=all", status: 401, code: "invalid_client"},
+		"a wrong secret (b)": {body: "grant_type=client_credentials", authorization: basic("id-all", "x"), status: 401, code: "invalid_client"},
+	} {
+		f := newAPIHostFixture("alice@example.com")
+		var headers []string
+		if c.authorization != "" {
+			headers = append(headers, "Authorization", c.authorization)
+		}
+		if c.contentType != "" {
+			headers = append(headers, "Content-Type", c.contentType)
+		}
+		rec := f.exchange(c.body, headers...)
+		if rec.Code != c.status || strings.TrimSpace(rec.Body.String()) != `{"error":"`+c.code+`"}` {
+			t.Errorf("%s: %d %s, want %d %s", name, rec.Code, rec.Body, c.status, c.code)
+		}
+	}
+
+	// Credentials in the query string are not read.
+	f = newAPIHostFixture("alice@example.com")
+	req := httptest.NewRequest("POST", "/oauth/token?grant_type=client_credentials&client_id=id-all&client_secret=all", strings.NewReader(""))
+	req.Host = "api.example.com"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = httptest.NewRecorder()
+	f.host.ServeHTTP(rec, req)
+	if rec.Code == 200 {
+		t.Error("credentials in the query string were accepted")
+	}
+	if rec := f.do("GET", "/oauth/token", "all"); rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("GET: %d", rec.Code)
+	}
+}
+
+func TestAPIHostTokenExchangeIsRateLimitedAndOffWithNobodyAllowed(t *testing.T) {
+	f := newAPIHostFixture("alice@example.com")
+	bad := "grant_type=client_credentials&client_id=id-all&client_secret=wrong"
+	for i := range 3 {
+		if rec := f.exchange(bad, "X-Forwarded-For", "198.51.100.7"); rec.Code != 401 {
+			t.Fatalf("failure %d: %d", i, rec.Code)
+		}
+	}
+	good := "grant_type=client_credentials&client_id=id-all&client_secret=all"
+	if rec := f.exchange(good, "X-Forwarded-For", "198.51.100.7"); rec.Code != http.StatusTooManyRequests {
+		t.Errorf("after three failures: %d", rec.Code)
+	}
+	// The limit is the address's, whatever it was failing at.
+	if rec := f.do("GET", "/v1/sessions", "all", "X-Forwarded-For", "198.51.100.7"); rec.Code != http.StatusTooManyRequests {
+		t.Errorf("the API after three failed exchanges: %d", rec.Code)
+	}
+
+	off := newAPIHostFixture()
+	if rec := off.exchange(good); rec.Code != 401 || off.tokens.calls != 0 {
+		t.Errorf("nobody allowed: %d, %d lookups", rec.Code, off.tokens.calls)
+	}
+}
+
+func TestAuthenticatePrefersNothingOverTheAPIHostsCaller(t *testing.T) {
+	// The session proxy calls Authenticate; this is how the API host's
+	// caller reaches it. An assertion beside it is not looked at.
+	req := httptest.NewRequest("POST", "/s-abcdefghij/mcp", nil)
+	req.Header.Set(AssertionHeader, "anything")
+	caller := User{Subject: "alice@example.com", Token: &TokenInfo{Name: "ci"}}
+	u, err := Authenticate(refuse{}, req.WithContext(WithUser(req.Context(), caller)))
+	if err != nil || u.Subject != caller.Subject || u.Token == nil {
+		t.Errorf("got %+v %v", u, err)
+	}
+	if _, err := Authenticate(refuse{}, req); err == nil {
+		t.Error("an assertion nobody vouches for was accepted")
+	}
+	if _, err := Authenticate(refuse{}, req.WithContext(WithUser(req.Context(), User{Subject: "alice@example.com"}))); err == nil {
+		t.Error("a caller on the context without a token was accepted")
 	}
 }

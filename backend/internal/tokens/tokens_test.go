@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -48,7 +49,7 @@ func newFixture(t *testing.T) *fixture {
 	f.store = NewStore(f.client, namespace)
 	f.store.now = func() time.Time { return f.clock }
 	f.mux = http.NewServeMux()
-	NewHandlers(f.store, auth.NewAllowList([]string{alice, bob, root})).Register(f.mux)
+	NewHandlers(f.store, auth.NewAllowList([]string{alice, bob, root}), "https://api.example.com").Register(f.mux)
 	return f
 }
 
@@ -67,7 +68,7 @@ func (f *fixture) object(id string) *unstructured.Unstructured {
 
 func (f *fixture) create(owner string, scopes []string, life time.Duration) (Token, string) {
 	f.t.Helper()
-	tok, secret, err := f.store.Create(context.Background(), owner, "ci", scopes, life)
+	tok, secret, err := f.store.Create(context.Background(), owner, "ci", scopes, "", life)
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -311,6 +312,8 @@ func TestLastUsedFailureDoesNotFailTheRequest(t *testing.T) {
 
 type tokenJSON struct {
 	ID, Name, Owner, Token string
+	TokenURL               string `json:"token_url"`
+	Session                string `json:"session_id"`
 	Scopes                 []string
 	Created, Expires       time.Time
 	LastUsed               *time.Time `json:"last_used"`
@@ -335,6 +338,7 @@ func TestHandlersCreateListRevoke(t *testing.T) {
 	}
 	created := decode[tokenJSON](t, rec)
 	if !tokenForm.MatchString(created.Token) || created.Name != "terraform" || created.Owner != alice ||
+		created.TokenURL != "https://api.example.com/oauth/token" || created.Session != "" ||
 		fmt.Sprint(created.Scopes) != "[sessions:read policies:write]" ||
 		!created.Expires.Equal(f.clock.Add(90*24*time.Hour)) || created.Created.IsZero() || created.LastUsed != nil {
 		t.Fatalf("created %+v", created)
@@ -432,6 +436,7 @@ func TestHandlersValidate(t *testing.T) {
 		"no expiry":         `{"name":"x","scopes":["sessions:read"],"expires_in_days":0}`,
 		"negative expiry":   `{"name":"x","scopes":["sessions:read"],"expires_in_days":-1}`,
 		"over a year":       `{"name":"x","scopes":["sessions:read"],"expires_in_days":366}`,
+		"not a session":     `{"name":"x","scopes":["sessions:connect"],"session_id":"../s-abcdefghij"}`,
 		"not JSON":          `name=x`,
 		"empty":             ``,
 	} {
@@ -511,5 +516,189 @@ func TestNoTokenIsLogged(t *testing.T) {
 	}
 	if strings.Contains(logs.String(), secret) || strings.Contains(logs.String(), digest(created.Token)) {
 		t.Errorf("a token or its hash is in the logs:\n%s", logs.String())
+	}
+}
+
+func (f *fixture) enableExchange(key string) {
+	f.t.Helper()
+	signer, err := NewSigner([]byte(key), "https://api.example.com")
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	f.store.EnableExchange(signer)
+}
+
+const testKey = "0123456789abcdef0123456789abcdef"
+
+func TestSignerKey(t *testing.T) {
+	if _, err := NewSigner([]byte("short"), "https://api.example.com"); err == nil {
+		t.Error("a short key was accepted")
+	}
+	if _, err := NewSigner(nil, ""); err == nil {
+		t.Error("no issuer was accepted")
+	}
+	a, err := NewSigner(nil, "https://api.example.com")
+	b, _ := NewSigner(nil, "https://api.example.com")
+	if err != nil || len(a.key) != 32 || bytes.Equal(a.key, b.key) {
+		t.Errorf("a made-up key: %v", err)
+	}
+}
+
+func TestExchangeAndAccessToken(t *testing.T) {
+	f := newFixture(t)
+	f.enableExchange(testKey)
+	ctx := context.Background()
+	tok, secret, err := f.store.Create(ctx, alice, "ci", []string{auth.ScopeSessionsRead, auth.ScopeSessionsConnect}, "s-abcdefghij", 30*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	owner, grant, err := f.store.ExchangeToken(ctx, tok.ID, secret, nil)
+	if err != nil || owner != alice || grant.ExpiresIn != time.Hour || fmt.Sprint(grant.Scopes) != "[sessions:read sessions:connect]" {
+		t.Fatalf("exchange: %q %+v %v", owner, grant, err)
+	}
+	if strings.Contains(grant.AccessToken, secret[17:]) || strings.Contains(grant.AccessToken, digest(secret)) {
+		t.Fatal("the access token holds the API token")
+	}
+	owner, info, err := f.store.VerifyToken(ctx, grant.AccessToken)
+	if err != nil || owner != alice || info.Name != "ci" || info.Session != "s-abcdefghij" ||
+		!info.Has(auth.ScopeSessionsConnect) || info.Has(auth.ScopeSessionsWrite) {
+		t.Fatalf("the access token: %q %+v %v", owner, info, err)
+	}
+
+	// Narrowed.
+	_, narrow, err := f.store.ExchangeToken(ctx, tok.ID, secret, []string{auth.ScopeSessionsRead, auth.ScopeSessionsRead})
+	if err != nil || fmt.Sprint(narrow.Scopes) != "[sessions:read]" {
+		t.Fatalf("narrowed: %+v %v", narrow, err)
+	}
+	if _, info, _ := f.store.VerifyToken(ctx, narrow.AccessToken); info.Has(auth.ScopeSessionsConnect) || !info.Has(auth.ScopeSessionsRead) {
+		t.Errorf("narrowed access token has %v", info.Scopes)
+	}
+	if _, _, err := f.store.ExchangeToken(ctx, tok.ID, secret, []string{auth.ScopePoliciesWrite}); !errors.Is(err, auth.ErrInvalidScope) {
+		t.Errorf("a wider scope: %v", err)
+	}
+
+	// The client must be the token's own id, and the secret the token.
+	other, otherSecret := f.create(bob, auth.Scopes, time.Hour)
+	for name, c := range map[string][2]string{
+		"another's id":     {other.ID, secret},
+		"another's secret": {tok.ID, otherSecret},
+		"an access token":  {tok.ID, grant.AccessToken},
+		"the hash":         {tok.ID, digest(secret)},
+		"unknown":          {"aaaaaaaaaaaa", "bjs_aaaaaaaaaaaa_" + strings.Repeat("a", 43)},
+		"empty":            {"", ""},
+	} {
+		if _, _, err := f.store.ExchangeToken(ctx, c[0], c[1], nil); !errors.Is(err, auth.ErrInvalidToken) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+
+	// It lasts an hour, to the second.
+	f.clock = f.clock.Add(time.Hour - time.Second)
+	if _, _, err := f.store.VerifyToken(ctx, grant.AccessToken); err != nil {
+		t.Errorf("a second before the hour: %v", err)
+	}
+	f.clock = f.clock.Add(2 * time.Second)
+	if _, _, err := f.store.VerifyToken(ctx, grant.AccessToken); !errors.Is(err, auth.ErrInvalidToken) {
+		t.Errorf("after the hour: %v", err)
+	}
+	// And never longer than the API token.
+	short, shortSecret := f.create(alice, auth.Scopes, 10*time.Minute)
+	if _, g, err := f.store.ExchangeToken(ctx, short.ID, shortSecret, nil); err != nil || g.ExpiresIn != 10*time.Minute {
+		t.Errorf("an access token of a token that expires in ten minutes: %v %v", g.ExpiresIn, err)
+	}
+}
+
+func TestAccessTokenForgeries(t *testing.T) {
+	f := newFixture(t)
+	f.enableExchange(testKey)
+	ctx := context.Background()
+	tok, secret := f.create(alice, auth.Scopes, 24*time.Hour)
+	_, grant, err := f.store.ExchangeToken(ctx, tok.ID, secret, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sign := func(method jwt.SigningMethod, key any, change func(*accessClaims)) string {
+		c := accessClaims{
+			RegisteredClaims: jwt.RegisteredClaims{
+				Issuer: "https://api.example.com", Audience: jwt.ClaimStrings{"https://api.example.com"}, Subject: alice,
+				IssuedAt: jwt.NewNumericDate(f.clock), ExpiresAt: jwt.NewNumericDate(f.clock.Add(time.Hour)),
+			},
+			ClientID: tok.ID, Scope: strings.Join(auth.Scopes, " "),
+		}
+		if change != nil {
+			change(&c)
+		}
+		raw, err := jwt.NewWithClaims(method, c).SignedString(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	if _, _, err := f.store.VerifyToken(ctx, sign(jwt.SigningMethodHS256, []byte(testKey), nil)); err != nil {
+		t.Fatalf("the test's own signing is off: %v", err)
+	}
+	parts := strings.Split(grant.AccessToken, ".")
+	for name, forged := range map[string]string{
+		"another key":      sign(jwt.SigningMethodHS256, []byte("another key of thirty-two bytes!!"), nil),
+		"no signature":     sign(jwt.SigningMethodNone, jwt.UnsafeAllowNoneSignatureType, nil),
+		"signature cut":    parts[0] + "." + parts[1] + ".",
+		"HS384":            sign(jwt.SigningMethodHS384, []byte(testKey), nil),
+		"another audience": sign(jwt.SigningMethodHS256, []byte(testKey), func(c *accessClaims) { c.Audience = jwt.ClaimStrings{"https://sessions.example.com"} }),
+		"another issuer":   sign(jwt.SigningMethodHS256, []byte(testKey), func(c *accessClaims) { c.Issuer = "https://app.example.com" }),
+		"no expiry":        sign(jwt.SigningMethodHS256, []byte(testKey), func(c *accessClaims) { c.ExpiresAt = nil }),
+		"expired":          sign(jwt.SigningMethodHS256, []byte(testKey), func(c *accessClaims) { c.ExpiresAt = jwt.NewNumericDate(f.clock.Add(-time.Second)) }),
+		"another owner":    sign(jwt.SigningMethodHS256, []byte(testKey), func(c *accessClaims) { c.Subject = bob }),
+		"no client":        sign(jwt.SigningMethodHS256, []byte(testKey), func(c *accessClaims) { c.ClientID = "" }),
+		"unknown client":   sign(jwt.SigningMethodHS256, []byte(testKey), func(c *accessClaims) { c.ClientID = "aaaaaaaaaaaa" }),
+		"not a JWT":        "nonsense",
+	} {
+		if _, _, err := f.store.VerifyToken(ctx, forged); !errors.Is(err, auth.ErrInvalidToken) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	// Scopes the API token never had are not to be had by claiming them.
+	limited, _ := f.create(alice, []string{auth.ScopeSessionsRead}, time.Hour)
+	wide := sign(jwt.SigningMethodHS256, []byte(testKey), func(c *accessClaims) { c.ClientID = limited.ID })
+	if _, info, err := f.store.VerifyToken(ctx, wide); err != nil || fmt.Sprint(info.Scopes) != "[sessions:read]" {
+		t.Errorf("claimed scopes: %v %v", info.Scopes, err)
+	}
+
+	// A restart with another key, or with none configured, ends them.
+	f.enableExchange("ANOTHER-KEY-0123456789abcdef0123")
+	if _, _, err := f.store.VerifyToken(ctx, grant.AccessToken); !errors.Is(err, auth.ErrInvalidToken) {
+		t.Errorf("after the key changed: %v", err)
+	}
+	f.enableExchange(testKey)
+	// Revoking the API token ends its access tokens.
+	if err := f.store.Delete(ctx, tok.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.store.VerifyToken(ctx, grant.AccessToken); !errors.Is(err, auth.ErrInvalidToken) {
+		t.Errorf("after revocation: %v", err)
+	}
+	// Without a signer there is no exchange and no access token.
+	f.store.signer = nil
+	if _, _, err := f.store.VerifyToken(ctx, grant.AccessToken); !errors.Is(err, auth.ErrInvalidToken) {
+		t.Errorf("no signer: %v", err)
+	}
+}
+
+func TestSessionBoundToken(t *testing.T) {
+	f := newFixture(t)
+	rec := f.as(user(alice), "POST", "/api/tokens", `{"name":"agent","scopes":["sessions:connect"],"session_id":"s-abcdefghij"}`)
+	created := decode[tokenJSON](t, rec)
+	if rec.Code != http.StatusCreated || created.Session != "s-abcdefghij" {
+		t.Fatalf("create: %d %+v", rec.Code, created)
+	}
+	if spec := f.object(created.ID).Object["spec"].(map[string]any); spec["session"] != "s-abcdefghij" {
+		t.Errorf("stored %v", spec)
+	}
+	_, info, err := f.store.VerifyToken(context.Background(), created.Token)
+	if err != nil || info.Session != "s-abcdefghij" {
+		t.Errorf("verified %+v %v", info, err)
+	}
+	if list := decode[[]tokenJSON](t, f.as(user(alice), "GET", "/api/tokens", "")); len(list) != 1 || list[0].Session != "s-abcdefghij" {
+		t.Errorf("list %+v", list)
 	}
 }

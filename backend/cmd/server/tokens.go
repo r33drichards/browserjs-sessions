@@ -9,6 +9,7 @@ import (
 
 	"github.com/r33drichards/browserjs-sessions/backend/internal/auth"
 	"github.com/r33drichards/browserjs-sessions/backend/internal/config"
+	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
 	"github.com/r33drichards/browserjs-sessions/backend/internal/tokens"
 )
 
@@ -23,14 +24,15 @@ const (
 // whole of newHandler's):
 //
 //   - Requests to the API host (API_URL) are that host's and nothing else's:
-//     /v1/..., with a token, served by app's API as the token's owner.
+//     the API under /v1/, a session's MCP endpoint at /<id>/mcp, and the
+//     token exchange, each served by app as the token's owner.
 //   - On the app's host, /api/tokens is where a signed-in user makes and
 //     revokes tokens. Only when there is somebody who may use one
 //     (ALLOWED_EMAILS): otherwise the path is unknown, as it is without
 //     API_URL, and the API host refuses every token.
 //
 // Everything else is app's, untouched.
-func withAPITokens(cfg config.Config, verifier auth.Verifier, store *tokens.Store, app http.Handler) http.Handler {
+func withAPITokens(cfg config.Config, verifier auth.Verifier, store *tokens.Store, app http.Handler) (http.Handler, error) {
 	hostOf := func(raw string) string {
 		u, err := url.Parse(raw)
 		if err != nil {
@@ -40,10 +42,22 @@ func withAPITokens(cfg config.Config, verifier auth.Verifier, store *tokens.Stor
 	}
 	apiHostName, appHostName := hostOf(cfg.APIURL), hostOf(cfg.PublicURL)
 	allowed := auth.NewAllowList(cfg.AllowedEmails)
-	apiHost := auth.NewAPIHost(store, allowed, auth.NewFailureLimiter(tokenFailures, tokenFailureInterval, time.Now), app)
+	signer, err := tokens.NewSigner(cfg.APISigningKey, cfg.APIURL)
+	if err != nil {
+		return nil, err
+	}
+	store.EnableExchange(signer)
+	apiHost := auth.NewAPIHost(auth.APIHostConfig{
+		Tokens:         store,
+		Allowed:        allowed,
+		Limiter:        auth.NewFailureLimiter(tokenFailures, tokenFailureInterval, time.Now),
+		App:            app,
+		ValidSessionID: sessions.ValidID,
+		SessionBase:    cfg.SessionURLs.Base,
+	})
 
 	mux := http.NewServeMux()
-	tokens.NewHandlers(store, allowed).Register(mux)
+	tokens.NewHandlers(store, allowed, cfg.APIURL).Register(mux)
 	manage := auth.Middleware(verifier)(mux)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -59,5 +73,5 @@ func withAPITokens(cfg config.Config, verifier auth.Verifier, store *tokens.Stor
 		default:
 			app.ServeHTTP(w, r)
 		}
-	})
+	}), nil
 }

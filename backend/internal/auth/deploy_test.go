@@ -25,26 +25,39 @@ func TestAllowedEmailsMirrorPomeriumsPolicy(t *testing.T) {
 			routes := pomeriumRoutes(t, c.pomerium)
 			var signIn []string
 			var apiFrom string
+			api := map[string]pomeriumRoute{}
 			for _, route := range routes {
 				if route.Name == "app" {
 					signIn = route.emails()
 				}
-				if route.Name != "api" {
+				host, _ := strings.CutPrefix(route.From, "https://api.")
+				if host == route.From {
 					continue
 				}
 				apiFrom = route.From
+				api[route.Name] = route
 				// The API host: nobody signs in, Pomerium says nothing about
-				// the caller, and only the API's paths get through.
-				if !route.Public || route.PassIdentity || len(route.Policy) != 0 || route.Prefix != "/v1/" ||
-					route.To != "http://backend" || !route.PreserveHost || route.Websockets {
-					t.Errorf("the api route is %+v", route)
+				// the caller, and no websocket (the screen is not here).
+				if !route.Public || route.PassIdentity || len(route.Policy) != 0 || route.To != "http://backend" ||
+					!route.PreserveHost || route.Websockets || route.MCP != nil {
+					t.Errorf("route %s is %+v", route.Name, route)
+				}
+			}
+			// Only the API's paths get through, each matched whole.
+			if len(api) != 3 || api["api"].Prefix != "/v1/" || api["api-token"].Path != "/oauth/token" ||
+				api["api-mcp"].Regex != `^/s-[a-z0-9]+/mcp(/.*)?$` {
+				t.Errorf("the API host's routes are %+v", api)
+			}
+			for name, route := range api {
+				if n := btoi(route.Prefix != "") + btoi(route.Path != "") + btoi(route.Regex != ""); n != 1 {
+					t.Errorf("route %s matches by %d of prefix, path and regex", name, n)
 				}
 			}
 			if len(signIn) == 0 {
 				t.Fatal("found no email addresses in the app route's policy")
 			}
 			if apiFrom == "" {
-				t.Fatal("no api route")
+				t.Fatal("no routes for the API host")
 			}
 			env := backendEnv(t, c.backend)
 			// The base is a template: its API_URL is empty, tokens off. An
@@ -83,6 +96,9 @@ type pomeriumRoute struct {
 	From         string `json:"from"`
 	To           string `json:"to"`
 	Prefix       string `json:"prefix"`
+	Path         string `json:"path"`
+	Regex        string `json:"regex"`
+	MCP          any    `json:"mcp"`
 	Public       bool   `json:"allow_public_unauthenticated_access"`
 	PassIdentity bool   `json:"pass_identity_headers"`
 	PreserveHost bool   `json:"preserve_host_header"`
@@ -96,6 +112,13 @@ type pomeriumRoute struct {
 			} `json:"or"`
 		} `json:"allow"`
 	} `json:"policy"`
+}
+
+func btoi(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func (r pomeriumRoute) emails() (emails []string) {

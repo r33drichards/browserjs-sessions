@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -36,8 +37,11 @@ func tokenServer(t *testing.T, allowed ...string) (*server, *tokens.Store) {
 	}
 	store := tokens.NewStore(dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
 		map[schema.GroupVersionResource]string{tokens.GVR: "APITokenList"}), sessionstest.Namespace)
-	cfg := config.Config{PublicURL: sessionstest.PublicURL, APIURL: "https://" + apiHost, AllowedEmails: allowed}
-	s.handler = withAPITokens(cfg, verifier, store, s.handler)
+	cfg := config.Config{PublicURL: sessionstest.PublicURL, SessionURLs: sessionstest.URLs(),
+		APIURL: "https://" + apiHost, AllowedEmails: allowed}
+	if s.handler, err = withAPITokens(cfg, verifier, store, s.handler); err != nil {
+		t.Fatal(err)
+	}
 	return s, store
 }
 
@@ -248,7 +252,7 @@ func TestTokenPageAPI(t *testing.T) {
 func TestRemovedFromTheAllowListLosesAPIAccess(t *testing.T) {
 	// mallory made a token while allowed; the list a restart later lacks her.
 	s, store := tokenServer(t, alice)
-	_, token, err := store.Create(context.Background(), mallory, "kept", auth.Scopes, 24*time.Hour)
+	_, token, err := store.Create(context.Background(), mallory, "kept", auth.Scopes, "", 24*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +276,7 @@ func TestRemovedFromTheAllowListLosesAPIAccess(t *testing.T) {
 // everything; the app has no token endpoints.
 func TestAPITokensOffWithNobodyAllowed(t *testing.T) {
 	s, store := tokenServer(t)
-	_, token, err := store.Create(context.Background(), alice, "early", auth.Scopes, 24*time.Hour)
+	_, token, err := store.Create(context.Background(), alice, "early", auth.Scopes, "", 24*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,5 +302,190 @@ func TestNoAPIURLNoTokens(t *testing.T) {
 	}
 	if rec := s.bearer("GET", appHost, "/api/sessions", "bjs_abcdefghijkl_"+strings.Repeat("a", 43), ""); rec.Code != http.StatusUnauthorized {
 		t.Errorf("a bearer token: %d", rec.Code)
+	}
+}
+
+// exchange trades an API token for an access token, as an OAuth client does.
+func (s *server) exchange(id, token, scope string) (*httptest.ResponseRecorder, string) {
+	form := url.Values{"grant_type": {"client_credentials"}, "client_id": {id}, "client_secret": {token}}
+	if scope != "" {
+		form.Set("scope", scope)
+	}
+	req := httptest.NewRequest("POST", "/oauth/token", strings.NewReader(form.Encode()))
+	req.Host = apiHost
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	s.handler.ServeHTTP(rec, req)
+	var granted struct {
+		AccessToken string `json:"access_token"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &granted)
+	return rec, granted.AccessToken
+}
+
+func TestAPIHostMCP(t *testing.T) {
+	s, store := tokenServer(t, alice, bob, root)
+	mine, other, theirs := s.session(alice), s.session(alice), s.session(bob)
+	id, token := s.newToken(alice, auth.ScopeSessionsConnect)
+	mcp := func(session, token string, headers ...string) *httptest.ResponseRecorder {
+		return s.bearer("POST", apiHost, "/"+session+"/mcp", token, "{}", headers...)
+	}
+
+	// The owner, with the scope: the pod answers, through the session
+	// proxy, whose hardening is on the answer.
+	before := s.pod.Load()
+	rec := mcp(mine.ID, token)
+	if rec.Code != http.StatusOK || rec.Body.String() != "pod:/mcp" || s.pod.Load() != before+1 {
+		t.Fatalf("the owner's call: %d %q", rec.Code, rec.Body)
+	}
+	if rec.Header().Get("Content-Security-Policy") == "" || rec.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Errorf("the answer is not hardened: %v", rec.Header())
+	}
+	if rec := s.bearer("POST", apiHost, "/"+mine.ID+"/mcp/sub", token, "{}"); rec.Code != http.StatusOK || rec.Body.String() != "pod:/mcp/sub" {
+		t.Errorf("a path under mcp: %d %q", rec.Code, rec.Body)
+	}
+	if rec := s.bearer("GET", apiHost, "/"+mine.ID+"/mcp", token, ""); rec.Code != http.StatusOK {
+		t.Errorf("the event stream: %d %q", rec.Code, rec.Body)
+	}
+
+	before = s.pod.Load()
+	refused := func(name string, rec *httptest.ResponseRecorder, want int) {
+		t.Helper()
+		if rec.Code != want {
+			t.Errorf("%s: %d %s, want %d", name, rec.Code, rec.Body, want)
+		}
+	}
+	// Somebody else's session is not there, for a user's token and for an
+	// admin's alike: a token is never an admin.
+	refused("another user's session", mcp(theirs.ID, token), http.StatusNotFound)
+	_, adminToken := s.newToken(root, auth.Scopes...)
+	refused("an admin's token on another's session", mcp(mine.ID, adminToken), http.StatusNotFound)
+	refused("a session that does not exist", mcp("s-zzzzzzzzzz", token), http.StatusNotFound)
+	// Without sessions:connect, whatever else the token has.
+	_, manage := s.newToken(alice, auth.ScopeSessionsRead, auth.ScopeSessionsWrite, auth.ScopePoliciesRead, auth.ScopePoliciesWrite)
+	refused("without the scope", mcp(mine.ID, manage), http.StatusForbidden)
+	// A token for one session.
+	_, bound, err := store.Create(context.Background(), alice, "one", auth.Scopes, mine.ID, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refused("a bound token on another session", mcp(other.ID, bound), http.StatusForbidden)
+	refused("a bound token on another's API", s.bearer("GET", apiHost, "/v1/sessions/"+other.ID, bound, ""), http.StatusForbidden)
+	refused("a bound token listing", s.bearer("GET", apiHost, "/v1/sessions", bound, ""), http.StatusForbidden)
+	// Expired, revoked, none.
+	_, expired, err := store.Create(context.Background(), alice, "old", auth.Scopes, "", -time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refused("an expired token", mcp(mine.ID, expired), http.StatusUnauthorized)
+	refused("no token", mcp(mine.ID, ""), http.StatusUnauthorized)
+	refused("a cookie and an assertion", mcp(mine.ID, "", "Cookie", "_pomerium=x", auth.AssertionHeader, s.assertion(alice, apiHost)), http.StatusUnauthorized)
+	refused("an assertion for the sessions' host", mcp(mine.ID, "", auth.AssertionHeader, s.assertion(alice, "sessions.example.com")), http.StatusUnauthorized)
+	// The browser-request guard is the session proxy's, and still there.
+	refused("a navigation", mcp(mine.ID, token, "Sec-Fetch-Mode", "navigate"), http.StatusForbidden)
+	refused("a script", mcp(mine.ID, token, "Sec-Fetch-Mode", "no-cors", "Sec-Fetch-Dest", "script"), http.StatusForbidden)
+	// Nothing else of a session.
+	refused("the screen", s.bearer("GET", apiHost, "/"+mine.ID+"/vnc", token, ""), http.StatusNotFound)
+	refused("an upload", s.bearer("PUT", apiHost, "/"+mine.ID+"/api/artifact-uploads/"+strings.Repeat("a", 64), token, "x"), http.StatusNotFound)
+	if s.pod.Load() != before {
+		t.Errorf("%d refused requests reached a pod", s.pod.Load()-before)
+	}
+
+	if rec := mcp(mine.ID, bound); rec.Code != http.StatusOK {
+		t.Errorf("a bound token on its session: %d %s", rec.Code, rec.Body)
+	}
+	if rec := s.do("DELETE", appHost, "/api/tokens/"+id, alice, ""); rec.Code != http.StatusNoContent {
+		t.Fatal("revoke")
+	}
+	refused("a revoked token", mcp(mine.ID, token), http.StatusUnauthorized)
+}
+
+// The sessions' host is Pomerium's: a token is nothing there.
+func TestSessionsHostIgnoresATokenOnMCP(t *testing.T) {
+	s, _ := tokenServer(t, alice)
+	mine := s.session(alice)
+	_, token := s.newToken(alice, auth.Scopes...)
+	_, access := s.exchange(strings.Split(token, "_")[1], token, "")
+	before := s.pod.Load()
+	for _, credential := range []string{token, access} {
+		rec := s.bearer("POST", "sessions.example.com", "/"+mine.ID+"/mcp", credential, "{}")
+		if rec.Code != http.StatusForbidden || s.pod.Load() != before {
+			t.Errorf("a token on the sessions' host: %d %s", rec.Code, rec.Body)
+		}
+	}
+	// And Pomerium's assertion still works there.
+	rec := s.send("POST", "sessions.example.com", "/"+mine.ID+"/mcp", s.assertion(alice, "sessions.example.com"), "{}")
+	if rec.Code != http.StatusOK {
+		t.Errorf("signed in on the sessions' host: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestClientCredentials(t *testing.T) {
+	s, _ := tokenServer(t, alice, bob)
+	mine, theirs := s.session(alice), s.session(bob)
+	id, token := s.newToken(alice, auth.ScopeSessionsConnect, auth.ScopeSessionsRead)
+
+	rec, access := s.exchange(id, token, "")
+	var granted struct {
+		TokenType string `json:"token_type"`
+		ExpiresIn int    `json:"expires_in"`
+		Scope     string
+	}
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &granted) != nil || access == "" ||
+		granted.TokenType != "Bearer" || granted.ExpiresIn != 3600 || granted.Scope != "sessions:read sessions:connect" {
+		t.Fatalf("exchange: %d %s", rec.Code, rec.Body)
+	}
+	if strings.Contains(rec.Body.String(), token) || strings.HasPrefix(access, "bjs_") {
+		t.Error("the access token is the API token")
+	}
+	if rec := s.bearer("POST", apiHost, "/"+mine.ID+"/mcp", access, "{}"); rec.Code != http.StatusOK || rec.Body.String() != "pod:/mcp" {
+		t.Errorf("MCP with the access token: %d %s", rec.Code, rec.Body)
+	}
+	if rec := s.bearer("GET", apiHost, "/v1/sessions", access, ""); rec.Code != http.StatusOK {
+		t.Errorf("the API with the access token: %d %s", rec.Code, rec.Body)
+	}
+	if rec := s.bearer("POST", apiHost, "/"+theirs.ID+"/mcp", access, "{}"); rec.Code != http.StatusNotFound {
+		t.Errorf("another's session with the access token: %d", rec.Code)
+	}
+	if rec := s.bearer("POST", apiHost, "/v1/sessions", access, "{}"); rec.Code != http.StatusForbidden {
+		t.Errorf("a scope the API token lacks: %d", rec.Code)
+	}
+
+	// Narrowed: the access token has what was asked for, and no more.
+	_, narrow := s.exchange(id, token, "sessions:read")
+	if rec := s.bearer("POST", apiHost, "/"+mine.ID+"/mcp", narrow, "{}"); rec.Code != http.StatusForbidden {
+		t.Errorf("MCP with a token narrowed to sessions:read: %d", rec.Code)
+	}
+	if rec, _ := s.exchange(id, token, "sessions:write"); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "invalid_scope") {
+		t.Errorf("a wider scope: %d %s", rec.Code, rec.Body)
+	}
+	// An access token is not a client secret, and makes no token.
+	if rec, _ := s.exchange(id, access, ""); rec.Code != http.StatusUnauthorized {
+		t.Errorf("exchanging an access token: %d", rec.Code)
+	}
+	if rec := s.bearer("POST", appHost, "/api/tokens", access, `{"name":"x","scopes":["sessions:read"]}`); rec.Code != http.StatusUnauthorized {
+		t.Errorf("making a token with an access token: %d", rec.Code)
+	}
+
+	// A wrong secret and a client that does not exist get the same answer.
+	wrong, _ := s.exchange(id, token[:len(token)-1]+"-", "")
+	_, bobs := s.newToken(bob, auth.ScopeSessionsRead)
+	swapped, _ := s.exchange(id, bobs, "")
+	unknown, _ := s.exchange("aaaaaaaaaaaa", "bjs_aaaaaaaaaaaa_"+strings.Repeat("a", 43), "")
+	for name, rec := range map[string]*httptest.ResponseRecorder{"wrong secret": wrong, "another's secret": swapped, "unknown client": unknown} {
+		if rec.Code != http.StatusUnauthorized || rec.Body.String() != unknown.Body.String() || strings.TrimSpace(rec.Body.String()) != `{"error":"invalid_client"}` {
+			t.Errorf("%s: %d %s", name, rec.Code, rec.Body)
+		}
+	}
+
+	// Revoking the API token ends its access tokens at once.
+	if rec := s.do("DELETE", appHost, "/api/tokens/"+id, alice, ""); rec.Code != http.StatusNoContent {
+		t.Fatal("revoke")
+	}
+	if rec := s.bearer("POST", apiHost, "/"+mine.ID+"/mcp", access, "{}"); rec.Code != http.StatusUnauthorized {
+		t.Errorf("the access token after its API token was revoked: %d", rec.Code)
+	}
+	if rec, _ := s.exchange(id, token, ""); rec.Code != http.StatusUnauthorized {
+		t.Errorf("exchange after revocation: %d", rec.Code)
 	}
 }

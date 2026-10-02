@@ -67,11 +67,15 @@ spec:
                 scopes:
                   type: array
                   minItems: 1
-                  maxItems: 4
+                  maxItems: 5
                   x-kubernetes-list-type: set
                   items:
                     type: string
-                    enum: ["sessions:read", "sessions:write", "policies:read", "policies:write"]
+                    enum: ["sessions:read", "sessions:write", "sessions:connect", "policies:read", "policies:write"]
+                session:
+                  description: The one session the token is for. Absent, it is for all its owner's sessions.
+                  type: string
+                  pattern: "^s-([a-z2-7]{10}|[a-z0-9]{5})$"
                 expiresAt:
                   type: string
                   format: date-time

@@ -249,3 +249,28 @@ func TestAPITokens(t *testing.T) {
 		}
 	}
 }
+
+func TestAPISigningKey(t *testing.T) {
+	m := map[string]string{
+		"PUBLIC_URL":           "https://app.example.com",
+		"SESSION_URL_TEMPLATE": "https://sessions.example.com/{id}",
+		"POMERIUM_JWKS_URL":    "https://app.example.com/.well-known/pomerium/jwks.json",
+	}
+	if c, err := FromEnv(env(m)); err != nil || c.APISigningKey != nil {
+		t.Fatalf("no key: %v %v", c.APISigningKey, err)
+	}
+	// 32 bytes, as `openssl rand -base64 32` and as base64url print them.
+	for _, key := range []string{"MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY", " MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=\n"} {
+		m["API_SIGNING_KEY"] = key
+		if c, err := FromEnv(env(m)); err != nil || string(c.APISigningKey) != "0123456789abcdef0123456789abcdef" {
+			t.Errorf("%q: %q %v", key, c.APISigningKey, err)
+		}
+	}
+	for _, bad := range []string{"c2hvcnQ=", "not base64 at all!", "0123456789abcdef"} {
+		m["API_SIGNING_KEY"] = bad
+		_, err := FromEnv(env(m))
+		if err == nil || !strings.Contains(err.Error(), "API_SIGNING_KEY") || strings.Contains(err.Error(), bad) {
+			t.Errorf("%q: %v", bad, err)
+		}
+	}
+}

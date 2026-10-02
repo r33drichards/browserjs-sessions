@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/r33drichards/browserjs-sessions/backend/internal/auth"
+	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
 )
 
 const (
@@ -30,12 +31,16 @@ const (
 type Handlers struct {
 	store   *Store
 	allowed auth.AllowList
+	// tokenURL is where a token is exchanged for an access token.
+	tokenURL string
 
 	creating sync.Mutex // the cap is "list, then create"
 }
 
-func NewHandlers(store *Store, allowed auth.AllowList) *Handlers {
-	return &Handlers{store: store, allowed: allowed}
+// NewHandlers serves the tokens in store to the users in allowed. apiURL is
+// the API host's base URL.
+func NewHandlers(store *Store, allowed auth.AllowList, apiURL string) *Handlers {
+	return &Handlers{store: store, allowed: allowed, tokenURL: apiURL + "/oauth/token"}
 }
 
 // Register adds the routes to mux, which must be behind auth.Middleware.
@@ -131,6 +136,9 @@ func (h *Handlers) create(w http.ResponseWriter, r *http.Request, u auth.User) {
 		Name   string   `json:"name"`
 		Scopes []string `json:"scopes"`
 		Days   *int     `json:"expires_in_days"`
+		// The one session the token is for. The owner check applies all
+		// the same: naming somebody else's session gives a token for nothing.
+		Session string `json:"session_id"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "body must be JSON with a name and scopes")
@@ -144,6 +152,10 @@ func (h *Handlers) create(w http.ResponseWriter, r *http.Request, u auth.User) {
 	scopes, ok := validScopes(body.Scopes)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "scopes must be one or more of "+strings.Join(auth.Scopes, ", "))
+		return
+	}
+	if body.Session != "" && !sessions.ValidID(body.Session) {
+		writeError(w, http.StatusBadRequest, "session_id is not a session's ID")
 		return
 	}
 	// Every token expires.
@@ -179,16 +191,18 @@ func (h *Handlers) create(w http.ResponseWriter, r *http.Request, u auth.User) {
 		writeError(w, http.StatusConflict, "token limit reached; revoke one first")
 		return
 	}
-	t, token, err := h.store.Create(r.Context(), u.Subject, name, scopes, time.Duration(days)*24*time.Hour)
+	t, token, err := h.store.Create(r.Context(), u.Subject, name, scopes, body.Session, time.Duration(days)*24*time.Hour)
 	if err != nil {
 		h.failed(w, err)
 		return
 	}
-	slog.Info("API token created", "token", t.ID, "owner", t.Owner, "scopes", t.Scopes, "expires", t.Expires)
+	slog.Info("API token created", "token", t.ID, "owner", t.Owner, "scopes", t.Scopes, "session", t.Session, "expires", t.Expires)
+	// The token is also an OAuth client: its id and itself, at token_url.
 	writeJSON(w, http.StatusCreated, struct {
 		Token
-		Secret string `json:"token"`
-	}{t, token})
+		Secret   string `json:"token"`
+		TokenURL string `json:"token_url"`
+	}{t, token, h.tokenURL})
 }
 
 // revoke deletes a token of the caller's, or of anyone's for an admin.

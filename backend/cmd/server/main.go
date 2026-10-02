@@ -107,8 +107,10 @@ func run() error {
 	handler, px := newHandler(cfg, verifier, store, tracker)
 	// API tokens and the API host (API_URL): tokens.go.
 	if cfg.APIURL != "" {
-		handler = withAPITokens(cfg, verifier, tokens.NewStore(dyn, cfg.Namespace), handler)
-		slog.Info("API host", "url", cfg.APIURL, "tokens", cfg.APITokens())
+		if handler, err = withAPITokens(cfg, verifier, tokens.NewStore(dyn, cfg.Namespace), handler); err != nil {
+			return err
+		}
+		slog.Info("API host", "url", cfg.APIURL, "tokens", cfg.APITokens(), "signingKeyKept", len(cfg.APISigningKey) > 0)
 	}
 
 	srv := &http.Server{

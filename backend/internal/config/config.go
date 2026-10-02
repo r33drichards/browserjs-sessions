@@ -2,6 +2,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -61,6 +62,9 @@ type Config struct {
 	// policy of Pomerium's routes, which is not consulted on the API host.
 	// Empty: nobody may make a token, and the API host refuses every one.
 	AllowedEmails []string
+	// APISigningKey signs the access tokens API tokens are exchanged for.
+	// Empty: a key made at start, so access tokens end with the process.
+	APISigningKey []byte
 }
 
 // APITokens reports whether users can make API tokens and use them.
@@ -181,6 +185,17 @@ func FromEnv(get func(string) string) (Config, error) {
 		if email = strings.ToLower(strings.TrimSpace(email)); email != "" {
 			c.AllowedEmails = append(c.AllowedEmails, email)
 		}
+	}
+	if raw := strings.TrimSpace(get("API_SIGNING_KEY")); raw != "" {
+		key, err := base64.StdEncoding.DecodeString(raw)
+		if err != nil {
+			key, err = base64.RawURLEncoding.DecodeString(strings.TrimRight(raw, "="))
+		}
+		// The value is not put in the error.
+		if err != nil || len(key) < 32 {
+			return Config{}, fmt.Errorf("API_SIGNING_KEY must be at least 32 bytes, in base64")
+		}
+		c.APISigningKey = key
 	}
 	return c, nil
 }

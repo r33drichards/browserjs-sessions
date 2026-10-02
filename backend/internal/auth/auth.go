@@ -42,7 +42,9 @@ type User struct {
 // TokenInfo is the API token a request was made with.
 type TokenInfo struct {
 	Name   string   // what its owner called it
-	Scopes []string // "sessions:read", "sessions:write", "policies:read", "policies:write"
+	Scopes []string // "sessions:read", "sessions:write", "sessions:connect", "policies:read", "policies:write"
+	// Session is the one session the token is for, "" for all its owner's.
+	Session string
 }
 
 type Verifier interface {
@@ -148,6 +150,12 @@ var ErrNoAssertion = errors.New("request carries no " + AssertionHeader)
 
 // Authenticate establishes who made a request.
 func Authenticate(v Verifier, r *http.Request) (User, error) {
+	// A request the API host let in (apihost.go) already has its caller,
+	// from its token. Only the server puts one on the context, and the API
+	// host passes on neither an assertion nor a cookie.
+	if u, ok := UserFrom(r.Context()); ok && u.Token != nil {
+		return u, nil
+	}
 	raw := r.Header.Get(AssertionHeader)
 	if raw == "" {
 		return User{}, ErrNoAssertion
@@ -159,12 +167,6 @@ func Authenticate(v Verifier, r *http.Request) (User, error) {
 func Middleware(v Verifier) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// A request the API host let in (apihost.go) already has its
-			// caller, from its token. Only the server puts one there.
-			if u, ok := UserFrom(r.Context()); ok && u.Token != nil {
-				next.ServeHTTP(w, r)
-				return
-			}
 			u, err := Authenticate(v, r)
 			if err != nil {
 				// The caller only learns "not signed in"; the reason (expired,

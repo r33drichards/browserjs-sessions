@@ -14,9 +14,23 @@ info:
     | `https://app.<domain>/api` | Pomerium's signed assertion (browser cookie) | the UI |
     | `https://api.<domain>/v1` | `Authorization: Bearer bjs_<id>_<secret>` | Terraform, scripts |
 
-    Paths below are relative to either base. On the API host nothing else
-    is served, cookies are ignored, and a missing, malformed, expired,
-    revoked or unknown token is `401 {"error": "invalid token"}`.
+    Paths below are relative to either base. On the API host cookies are
+    ignored, and a missing, malformed, expired, revoked or unknown token is
+    `401 {"error": "invalid token"}`.
+
+    **The API host serves two more things**, at its root and not under
+    `/v1` (see "API host" at the end of `paths`), and nothing else:
+
+    | URL | |
+    |---|---|
+    | `https://api.<domain>/<session id>/mcp` | the session's MCP endpoint, as `https://sessions.<domain>/<session id>/mcp` but with a token; needs the scope `sessions:connect` |
+    | `https://api.<domain>/oauth/token` | OAuth 2.0 client credentials: an API token exchanged for an access token of an hour at most |
+
+    The bearer credential is an API token (`bjs_<id>_<secret>`) or an
+    access token made from one; both are accepted wherever a token is.
+    A token may be bound to one session (`session_id`): it is then refused
+    (403) for any other session and for the routes that name none
+    (`GET` and `POST /sessions`).
 
     **Who may write a policy** depends on the policy's management mode and
     on the credential:
@@ -195,6 +209,7 @@ paths:
                 name: {type: string, minLength: 1, maxLength: 64}
                 scopes: {type: array, minItems: 1, items: {$ref: "#/components/schemas/Scope"}}
                 expires_in_days: {type: integer, minimum: 1, maximum: 365, default: 90}
+                session_id: {type: string, description: "The one session the token is for. Absent: all the caller's."}
       responses:
         "201":
           description: Created.
@@ -203,7 +218,12 @@ paths:
               schema:
                 allOf:
                   - {$ref: "#/components/schemas/Token"}
-                  - {type: object, required: [token], properties: {token: {type: string, description: "`bjs_<id>_<secret>`"}}}
+                  - type: object
+                    required: [token, token_url]
+                    properties:
+                      token: {type: string, description: "`bjs_<id>_<secret>`. As an OAuth client: `client_id` is `id`, `client_secret` is this."}
+                      token_url: {type: string, format: uri, description: "`https://api.<domain>/oauth/token`"}
+        "403": {description: The caller is not in the backend's allow-list., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
         "409": {description: The caller already has 20 tokens., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
   /tokens/{token_id}:
     delete:
@@ -211,6 +231,63 @@ paths:
       parameters: [{name: token_id, in: path, required: true, schema: {type: string}}]
       responses:
         "204": {description: Revoked, or there was none.}
+  # --- API host only: at the root of https://api.<domain>, not under /v1 ---
+  /oauth/token:
+    post:
+      summary: API host only. OAuth 2.0 client-credentials grant (RFC 6749, 4.4).
+      description: |
+        `client_id` is an API token's `id`, `client_secret` the token
+        itself; as HTTP Basic or in the form. The access token is a JWT
+        (HS256, a key only the backend has; `iss` and `aud` are the API
+        host's URL, `sub` the owner, `client_id` the API token, `scope`),
+        valid for an hour or until the API token expires, whichever is
+        first. The API token is checked again on every use of the access
+        token: revoking it ends its access tokens at once. There is no
+        refresh token; ask again.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [grant_type]
+              properties:
+                grant_type: {type: string, enum: [client_credentials]}
+                client_id: {type: string}
+                client_secret: {type: string}
+                scope: {type: string, description: "Space-separated; a subset of the API token's. Absent: all of them."}
+      responses:
+        "200":
+          description: "The access token. Sent with `Cache-Control: no-store`."
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [access_token, token_type, expires_in, scope]
+                properties:
+                  access_token: {type: string}
+                  token_type: {type: string, enum: [Bearer]}
+                  expires_in: {type: integer, maximum: 3600}
+                  scope: {type: string}
+        "400": {description: "`invalid_request`, `unsupported_grant_type` or `invalid_scope`.", content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "401": {description: "`invalid_client`: unknown client, wrong secret, expired or revoked token, or owner not allowed. One answer for all.", content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "429": {description: Too many failed attempts from this address., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /{id}/mcp:
+    parameters: [{$ref: "#/components/parameters/id"}]
+    post:
+      summary: API host only. The session's MCP endpoint (also GET, DELETE, and paths under it).
+      description: |
+        The same endpoint as `https://sessions.<domain>/{id}/mcp`, through
+        the same proxy: a call wakes a sleeping session and holds it awake.
+        Bearer token with the scope `sessions:connect`, of the session's
+        owner (a token is never an admin), and not bound to another
+        session. The upload URLs mcp-js hands out stay on the sessions'
+        host, where the token in their path is the credential.
+      responses:
+        "200": {description: What the session's mcp-js answers.}
+        "401": {description: Invalid token., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "403": {description: The token lacks `sessions:connect`, or is for another session.}
+        "404": {description: No such session, or not the token owner's.}
 components:
   parameters:
     id: {name: id, in: path, required: true, schema: {type: string, pattern: "^s-([a-z2-7]{10}|[a-z0-9]{5})$"}}
@@ -311,7 +388,10 @@ components:
       properties:
         error: {type: string, examples: ["this policy is managed externally", "this policy is managed in the editor"]}
         managed_url: {type: string}
-    Scope: {type: string, enum: ["sessions:read", "sessions:write", "policies:read", "policies:write"]}
+    Scope:
+      type: string
+      enum: ["sessions:read", "sessions:write", "sessions:connect", "policies:read", "policies:write"]
+      description: "`sessions:connect` is for a session's MCP endpoint on the API host."
     Token:
       type: object
       required: [id, name, scopes, created, expires]
@@ -322,6 +402,8 @@ components:
         created: {type: string, format: date-time}
         expires: {type: string, format: date-time}
         last_used: {type: string, format: date-time}
+        owner: {type: string, description: The user the token acts as.}
+        session_id: {type: string, description: "The one session the token is for, if it is bound to one."}
     Error:
       type: object
       required: [error]

@@ -41,6 +41,8 @@ type Token struct {
 	Created  time.Time  `json:"created"`
 	Expires  time.Time  `json:"expires"`
 	LastUsed *time.Time `json:"last_used,omitempty"`
+	// Session is the one session the token is for, "" for all its owner's.
+	Session string `json:"session_id,omitempty"`
 
 	sha256 string
 }
@@ -51,6 +53,10 @@ type Store struct {
 	client dynamic.ResourceInterface
 	now    func() time.Time
 	random io.Reader
+
+	// signer makes and checks the access tokens API tokens are exchanged
+	// for; nil for none (oauth.go).
+	signer *Signer
 
 	mu      sync.Mutex
 	touched map[string]time.Time // when each token's last use was last written
@@ -76,13 +82,15 @@ func fromObject(obj *unstructured.Unstructured) (Token, error) {
 	t.Owner, _ = spec["owner"].(string)
 	t.Name, _ = spec["name"].(string)
 	t.sha256, _ = spec["sha256"].(string)
+	t.Session, _ = spec["session"].(string)
 	t.Scopes, _, _ = unstructured.NestedStringSlice(obj.Object, "spec", "scopes")
 	expires, _ := spec["expiresAt"].(string)
 	var err error
 	if t.Expires, err = time.Parse(time.RFC3339, expires); err != nil {
 		return Token{}, fmt.Errorf("%s: expiresAt: %w", obj.GetName(), err)
 	}
-	if !ValidID(t.ID) || obj.GetName() != objectName(t.ID) || t.Owner == "" || len(t.sha256) != 64 {
+	if !ValidID(t.ID) || obj.GetName() != objectName(t.ID) || t.Owner == "" || len(t.sha256) != 64 ||
+		(t.Session != "" && !sessions.ValidID(t.Session)) {
 		return Token{}, fmt.Errorf("%s: not a well-formed APIToken", obj.GetName())
 	}
 	if used, _, _ := unstructured.NestedString(obj.Object, "status", "lastUsedTime"); used != "" {
@@ -94,8 +102,9 @@ func fromObject(obj *unstructured.Unstructured) (Token, error) {
 }
 
 // Create makes a token for owner and returns it: the only time it exists
-// outside its owner's hands.
-func (s *Store) Create(ctx context.Context, owner, name string, scopes []string, life time.Duration) (Token, string, error) {
+// outside its owner's hands. session is the one session it is for, "" for
+// all of owner's.
+func (s *Store) Create(ctx context.Context, owner, name string, scopes []string, session string, life time.Duration) (Token, string, error) {
 	owner = normalOwner(owner)
 	list := make([]any, len(scopes))
 	for i, scope := range scopes {
@@ -107,6 +116,13 @@ func (s *Store) Create(ctx context.Context, owner, name string, scopes []string,
 		if err != nil {
 			return Token{}, "", err
 		}
+		spec := map[string]any{
+			"id": id, "owner": owner, "name": name, "scopes": list,
+			"expiresAt": expires.Format(time.RFC3339), "sha256": digest(token),
+		}
+		if session != "" {
+			spec["session"] = session
+		}
 		obj := &unstructured.Unstructured{Object: map[string]any{
 			"apiVersion": GVR.Group + "/" + GVR.Version,
 			"kind":       "APIToken",
@@ -114,10 +130,7 @@ func (s *Store) Create(ctx context.Context, owner, name string, scopes []string,
 				"name":   objectName(id),
 				"labels": map[string]any{sessions.LabelOwner: sessions.OwnerLabel(owner)},
 			},
-			"spec": map[string]any{
-				"id": id, "owner": owner, "name": name, "scopes": list,
-				"expiresAt": expires.Format(time.RFC3339), "sha256": digest(token),
-			},
+			"spec": spec,
 		}}
 		created, err := s.client.Create(ctx, obj, metav1.CreateOptions{})
 		if apierrors.IsAlreadyExists(err) {
@@ -215,35 +228,69 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-// VerifyToken is auth.TokenVerifier. Every request reads the token's record
-// from the cluster, so a revoked or expired token stops working at once.
-func (s *Store) VerifyToken(ctx context.Context, token string) (string, auth.TokenInfo, error) {
+// noDigest stands in for the hash of a token that does not exist, so that
+// refusing one costs the same comparison as refusing a wrong secret.
+var noDigest = digest("")
+
+// check is the whole of what makes an API token good: it is of a token's
+// form, its record exists, the hash of all of it is the record's, and it
+// has not expired. Every request reads the record from the cluster, so a
+// revoked or expired token stops working at once.
+func (s *Store) check(ctx context.Context, token string) (Token, error) {
 	id, ok := parse(token)
 	if !ok {
-		return "", auth.TokenInfo{}, auth.ErrInvalidToken
+		return Token{}, auth.ErrInvalidToken
 	}
+	t, err := s.record(ctx, id)
+	stored := noDigest
+	if err == nil {
+		stored = t.sha256
+	}
+	// Hash against hash, in constant time: how long this takes says nothing
+	// about how much of a guess was right.
+	same := subtle.ConstantTimeCompare([]byte(digest(token)), []byte(stored)) == 1
+	if err != nil {
+		return Token{}, err
+	}
+	if !same {
+		return Token{}, auth.ErrInvalidToken
+	}
+	return t, nil
+}
+
+// record reads the record of the token with id: ErrInvalidToken if there is
+// none, or it is malformed, or it has expired.
+func (s *Store) record(ctx context.Context, id string) (Token, error) {
 	obj, err := s.client.Get(ctx, objectName(id), metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		return "", auth.TokenInfo{}, auth.ErrInvalidToken
+		return Token{}, auth.ErrInvalidToken
 	}
 	if err != nil {
-		return "", auth.TokenInfo{}, err
+		return Token{}, err
 	}
 	t, err := fromObject(obj)
 	if err != nil {
 		slog.Warn("refusing an APIToken", "err", err)
-		return "", auth.TokenInfo{}, auth.ErrInvalidToken
-	}
-	// Hash against hash, in constant time: how long this takes says nothing
-	// about how much of a guess was right.
-	if subtle.ConstantTimeCompare([]byte(digest(token)), []byte(t.sha256)) != 1 {
-		return "", auth.TokenInfo{}, auth.ErrInvalidToken
+		return Token{}, auth.ErrInvalidToken
 	}
 	if !s.now().Before(t.Expires) {
-		return "", auth.TokenInfo{}, auth.ErrInvalidToken
+		return Token{}, auth.ErrInvalidToken
+	}
+	return t, nil
+}
+
+// VerifyToken is auth.TokenVerifier: token is an API token, or an access
+// token one was exchanged for (oauth.go).
+func (s *Store) VerifyToken(ctx context.Context, token string) (string, auth.TokenInfo, error) {
+	if !strings.HasPrefix(token, prefix) {
+		return s.verifyAccessToken(ctx, token)
+	}
+	t, err := s.check(ctx, token)
+	if err != nil {
+		return "", auth.TokenInfo{}, err
 	}
 	s.touch(ctx, t)
-	return t.Owner, auth.TokenInfo{Name: t.Name, Scopes: t.Scopes}, nil
+	return t.Owner, auth.TokenInfo{Name: t.Name, Scopes: t.Scopes, Session: t.Session}, nil
 }
 
 // touch writes down that t was used, unless that was done within the hour.

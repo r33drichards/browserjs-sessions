@@ -142,13 +142,36 @@ routes:
     # A request may wait for a session's pod to answer.
     timeout: 5m
 
-  # The API for clients that cannot sign in (Terraform, scripts). Nobody
-  # signs in here and Pomerium says nothing about the caller: the credential
-  # is an API token, checked by the backend (docs/api-tokens.md). Only the
-  # API's paths get through.
+  # The API host, for clients that cannot sign in (Terraform, scripts, other
+  # services). Nobody signs in here and Pomerium says nothing about the
+  # caller: the credential is an API token, or an access token made from
+  # one, checked by the backend (docs/api-tokens.md). Three routes, each
+  # matching whole paths; nothing else on this host reaches the backend.
+
+  # The API.
   - name: api
     from: https://api.browserjs.com
     prefix: /v1/
     to: http://backend
     allow_public_unauthenticated_access: true
     preserve_host_header: true
+
+  # An API token exchanged for an access token (OAuth client credentials).
+  - name: api-token
+    from: https://api.browserjs.com
+    path: /oauth/token
+    to: http://backend
+    allow_public_unauthenticated_access: true
+    preserve_host_header: true
+
+  # A session's MCP endpoint, as on the sessions' host but with a token in
+  # place of the sign-in. A call may run for minutes and the event stream
+  # for as long as its client keeps it.
+  - name: api-mcp
+    from: https://api.browserjs.com
+    regex: '^/s-[a-z0-9]+/mcp(/.*)?$'
+    to: http://backend
+    allow_public_unauthenticated_access: true
+    preserve_host_header: true
+    timeout: 0s
+    idle_timeout: 0s
