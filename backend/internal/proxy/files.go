@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -39,6 +40,7 @@ func (p *Proxy) registerFiles(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/sessions/{id}/files/{name}", p.downloadFile)
 	mux.HandleFunc("PUT /api/sessions/{id}/files/{name}", p.uploadFile)
 	mux.HandleFunc("DELETE /api/sessions/{id}/files/{name}", p.deleteFile)
+	mux.HandleFunc("POST /api/sessions/{id}/clipboard", p.copyFiles)
 }
 
 // validFileName reports whether name is one file of the folder and nothing
@@ -235,4 +237,82 @@ func (p *Proxy) deleteFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.forwardWith(w, r, s, browserPort, path, p.quick, plainAnswer)
+}
+
+// The most files put on the clipboard at once, and the most of such a
+// request that is read.
+const (
+	maxClipboardFiles = 100
+	maxClipboardBytes = 64 << 10
+)
+
+// copyFiles puts files of the session's folder on its browser's clipboard,
+// so that Ctrl+V there pastes them: {"files": [name, ...]}, as one selection.
+// The names are checked like any other file name, and written out again for
+// the pod: nothing of the caller's spelling reaches it.
+func (p *Proxy) copyFiles(w http.ResponseWriter, r *http.Request) {
+	id, ok := p.fileSession(w, r)
+	if !ok {
+		return
+	}
+	// A JSON body cannot be sent from another site's page without asking
+	// first (a form cannot have this type).
+	if t, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); t != "application/json" {
+		fileError(w, http.StatusUnsupportedMediaType, "the body must be JSON")
+		return
+	}
+	var asked struct {
+		Files []string `json:"files"`
+	}
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, maxClipboardBytes)).Decode(&asked) != nil ||
+		len(asked.Files) == 0 || len(asked.Files) > maxClipboardFiles {
+		fileError(w, http.StatusBadRequest, "not a list of file names")
+		return
+	}
+	for _, name := range asked.Files {
+		if !validFileName(name) {
+			fileError(w, http.StatusBadRequest, "not a file name")
+			return
+		}
+	}
+	done := p.Idle.Open(id)
+	defer done()
+	s, err := p.Waker.EnsureAwake(r.Context(), id)
+	if err != nil {
+		lookupFailed(w, r, id, err)
+		return
+	}
+	body, _ := json.Marshal(asked)
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, "http://"+p.Target(s, browserPort)+"/clipboard", bytes.NewReader(body))
+	if err != nil {
+		fileError(w, http.StatusBadGateway, "session is not responding")
+		return
+	}
+	req.Host = "localhost:" + strconv.Itoa(browserPort)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := p.quick.RoundTrip(req)
+	if err != nil {
+		p.Waker.Invalidate(id)
+		if r.Context().Err() == nil {
+			slog.Error("session pod did not answer", "session", id, "port", browserPort, "err", err)
+		}
+		fileError(w, http.StatusBadGateway, "session is not responding")
+		return
+	}
+	defer resp.Body.Close()
+	// Only the pod's status is taken from it.
+	switch {
+	case resp.StatusCode/100 == 2:
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusNoContent)
+	case resp.StatusCode == http.StatusNotFound:
+		// A browser image from before it could.
+		fileError(w, http.StatusNotImplemented, "this session was created before files could go on its clipboard; a new session can")
+	case resp.StatusCode == http.StatusGone:
+		fileError(w, http.StatusNotFound, "the file is no longer there")
+	case resp.StatusCode == http.StatusServiceUnavailable:
+		fileError(w, http.StatusServiceUnavailable, "the browser's clipboard is not available")
+	default:
+		fileError(w, http.StatusBadGateway, "the session did not take the files")
+	}
 }
