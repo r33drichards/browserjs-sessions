@@ -7,7 +7,7 @@ A session that has not been used for 15 minutes goes to sleep. Its state is
 
 Open the session and choose **Wake** (on the list the button says
 **Resume**). The state goes to <span class="wf-state">starting</span>, then
-<span class="wf-state">running</span>, and the screen comes back.
+<span class="wf-state">running</span>, and the screen comes back as it was.
 
 ## From an agent
 

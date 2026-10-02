@@ -3,14 +3,14 @@
 A session is in one of six states. The app shows the state on the list and
 on the session's page. The API returns it as `state`.
 
-| State | Meaning | The browser | What an MCP call does |
+| State | Meaning | The desktop | What an MCP call does |
 | --- | --- | --- | --- |
-| `starting` | The browser is starting or waking. | Not ready yet | Waits until it runs, then answers |
-| `running` | The browser is up. | Live view and MCP work | Answers |
-| `stopping` | The browser is shutting down, after a stop, an idle sleep or a delete. | Gone | Depends on what it becomes |
+| `starting` | The desktop is starting or waking. | Not ready yet | Waits until it runs, then answers |
+| `running` | The desktop is up. | Live view and MCP work | Answers |
+| `stopping` | The desktop is shutting down, after a stop, an idle sleep or a delete. | Gone | Depends on what it becomes |
 | `asleep` | Put to sleep after 15 minutes without use. The disk is kept. | Off | Wakes the session, waits, then answers |
 | `stopped` | You chose **Stop**. The disk is kept. | Off | Fails with `409`. Resume it in the app |
-| `failed` | The browser could not start. `message` says why. | Off | Fails with `502` |
+| `failed` | The desktop could not start. `message` says why. | Off | Fails with `502` |
 
 ## Transitions
 

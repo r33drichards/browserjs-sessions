@@ -5,8 +5,8 @@ Each session has its own disk. It lives as long as the session does.
 ## Kept until you delete the session
 
 - **The browser profile**: cookies and logins, history, bookmarks, saved
-  settings, extensions' data.
-- **Open tabs.** The browser reopens them when it starts.
+  settings.
+- **Open tabs.** Chromium reopens them when it starts.
 - **Downloads**, and files you sent through the Files box.
 - **Agent memory**: what an agent wrote under `/data/memory/`.
 - **Artifacts** the agent stored.
@@ -16,8 +16,8 @@ These survive sleep, stop and resume.
 
 ## Kept across sleep, when the snapshot is restored
 
-- The exact state of each page: form input, scroll position, a
-  half-finished flow.
+- The exact state of the screen and of each page: form input, scroll
+  position, a half-finished flow.
 
 See [Sleep and wake](/explanation/sleep-and-wake) for when this does not
 apply.

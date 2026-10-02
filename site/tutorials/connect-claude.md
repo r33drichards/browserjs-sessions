@@ -1,16 +1,16 @@
-# Connect a session to Claude
+# Connect an agent with Claude
 
 In this tutorial you add a session to Claude as a connector, and watch Claude
-use the browser. You need a session; see
-[Your first session](/tutorials/first-session).
+work on the desktop. You need a session; see
+[Your first desktop](/tutorials/first-session).
 
 ## 1. Copy the MCP URL
 
-Open the session in [the app](https://app.browserjs.com). Under **Details**,
-choose **Copy** next to the MCP URL. It looks like this:
+Open the session in [the app](https://app.computeruse.site) and choose
+**Copy MCP URL**. It looks like this:
 
 ```
-https://s-abcde.sessions.browserjs.com/mcp
+https://sessions.computeruse.site/s-abcde/mcp
 ```
 
 ## 2. Add it to Claude
@@ -21,7 +21,7 @@ connector, and paste the MCP URL. Give it a name, such as the session's name.
 **Claude Code.** Run:
 
 ```bash
-claude mcp add --transport http browserjs https://s-abcde.sessions.browserjs.com/mcp
+claude mcp add --transport http desktop https://sessions.computeruse.site/s-abcde/mcp
 ```
 
 Then run `/mcp` in Claude Code and choose the server to sign in.
@@ -36,18 +36,19 @@ the session. Only the owner can connect.
 Keep the session's page open in another window so you can see the screen.
 Then ask Claude:
 
-> Using the browserjs connector, open example.com and tell me the page's title.
+> Using the desktop connector, open example.com and tell me the page's title.
 
-Claude calls the `run_js` tool. In the live view the browser goes to the
-page. Claude answers with the title.
+Claude calls the `run_js` tool with a few lines of JavaScript. On the screen,
+Chromium goes to the page. Claude answers with the title.
 
-## 5. Work together
+## 5. Take over, then hand back
 
-Try a site that needs a login. Sign in yourself in the live view, then ask
-Claude to continue. It works in the same browser, so it is signed in too.
+Ask Claude to do something on a site that needs a login. When it reaches the
+sign-in page, click into the screen and sign in yourself. Then tell Claude to
+continue. It works on the same desktop, so it is signed in too.
 
 ## What next
 
+- [Watch an agent and take over](/guides/take-over)
 - [MCP endpoint and tools](/reference/mcp): what the agent can call.
 - [Security model](/explanation/security): what the agent can and cannot do.
-- [Connect another MCP client](/guides/mcp-clients)

@@ -1,8 +1,8 @@
 # Sleep and wake
 
-A browser uses memory and CPU even when nobody looks at it. So a session
-that is not being used goes to sleep, and comes back when it is needed. This
-page describes what that looks like from your side.
+A desktop uses memory and CPU even when nobody uses it. So a session that
+is not being used goes to sleep, and comes back when it is needed. This page
+describes what that looks like from your side.
 
 ## When a session sleeps
 
@@ -16,15 +16,16 @@ ever sleep.
 
 ## What is saved
 
-Before it sleeps, the session takes a snapshot of the running browser: its
-memory as well as its files. Waking restores that snapshot. The pages come
-back as they were, including what you had typed into a form and where you
-had scrolled to.
+Before it sleeps, the session takes a snapshot of the running desktop: its
+memory as well as its files. Waking restores that snapshot. The screen comes
+back as it was, including what was typed into a form and where a page was
+scrolled to. An agent that returns the next day finds the task where it left
+it.
 
 Sometimes there is no snapshot to restore, for example because taking it
-failed. The session then starts the browser afresh from its disk. Chromium
-reopens the tabs it had and reloads them. Logins are kept, because cookies
-are on the disk. What existed only in a page's memory is gone.
+failed. The session then starts afresh from its disk. Chromium reopens the
+tabs it had and reloads them. Logins are kept, because cookies are on the
+disk. What existed only in a page's memory is gone.
 
 ## Waking
 
@@ -43,11 +44,11 @@ retry.
 **Stop** is you saying the session should stay off. A stopped session does
 not wake for an agent. Only **Resume** starts it.
 
-Stop also takes no snapshot. Resuming starts the browser from disk, as in
+Stop also takes no snapshot. Resuming starts the desktop from disk, as in
 the case above: tabs reload, logins are kept.
 
 ## New sessions start quickly
 
-The service keeps a few browsers running that belong to nobody yet. A new
+The service keeps a few desktops running that belong to nobody yet. A new
 session takes one of them, so it is usually ready in seconds. When none is
 free, the session starts from scratch, which takes longer.

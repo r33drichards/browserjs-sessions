@@ -1,21 +1,29 @@
 # Move files in and out
 
-Files move through one folder in the session: the browser's Downloads
-folder. The **Files** box under the Clipboard box shows what is in it.
+Files move through one folder on the desktop: Chromium's Downloads folder.
+The **Files** box under the Clipboard box shows what is in it.
 
-## Send a file to the session
+## Send a file to the desktop
 
 1. Drop files on the Files box, or choose **Send files to browser**.
 2. Wait for the progress bar to finish. The file is now listed.
-3. On a website in the session, use the site's upload button. The file
-   chooser opens in the Downloads folder. Pick the file.
+
+Then use it in one of two ways:
+
+- **Paste it.** A file you send is also put on the desktop's clipboard.
+  Click into a page that accepts pasted files and press `Ctrl+V`.
+- **Attach it.** Use the site's upload button. The file chooser opens in the
+  Downloads folder. Pick the file.
+
+To paste a file that is already listed, use the copy button next to it
+first.
 
 A file is never replaced. If the name is taken, the new file gets a name
 such as `report (1).pdf`.
 
-## Save a file from the session
+## Save a file from the desktop
 
-1. Download the file in the session's browser as usual. It lands in the
+1. Download the file in the desktop's browser as usual. It lands in the
    Downloads folder and appears in the Files box.
 2. Choose **Save** next to it to save it on your computer.
 

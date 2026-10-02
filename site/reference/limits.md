@@ -10,7 +10,7 @@
 | File sent or saved through the Files box | 100 MB each |
 | File name | One name, not a path. Up to 255 bytes. No leading dot. |
 | Time to move one file | 5 minutes |
-| Remote desktop size | 320 by 200 up to 2560 by 1600 |
+| Desktop size | 320 by 200 up to 2560 by 1600 |
 | `run_js` run time | 30 seconds by default, up to 300 |
 | `run_js` heap | 8 MB by default |
 | Artifact | 16 MiB each |

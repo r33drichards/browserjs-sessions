@@ -17,7 +17,7 @@ knowing the URL is not enough.
 all sessions. Treat a session like any hosted service: do not put in it what
 you would not trust the operator with.
 
-There is no way yet to share a session with another account.
+There is no way to share a session with another account.
 
 Two things work without sign-in, by design, and are narrow:
 
@@ -30,13 +30,13 @@ Two things work without sign-in, by design, and are narrow:
 
 An agent connected to a session can:
 
-- drive the browser: open pages, click, type, read page content, take
-  screenshots, run scripts in pages;
+- operate the browser on the desktop: open pages, click, type, read page
+  content, take screenshots, run scripts in pages;
 - act as you on every site the browser is signed in to;
 - read and write files under `/data/memory/` on the session's disk;
 - store and read artifacts.
 
-The browser is the powerful part. An agent with a session that is signed in
+The logins are the powerful part. An agent with a session that is signed in
 to your email can read and send email. Sign a session in only to what the
 task needs, and use separate sessions for separate jobs.
 
@@ -44,20 +44,28 @@ task needs, and use separate sessions for separate jobs.
 
 - Its `run_js` code has no network access of its own and no file access
   outside `/data/memory/`. It reaches the web only through the browser.
-- It cannot reach your other sessions. Each session is its own browser, disk
+- It cannot reach your other sessions. Each session is its own desktop, disk
   and endpoint.
 - It cannot reach your computer. Files move only when you use the Files box,
   or when the agent uploads one from its own environment.
 - It cannot create, stop or delete sessions. Those are done in the app.
 
-Finer control over what an agent may do in a session, by policy, is planned.
-It is not available yet.
+## Restricting an agent further
+
+Today every connected agent has the same abilities, listed above. Policies
+per session, which let you narrow them (which sites, which operations), are
+coming and are not enabled yet. See
+[Live, coming and planned](/reference/status).
+
+Until then, the controls you have are: what the session is signed in to,
+watching the live view, and **Stop**.
 
 ## Isolation
 
 Each session runs in its own sandbox, apart from other sessions and other
-users. What a session's browser downloads is only ever handed to you as a
-file to save, never shown as a page of the app.
+users, with its own disk. It can reach the public internet and nothing
+inside the service. What a session's browser downloads is only ever handed
+to you as a file to save, never shown as a page of the app.
 
 ## Good practice
 

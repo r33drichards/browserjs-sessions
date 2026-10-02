@@ -1,6 +1,6 @@
 # site
 
-The public site for browserjs: landing page, docs and blog. One VitePress
+The public site for browserjs: landing page, docs and blog, served at https://computeruse.site. One VitePress
 site. The internal engineering docs stay in `/docs` and are not published.
 
 ```bash
