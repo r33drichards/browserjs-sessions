@@ -1,12 +1,20 @@
 # Enforcement contract
 
 Where the backend checks an account, what it answers, and what it stops.
-The backend reads `Account` objects through an informer (no call per
-request) and `catalogue.yaml`; it never calls Stripe to decide anything.
 
-Stripe does not stop anything: its metering is post-paid. **Stopping is
-ours.** The operator's ledger says how much credit is left (`metering.md`);
-the backend refuses at the doors and puts sessions to sleep.
+> **Changed 2026-10-02 by [`metronome.md`](metronome.md)**: the ledger is
+> Metronome's, and the backend keeps no copy of anything in memory.
+
+A decision reads the owner's `Account` from the API server at that moment
+(one GET; no informer, no cache) and `catalogue.yaml`. **It calls neither
+Stripe nor Metronome**: whether the account has credit is
+`spec.credit.exhausted`, which the backend itself keeps up to date from
+Metronome (`metronome.md`, "What the Account records"). So an outage of
+either service refuses nobody and stops nobody.
+
+Neither Stripe nor Metronome stops anything. **Stopping is ours.**
+Metronome says when the credit is gone; the backend refuses at the doors
+and puts sessions to sleep.
 
 ## Modes
 
@@ -39,9 +47,8 @@ payment method is removed; `no_card -> active` when one is back.
 | Name | From |
 |---|---|
 | `state` | above |
-| `balance` | `status.balanceMicros` |
-| `tier` | `status.plan` looked up in the catalogue (`maxSessions`, `maxAwake`) |
-| `stale` | `status.meter.observedAt` is older than `BILLING_STALE_AFTER` (10 m), or there is no status |
+| `exhausted` | `spec.credit.exhausted`; an Account with no `spec.credit` counts as exhausted |
+| `tier` | the plan of `spec.subscription` while its status is `active`, `trialing` or `past_due`, otherwise `payg`, looked up in the catalogue (`maxSessions`, `maxAwake`) |
 | `mine`, `awake` | the owner's sessions, and how many are `running` or `starting` |
 | `clusterAwake` | every user's sessions that are `running` or `starting` |
 
@@ -61,23 +68,33 @@ anything that makes a session awake: create, resume, wake on a call.
 | 3 | `exempt` | allow | allow | leave |
 | 4 | `terms` | refuse `terms_required` | refuse `terms_required` | leave |
 | 5 | `no_card` | refuse `payment_method_required` | refuse `payment_method_required` | **sleep now** (stop sequence, no grace) |
-| 6 | `stale` and the last known balance is above 0 | allow | allow | leave |
-| 7 | `stale` otherwise | refuse `metering_unavailable` | refuse `metering_unavailable` | leave |
-| 8 | `balance == 0` | refuse `out_of_credit` | refuse `out_of_credit` | stop sequence |
+| 6, 7 | (removed: there is no stale ledger to decide on) | | | |
+| 8 | `exhausted` | refuse `out_of_credit` | refuse `out_of_credit` | stop sequence |
 | 9 | create and `len(mine) >= tier.maxSessions` | refuse `session_limit` | n/a | n/a |
 | 10 | `awake >= tier.maxAwake` | refuse `awake_limit` | refuse `awake_limit` | leave |
 | 11 | more than `WAKES_PER_HOUR` (30) starts by this account in the last hour | refuse `rate_limited` | refuse `rate_limited` | leave |
 | 12 | `clusterAwake >= MAX_AWAKE_SESSIONS` | refuse `at_capacity` | refuse `at_capacity` | leave |
 | 13 | otherwise | allow | allow | leave |
 
-Rows 6 and 7 are "fail open or closed": with the ledger stale, an account
-that had credit when it was last counted carries on and is not charged for
-the time (never over-bill, never lock a customer out for our fault); an
-account that had none stays refused; nothing is stopped. Row 9 replaces
-`MAX_SESSIONS_PER_USER` while `BILLING` is `enforce`.
+**When something of ours or Metronome's is down** the table does not
+change, because it reads only the Account:
 
-Rows 11 and 12 count in the backend's memory and its informer: lost on a
-restart, which errs towards allowing.
+| What is down | Effect |
+|---|---|
+| The observer | no usage is sent: that time is free. Nobody is refused or stopped. Logged, and shown as `ledger: stale`. |
+| Metronome, for ingest | the observer keeps events for an hour, then drops them: free time |
+| Metronome, for reads | `exhausted` keeps its last value. An account with credit carries on; one without stays refused; a purchase's credit is created when Metronome is back (the webhook is retried by Stripe, and the hourly reconcile repeats it). |
+| Metronome's alert, late or lost | the balance pass (5 m) sets `exhausted`. Usage past zero is free: the list rate is 0. |
+| The API server | the decision cannot be made: 503, as for any other request |
+
+Never over-bill, never lock a customer out for our fault. The code
+`metering_unavailable` is no longer answered by a decision.
+
+Row 9 replaces `MAX_SESSIONS_PER_USER` while `BILLING` is `enforce`.
+
+Row 11 counts starts in the backend's memory (a rate limiter: lost on a
+restart, which errs towards allowing); row 12 counts from the session list
+the decision already reads. Neither is a copy of anyone's credit.
 
 ## Where each check is made
 
@@ -143,7 +160,7 @@ One sweep in the backend, every 30 s, beside the idle sweep.
 
 | Trigger | Starts |
 |---|---|
-| `level: exhausted` (row 8), not exempt | at `exhaustedAt + BILLING_GRACE` (5 m). The grace exists so that a top-up in progress does not kill work: a purchase or an auto-recharge that lands inside it clears `exhaustedAt` and nothing is stopped. |
+| `exhausted` (row 8), not exempt | at `spec.credit.exhaustedAt + BILLING_GRACE` (5 m). The grace exists so that a top-up in progress does not kill work: a purchase or an auto-recharge that lands inside it clears `exhaustedAt` and nothing is stopped. |
 | `no_card` (row 5) | at once: no grace |
 | `blocked` (row 2) | at once |
 
@@ -166,15 +183,17 @@ One sweep in the backend, every 30 s, beside the idle sweep.
    wakes cold. The draining mark is removed.
 
 A session that was **starting** is suspended at once (nothing to drain). A
-sleep that fails is retried at the next sweep. With `stale` true the sweep
-starts nothing new, and finishes what it began.
+sleep that fails is retried at the next sweep. The sweep lists Accounts
+from the API server each time it runs; it keeps nothing between runs but
+what is on the sessions (the draining mark).
 
 If credit arrives (or a card is back) while a session is draining, the mark
 is removed, the session stays up and new calls are accepted again.
 
-Awake time during the grace and the drain is counted as overdraft and
-owed by nobody. The most a user gets this way is about 15 minutes per
-exhaustion, and each exhaustion needs a purchase to recover from.
+Awake time after the credit is gone (until Metronome's alert or the
+balance pass, then the grace and the drain) is rated at zero and owed by
+nobody. The most a user gets this way is about 20 minutes per exhaustion,
+and each exhaustion needs a purchase to recover from.
 
 **Afterwards.** A session stopped for `credit` or `payment-method` shows as
 `asleep` with that reason (`stoppedBy` on the session view). It is **not
@@ -185,10 +204,10 @@ must accept the two new `stopped-by` values as it accepts `idle`.
 ## Disks at zero
 
 A disk is charged while its session exists (`metering.md`). At a zero
-balance the charge is overdraft: the balance does not go negative and
+balance the charge is rated at zero: the balance does not go negative and
 nothing is owed. So that this is not free storage for ever:
 
-| Time at zero (`now - exhaustedAt`, continuously) | What happens |
+| Time at zero (`now - spec.credit.exhaustedAt`, continuously) | What happens |
 |---|---|
 | day 0 | sessions asleep (above). Banner: "You are out of credit. Your sessions are kept until <date>. Add credit to keep them." Each session shows "Deleted on <date> unless you add credit." |
 | day 7 | the same banner turns to an error and cannot be dismissed |
@@ -210,10 +229,10 @@ Until then disks at zero are kept and are a cost.
 
 ## Auto-recharge
 
-Not enforcement, but it runs in the same sweep (`stripe.md`,
-"Auto-recharge"): when `balanceMicros` is below the account's threshold and
-auto-recharge is on, the sweep asks the Stripe component for a charge. Its
-success is credit arriving.
+Not enforcement. It runs in the balance pass (`metronome.md`): when the
+balance just read from Metronome is below the account's threshold and
+auto-recharge is on, the pass asks the Stripe component for a charge
+(`stripe.md`, "Auto-recharge"). Its success is credit arriving.
 
 ## Sign-up limits (open sign-up)
 

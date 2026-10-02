@@ -1,3 +1,7 @@
+# SUPERSEDED 2026-10-02 by metronome.md: this resource is NOT deployed and
+# nothing reads or writes it. Usage and its history are read from Metronome (metronome.md, "Reading for the UI").
+# Kept for the record of the first design only.
+#
 # The closed book of one account's one period: written once by the billing
 # operator when the period ends, never changed, kept 13 months. The current
 # period is in Account.status.period; this is its copy for the record.

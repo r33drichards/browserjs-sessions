@@ -1,5 +1,12 @@
 # Metering and billing: design
 
+> **Changed 2026-10-02**: the product owner decided to use Metronome for
+> metering and the credit ledger. The ledger parts of this design (the
+> billing operator's ledger, the `Grant` and `UsagePeriod` resources,
+> section 5.1a's informer) are replaced by
+> [2026-10-02-metronome-integration.md](2026-10-02-metronome-integration.md).
+> Prices, the card gate, enforcement, Stripe and the UI stand.
+
 Status: **proposed 2026-10-02, waiting for the product owner.** The
 questions that need a decision are section 11, each with a recommended
 default. The contracts are in

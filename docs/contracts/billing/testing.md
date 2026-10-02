@@ -17,8 +17,14 @@ interface here is wrong, and is fixed here first.
 Every stateful dependency of the billing and enforcement code is a Go
 interface, defined in the package that **consumes** it, with an in-memory
 fake in `backend/internal/billing/billingtest`. No test of billing or
-enforcement logic needs a Kubernetes API (not even client-go's fake) or
-Stripe.
+enforcement logic needs a Kubernetes API (not even client-go's fake),
+Stripe or Metronome.
+
+> **Changed 2026-10-02 by [`metronome.md`](metronome.md)**: `Ledger` is
+> implemented over Metronome and loses `View`; `Metronome` is new, with a
+> fake; `Accounts` is implemented by reads of the API server, with no
+> informer. `Accounts`, `Stripe`, `Sessions`, `InFlight` and `Clock` keep
+> their signatures.
 
 ```go
 package billing // backend/internal/billing: the interfaces and the logic over them
@@ -40,16 +46,44 @@ type Accounts interface {
 	Update(ctx context.Context, name string, change func(*AccountSpec) error) (Account, error)
 }
 
-// Ledger is the credit: Grants, and the balance the operator computes.
+// Ledger is the credit, kept in Metronome (metronome.md). Its production
+// implementation is written over the Metronome interface below and holds
+// no state. No decision at create, resume or wake calls it: they read
+// Account.spec.credit.
 type Ledger interface {
-	// View is Account.status as last written: balance, level, exhaustedAt,
-	// observedAt, plan. ok is false when the operator has written none.
-	View(ctx context.Context, account string) (v LedgerView, ok bool, err error)
-	// EnsureGrant creates the Grant named from g.Key. created is false and
-	// existing is the Grant already there (possibly another account's) when
-	// the name is taken.
+	// EnsureCustomer makes the account's Metronome customer and contract if
+	// there are none, and returns the customer's ID.
+	EnsureCustomer(ctx context.Context, account string) (customerID string, err error)
+	// Balance reads the account's credit from Metronome now: the net
+	// balance, and what is left of each credit with its source and end.
+	Balance(ctx context.Context, account string) (Balance, error)
+	// Usage reads what the account used between from and to, by session
+	// and by day.
+	Usage(ctx context.Context, account string, from, to time.Time) (Usage, error)
+	// EnsureGrant creates the credit whose uniqueness key is g.Key, then
+	// runs EnsureCredit. created is false when the key was used: existing
+	// is that credit if it is this account's (a replay), and has an empty
+	// Account if it is another's.
 	EnsureGrant(ctx context.Context, g Grant) (created bool, existing Grant, err error)
+	// Revoke archives the credits sel finds, then runs EnsureCredit.
 	Revoke(ctx context.Context, sel GrantSelector, reason string) error
+	// EnsureCredit reads Balance and writes Account.spec.credit (exhausted,
+	// exhaustedAt, balanceMicros, nextExpiryAt, checkedAt). The only writer
+	// of that field.
+	EnsureCredit(ctx context.Context, account string) (AccountCredit, error)
+}
+
+// Metronome is every call the backend makes to Metronome (metronome.md),
+// as Stripe is for Stripe. One method per endpoint; no logic.
+type Metronome interface {
+	CreateCustomer(ctx context.Context, p MetronomeCustomerParams) (id string, err error)
+	CustomerByAlias(ctx context.Context, alias string) (id string, found bool, err error)
+	CreateContract(ctx context.Context, p MetronomeContractParams) error // a 409 is nil
+	// CreateCredit reports conflict (not an error) when the key was used.
+	CreateCredit(ctx context.Context, p MetronomeCreditParams) (id string, conflict bool, err error)
+	Credits(ctx context.Context, customer string) ([]MetronomeCredit, error) // with balances and custom fields
+	ArchiveCredit(ctx context.Context, customer, id string) error
+	Usage(ctx context.Context, customer string, from, to time.Time) (MetronomeUsage, error)
 }
 
 // Stripe is every call the backend makes to Stripe (stripe.md).
@@ -117,7 +151,8 @@ stays for the store's own tests and is used by the warm-pool case below.
 |---|---|
 | `Clock` | set and advanced by the test |
 | `Accounts` | a map; `Update` applies the change under a mutex |
-| `Ledger` | Grants in a map by name; `View` computed from them by the test's call to `Tick(now)`, which runs **the reference step** ported to Go and checked against `metering-vectors.json` (so the fake ledger and the operator cannot drift) |
+| `Metronome` | customers, contracts and credits in maps (a used `uniqueness_key` answers conflict), and the usage it was sent. `Tick(now)`, called by the test, observes the fake `Sessions`, runs **the reference step** ported to Go and checked against `metering-vectors.json`, and draws the credits down in priority order, never below zero. It returns the **alert event** Metronome would send when a customer's balance reached zero in that tick (nil otherwise), for the test to sign with a made-up secret and post to `POST /metronome/webhook`. `Unreachable(true)` makes every call fail. |
+| `Ledger` | **not faked**: the real implementation, over the fake `Metronome` and the fake `Accounts` |
 | `Stripe` | customers, payment methods (with `fingerprint`, `funding`, `wallet`), checkout sessions, subscriptions, payment intents in maps; helpers `AttachCard(customer, card)`, `DetachCard(pm)`, `CompleteCheckout(id)`; each helper returns the **event** Stripe would send, for the test to sign and post |
 | `Sessions` | a map of sessions with a state machine (`running`, `asleep`, `stopped`), a count of snapshots taken per session, the `stoppedBy` reason, the draining mark |
 | `InFlight` | counts set by the test |
@@ -126,8 +161,16 @@ stays for the store's own tests and is used by the warm-pool case below.
 
 `TestCardGateScenario`, in `backend/internal/billing`, step-driven, one
 user `u@example.com`, `BILLING=enforce`, the real API mux, the real webhook
-handler, the real sweep (run by the test, not on a timer), the fakes above.
-The catalogue is `catalogue.yaml` of this directory.
+handlers (Stripe's and Metronome's), the real sweep and balance pass (run
+by the test, not on a timer), the fakes above. The catalogue is
+`catalogue.yaml` of this directory.
+
+In every scenario below, "`Metronome.Tick`" is `Tick(now)` on the fake
+and, **if it returns an alert event, the test posting it signed to
+`POST /metronome/webhook`**. "Grant" reads "credit in the fake Metronome,
+by its uniqueness key". "`level: exhausted`, `exhaustedAt` set" reads
+"`spec.credit.exhausted` true and `exhaustedAt` set, and `GET /api/billing`
+says `level: exhausted`". The steps, statuses and bodies are unchanged.
 
 | Step | Action | Expected |
 |---|---|---|
@@ -136,11 +179,11 @@ The catalogue is `catalogue.yaml` of this directory.
 | b1 | `POST /api/billing/checkout` `{}` | 200 with a `url`; the fake Stripe has one Checkout Session, `mode: setup`, for the account's customer |
 | b2 | fake `CompleteCheckout` attaches card A (fingerprint `fpA`, funding `credit`); the test posts the signed `checkout.session.completed` to `POST /stripe/webhook` | 200. Account: `paymentMethod.present: true`, `signupCredit.state: granted`. Exactly one Grant, key `signup/fpA`, 5000000 micro-dollars. |
 | b3 | the same event posted again; then `payment_method.attached` for the same card | 200 both. Still exactly one Grant. |
-| b4 | `Ledger.Tick`; `GET /api/billing` | `state: active`, `balanceMicros: 5000000`, `signupCredit.state: granted` |
+| b4 | `Metronome.Tick`; `GET /api/billing` | `state: active`, `balanceMicros: 5000000`, `signupCredit.state: granted` |
 | b5 | `POST /api/sessions` `{}` | **201**; the session is `running`, owned by the user |
 | c1 | fake `DetachCard(A)`; the test posts the signed `payment_method.detached` (its object has `customer: null`) | 200. Account: `paymentMethod.present: false`, `removedAt` set. The Grant is untouched. |
 | c2 | the sweep runs | the session has one snapshot, is `asleep`, `stoppedBy: payment-method`. `GET /api/sessions/{id}` shows `state: asleep`, `stoppedBy: payment-method`. |
-| c3 | `Ledger.Tick`; `GET /api/billing` | `state: no_card`, `balanceMicros` is 5000000 less what was charged: the credit is kept |
+| c3 | `Metronome.Tick`; `GET /api/billing` | `state: no_card`, `balanceMicros` is 5000000 less what was charged: the credit is kept |
 | d1 | `POST /api/sessions` `{}` | **402** `payment_method_required`, as a2. Still one session. |
 | d2 | `PATCH /api/sessions/{id}` `{"action":"resume"}` | **402** `payment_method_required`. The session is still `asleep`. |
 | d3 | an MCP request to the session through the proxy (`POST /<id>/mcp`) | **402**, `Content-Type: application/json`, a JSON-RPC error with code -32002 whose message contains "no payment method" and the billing URL. No `Retry-After` header. `Sessions.Wake` was not called. |
@@ -168,14 +211,14 @@ balance of 3000 micro-dollars, `BILLING_GRACE` 5 m, `BILLING_DRAIN_TIMEOUT`
 
 | Step | Action | Expected |
 |---|---|---|
-| 1 | clock +60 s, `Ledger.Tick` | `level: exhausted`, `exhaustedAt` set; the sweep does nothing yet; a new MCP request is still forwarded |
+| 1 | clock +60 s, `Metronome.Tick` | `level: exhausted`, `exhaustedAt` set; the sweep does nothing yet; a new MCP request is still forwarded |
 | 2 | `POST /api/sessions` | 402 `out_of_credit` |
 | 3 | clock to `exhaustedAt` + 5 m; `InFlight.Calls` = 1; the sweep runs | the session is marked draining `credit`; `CloseStreams` was called; **no snapshot yet, still running** |
 | 4 | a new MCP request | 402, JSON-RPC error containing "out of credit"; not forwarded |
 | 5 | `InFlight.Calls` = 0; the sweep runs | one snapshot, `asleep`, `stoppedBy: credit`, the draining mark gone |
 | 5' | (variant) the call never ends; clock +10 m; the sweep runs | the same as 5 |
-| 6 | (variant, from 3) a pack is bought (signed `checkout.session.completed`), `Ledger.Tick`, the sweep runs | the draining mark is removed, the session is still `running`, a new MCP request is forwarded, no snapshot was taken |
-| 7 | from 5: a pack is bought, `Ledger.Tick` | the session is still `asleep`; `resume` now succeeds |
+| 6 | (variant, from 3) a pack is bought (signed `checkout.session.completed`), `Metronome.Tick`, the sweep runs | the draining mark is removed, the session is still `running`, a new MCP request is forwarded, no snapshot was taken |
+| 7 | from 5: a pack is bought, `Metronome.Tick` | the session is still `asleep`; `resume` now succeeds |
 
 ## Scenario 3: disk charges while asleep
 
@@ -205,10 +248,32 @@ operator). One session, asleep, a balance of $1.
 | a prepaid card; a wallet card | active, `refused` with `prepaid` / `wallet`, no Grant |
 | a bad signature; a timestamp 6 minutes old; `livemode` of the other mode | 400, nothing changed |
 | an event for a customer no Account has | 200, nothing changed |
-| auto-recharge: the sweep crashes after writing `seq` and before the call, then runs again | one PaymentIntent (the same idempotency key), one Grant |
+| auto-recharge: the balance pass crashes after writing `seq` and before the call, then runs again | one PaymentIntent (the same idempotency key), one Grant |
 
-## The operator
+## Scenario 5: Metronome's webhook and its absence
 
-Runs every vector of `metering-vectors.json`, and the property tests of the
-tracks document. The Go port of the step in `billingtest` runs the same
-file.
+`TestMetronomeWebhook` and `TestMetronomeUnreachable`.
+
+| Case | Expected |
+|---|---|
+| the alert event posted twice; posted after credit was bought (a stale event) | the Account's `credit` is what the fake Metronome's balance says each time: the handler re-reads |
+| a bad signature; an `X-Metronome-Date` 6 minutes old | 400, nothing changed |
+| an alert for a customer no Account has; an event of another type | 200, nothing changed |
+| the alert is never posted; the balance pass runs | `exhausted` is set by the pass |
+| a credit's end passes with nothing awake; the balance pass runs | `exhausted` is set (the pass follows `nextExpiryAt`) |
+| `Unreachable(true)`; an active account with credit: create, resume, wake | all allowed; no call to Metronome was made by the decision |
+| `Unreachable(true)`; an exhausted account: create | 402 `out_of_credit` |
+| `Unreachable(true)`; a pack's `checkout.session.completed`; then `Unreachable(false)` and the event again | 500 the first time (Stripe retries); 200 the second, one credit, `exhausted` false |
+| `Unreachable(true)`; `GET /api/billing` | 200, `ledger: stale`, `balanceMicros` = `spec.credit.balanceMicros` |
+| a search of the backend's billing packages | no informer, no cache type and no package-level map holding accounts or balances (`TestNoLedgerCopy`: the production `Accounts` and `Ledger` are constructed with only their clients, and two calls make two reads) |
+
+## The observer
+
+Its seconds function runs every vector of `metering-vectors.json`
+(`awakeSeconds`, `diskGBSeconds`), and the property tests of the tracks
+document that are about seconds. Its sender is tested against a fake
+ingest endpoint: the same tick sent twice has the same `transaction_id`s;
+batches hold at most 100 events; a 5xx is retried with the same keys and
+given up after an hour; a 4xx is dropped and logged; a restart charges
+nothing for the time it was down beyond `MAX_GAP`. The Go port of the step
+in `billingtest` runs the whole file, money included.
