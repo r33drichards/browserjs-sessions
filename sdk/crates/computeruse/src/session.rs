@@ -107,6 +107,20 @@ impl Session {
         self.patch(json!({"name": name}), "rename session").await
     }
 
+    /// Changes the session's size (a name from
+    /// [`Client::sizes`](crate::Client::sizes)). Scope `sessions:write`.
+    ///
+    /// A session that is asleep or stopped changes at once. One that is
+    /// awake keeps running at its size, shows the new one as
+    /// `pending_size`, and changes at its next start; asking for the size
+    /// it runs at withdraws that. Either way **the next start is fresh**:
+    /// the snapshot is dropped, so open windows and running programs are
+    /// lost. The disk is kept. `400` for a size the deployment does not
+    /// have.
+    pub async fn resize(&self, size: String) -> Result<SessionInfo, ComputerUseError> {
+        self.patch(json!({"size": size}), "resize session").await
+    }
+
     /// Stops the session: the desktop goes, the disk stays, no snapshot is
     /// taken, and an MCP call does not wake it. Scope `sessions:write`.
     pub async fn stop(&self) -> Result<SessionInfo, ComputerUseError> {

@@ -38,4 +38,6 @@ output "mcp_url" {
 
 - `mcp_url` (String) What an MCP client is pointed at.
 - `owner` (String) Who owns the session.
+- `pending_size` (String) The size the session takes at its next start, while a resize is waiting. Empty when none is.
+- `size` (String) The session's size: `small`, `medium` or `large`. While a resize is waiting for the next start, the size asked for.
 - `state` (String) The session's state as the API reports it.

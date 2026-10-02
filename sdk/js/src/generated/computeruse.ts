@@ -444,7 +444,13 @@ export type CreateSessionRequest = {
      * The id of a preset (`GET /v1/policy-presets`) to use as the policy.
      * The SDK reads the preset and sends its source. Not with `policy`.
      */
-    policyPreset?: string
+    policyPreset?: string,
+    /**
+     * How much CPU and memory the desktop gets: one of the names
+     * [`Client::sizes`](crate::Client::sizes) lists, such as `small`,
+     * `medium` or `large`. Left out: the deployment's default (`small`).
+     */
+    size?: string
 }
 
 /**
@@ -454,7 +460,8 @@ export const CreateSessionRequest = (() => {
     const defaults = () => ({
         name: undefined,
         policy: undefined,
-        policyPreset: undefined
+        policyPreset: undefined,
+        size: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<CreateSessionRequest, ReturnType<typeof defaults>>(defaults);
@@ -473,18 +480,21 @@ const FfiConverterTypeCreateSessionRequest = (() => {
             return {
                 name: FfiConverterOptionalString.readFromCursor(c), 
                 policy: FfiConverterOptionalTypePolicyInput.readFromCursor(c), 
-                policyPreset: FfiConverterOptionalString.readFromCursor(c)
+                policyPreset: FfiConverterOptionalString.readFromCursor(c), 
+                size: FfiConverterOptionalString.readFromCursor(c)
             };
         }
         writeIntoCursor(value: TypeName, c: Cursor): void {
             FfiConverterOptionalString.writeIntoCursor(value.name, c);
             FfiConverterOptionalTypePolicyInput.writeIntoCursor(value.policy, c);
             FfiConverterOptionalString.writeIntoCursor(value.policyPreset, c);
+            FfiConverterOptionalString.writeIntoCursor(value.size, c);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterOptionalString.allocationSize(value.name) +
              FfiConverterOptionalTypePolicyInput.allocationSize(value.policy) +
-             FfiConverterOptionalString.allocationSize(value.policyPreset);
+             FfiConverterOptionalString.allocationSize(value.policyPreset) +
+             FfiConverterOptionalString.allocationSize(value.size);
             
         }
     };
@@ -1203,6 +1213,17 @@ export type SessionInfo = {
      */
     policy?: PolicySummary,
     /**
+     * The size the session runs at: `small`, `medium`, `large`. Absent
+     * from a service that predates sizes.
+     */
+    size?: string,
+    /**
+     * The size asked for with [`Session::resize`](crate::Session::resize)
+     * while the session was awake. It takes effect at the next start;
+     * absent when no resize is waiting.
+     */
+    pendingSize?: string,
+    /**
      * True when a suspended session holds a snapshot of its running
      * desktop, which a wake restores. Absent otherwise.
      */
@@ -1251,6 +1272,8 @@ const FfiConverterTypeSessionInfo = (() => {
                 created: FfiConverterOptionalString.readFromCursor(c), 
                 mcpUrl: FfiConverterOptionalString.readFromCursor(c), 
                 policy: FfiConverterOptionalTypePolicySummary.readFromCursor(c), 
+                size: FfiConverterOptionalString.readFromCursor(c), 
+                pendingSize: FfiConverterOptionalString.readFromCursor(c), 
                 stateSaved: FfiConverterOptionalBoolean.readFromCursor(c), 
                 stoppedBy: FfiConverterOptionalString.readFromCursor(c), 
                 draining: FfiConverterOptionalString.readFromCursor(c), 
@@ -1266,6 +1289,8 @@ const FfiConverterTypeSessionInfo = (() => {
             FfiConverterOptionalString.writeIntoCursor(value.created, c);
             FfiConverterOptionalString.writeIntoCursor(value.mcpUrl, c);
             FfiConverterOptionalTypePolicySummary.writeIntoCursor(value.policy, c);
+            FfiConverterOptionalString.writeIntoCursor(value.size, c);
+            FfiConverterOptionalString.writeIntoCursor(value.pendingSize, c);
             FfiConverterOptionalBoolean.writeIntoCursor(value.stateSaved, c);
             FfiConverterOptionalString.writeIntoCursor(value.stoppedBy, c);
             FfiConverterOptionalString.writeIntoCursor(value.draining, c);
@@ -1280,10 +1305,128 @@ const FfiConverterTypeSessionInfo = (() => {
              FfiConverterOptionalString.allocationSize(value.created) +
              FfiConverterOptionalString.allocationSize(value.mcpUrl) +
              FfiConverterOptionalTypePolicySummary.allocationSize(value.policy) +
+             FfiConverterOptionalString.allocationSize(value.size) +
+             FfiConverterOptionalString.allocationSize(value.pendingSize) +
              FfiConverterOptionalBoolean.allocationSize(value.stateSaved) +
              FfiConverterOptionalString.allocationSize(value.stoppedBy) +
              FfiConverterOptionalString.allocationSize(value.draining) +
              FfiConverterOptionalString.allocationSize(value.deleteAfter);
+            
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * One size a session can have.
+ */
+export type SessionSize = {
+    /**
+     * What `size` is set to: `small`, `medium`, `large`.
+     */
+    name: string,
+    /**
+     * CPU, in thousandths of a core.
+     */
+    cpuMillis: number,
+    /**
+     * Memory, in MiB.
+     */
+    memoryMib: number,
+    /**
+     * Whether desktops of this size are kept warm, so that a new session
+     * is ready in seconds.
+     */
+    warm: boolean
+}
+
+/**
+ * Generated factory for {@link SessionSize} record objects.
+ */
+export const SessionSize = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<SessionSize, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<SessionSize>,
+    });
+})();
+
+const FfiConverterTypeSessionSize = (() => {
+    type TypeName = SessionSize;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            return {
+                name: FfiConverterString.readFromCursor(c), 
+                cpuMillis: FfiConverterUInt32.readFromCursor(c), 
+                memoryMib: FfiConverterUInt32.readFromCursor(c), 
+                warm: FfiConverterBool.readFromCursor(c)
+            };
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            FfiConverterString.writeIntoCursor(value.name, c);
+            FfiConverterUInt32.writeIntoCursor(value.cpuMillis, c);
+            FfiConverterUInt32.writeIntoCursor(value.memoryMib, c);
+            FfiConverterBool.writeIntoCursor(value.warm, c);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.name) +
+             FfiConverterUInt32.allocationSize(value.cpuMillis) +
+             FfiConverterUInt32.allocationSize(value.memoryMib) +
+             FfiConverterBool.allocationSize(value.warm);
+            
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * The sizes a deployment offers: `GET /v1/sizes`.
+ */
+export type SessionSizes = {
+    /**
+     * The size of a session created without one.
+     */
+    defaultSize: string,
+    sizes: Array<SessionSize>
+}
+
+/**
+ * Generated factory for {@link SessionSizes} record objects.
+ */
+export const SessionSizes = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<SessionSizes, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<SessionSizes>,
+    });
+})();
+
+const FfiConverterTypeSessionSizes = (() => {
+    type TypeName = SessionSizes;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        readFromCursor(c: Cursor): TypeName {
+            return {
+                defaultSize: FfiConverterString.readFromCursor(c), 
+                sizes: FfiConverterSequenceTypeSessionSize.readFromCursor(c)
+            };
+        }
+        writeIntoCursor(value: TypeName, c: Cursor): void {
+            FfiConverterString.writeIntoCursor(value.defaultSize, c);
+            FfiConverterSequenceTypeSessionSize.writeIntoCursor(value.sizes, c);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.defaultSize) +
+             FfiConverterSequenceTypeSessionSize.allocationSize(value.sizes);
             
         }
     };
@@ -2574,6 +2717,19 @@ export interface SessionLike {
  */
     resetPolicy(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Policy>;
 /**
+ * Changes the session's size (a name from
+ * [`Client::sizes`](crate::Client::sizes)). Scope `sessions:write`.
+ *
+ * A session that is asleep or stopped changes at once. One that is
+ * awake keeps running at its size, shows the new one as
+ * `pending_size`, and changes at its next start; asking for the size
+ * it runs at withdraws that. Either way **the next start is fresh**:
+ * the snapshot is dropped, so open windows and running programs are
+ * lost. The disk is kept. `400` for a size the deployment does not
+ * have.
+ */
+    resize(size: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SessionInfo>;
+/**
  * Starts a stopped session from its disk, or wakes a sleeping one:
  * the `resume` action, which [`Session::wake`] is a route for. Scope
  * `sessions:write`. `402` where billing refuses it.
@@ -3060,6 +3216,59 @@ private constructor(pointer: UniffiHandle) {
             /*liftFunc:*/ (__rb) => {
                 try {
                     return FfiConverterTypePolicy.lift(__rb);
+                } finally {
+                    nativeModule().rustbuffer_free(__rb);
+                }
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeComputerUseError.lift.bind(FfiConverterTypeComputerUseError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+    
+/**
+ * Changes the session's size (a name from
+ * [`Client::sizes`](crate::Client::sizes)). Scope `sessions:write`.
+ *
+ * A session that is asleep or stopped changes at once. One that is
+ * awake keeps running at its size, shows the new one as
+ * `pending_size`, and changes at its next start; asking for the size
+ * it runs at withdraws that. Either way **the next start is fresh**:
+ * the snapshot is dropped, so open windows and running programs are
+ * lost. The disk is kept. `400` for a size the deployment does not
+ * have.
+ */
+    async resize(size: string, asyncOpts_?: { signal: AbortSignal }): Promise<SessionInfo> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_computeruse_fn_method_session_resize(
+                    uniffiTypeSessionObjectFactory.clonePointer(this),FfiConverterString.lower(size, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_computeruse_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_computeruse_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_computeruse_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_computeruse_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            // Borrowed view over foreign memory: the call site owns the free,
+            // as on the sync paths. Unconditional — a no-op where buffers are
+            // already JS-owned.
+            /*liftFunc:*/ (__rb) => {
+                try {
+                    return FfiConverterTypeSessionInfo.lift(__rb);
                 } finally {
                     nativeModule().rustbuffer_free(__rb);
                 }
@@ -3603,7 +3812,10 @@ export interface ClientLike {
  * An MCP call waits for it; so does
  * [`Session::wait_until_running`].
  *
- * `409` ([`ComputerUseError::Conflict`]) at the session limit, `422`
+ * `409` ([`ComputerUseError::Conflict`]) at the session limit, and with
+ * the code `no_capacity` when there is no room for the size asked for
+ * (nothing is created; try later or smaller). `400` for a size the
+ * deployment does not have. `422`
  * ([`ComputerUseError::InvalidPolicy`]) for a policy that does not
  * validate, in which case nothing was created.
  */
@@ -3636,6 +3848,10 @@ export interface ClientLike {
  * exists. Enough for a token with `sessions:connect` alone.
  */
     session(id: string) /*throws*/: SessionLike;
+/**
+ * The sizes a session can have here, and the default. Needs no scope.
+ */
+    sizes(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SessionSizes>;
 /**
  * Checks a Rego policy without saving it. An invalid policy is not an
  * error here: it is a [`Validation`] whose `ok` is false. Needs no
@@ -3769,7 +3985,10 @@ export class Client extends UniffiAbstractObject implements ClientLike {
  * An MCP call waits for it; so does
  * [`Session::wait_until_running`].
  *
- * `409` ([`ComputerUseError::Conflict`]) at the session limit, `422`
+ * `409` ([`ComputerUseError::Conflict`]) at the session limit, and with
+ * the code `no_capacity` when there is no room for the size asked for
+ * (nothing is created; try later or smaller). `400` for a size the
+ * deployment does not have. `422`
  * ([`ComputerUseError::InvalidPolicy`]) for a policy that does not
  * validate, in which case nothing was created.
  */
@@ -4034,6 +4253,50 @@ export class Client extends UniffiAbstractObject implements ClientLike {
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
     ));
+    }
+    
+/**
+ * The sizes a session can have here, and the default. Needs no scope.
+ */
+    async sizes(asyncOpts_?: { signal: AbortSignal }): Promise<SessionSizes> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_computeruse_fn_method_client_sizes(
+                    uniffiTypeClientObjectFactory.clonePointer(this)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_computeruse_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_computeruse_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_computeruse_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_computeruse_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            // Borrowed view over foreign memory: the call site owns the free,
+            // as on the sync paths. Unconditional — a no-op where buffers are
+            // already JS-owned.
+            /*liftFunc:*/ (__rb) => {
+                try {
+                    return FfiConverterTypeSessionSizes.lift(__rb);
+                } finally {
+                    nativeModule().rustbuffer_free(__rb);
+                }
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeComputerUseError.lift.bind(FfiConverterTypeComputerUseError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
     }
     
 /**
@@ -4558,6 +4821,12 @@ export interface CreateSessionRequestBuilderLike {
  * The SDK reads the preset and sends its source. Not with `policy`.
  */
     policyPreset(value: string): CreateSessionRequestBuilderLike;
+/**
+ * How much CPU and memory the desktop gets: one of the names
+ * [`Client::sizes`](crate::Client::sizes) lists, such as `small`,
+ * `medium` or `large`. Left out: the deployment's default (`small`).
+ */
+    size(value: string): CreateSessionRequestBuilderLike;
 }
 /**
  * @deprecated Use `CreateSessionRequestBuilderLike` instead.
@@ -4652,6 +4921,23 @@ export class CreateSessionRequestBuilder extends UniffiAbstractObject implements
     return FfiConverterTypeCreateSessionRequestBuilder.lift(uniffiCaller.rustCall(
             /*caller:*/ (callStatus) => {
                 return nativeModule().uniffi_computeruse_fn_method_createsessionrequestbuilder_policy_preset(
+                uniffiTypeCreateSessionRequestBuilderObjectFactory.clonePointer(this),
+        FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+    
+/**
+ * How much CPU and memory the desktop gets: one of the names
+ * [`Client::sizes`](crate::Client::sizes) lists, such as `small`,
+ * `medium` or `large`. Left out: the deployment's default (`small`).
+ */
+    size(value: string): CreateSessionRequestBuilderLike {
+    return FfiConverterTypeCreateSessionRequestBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_computeruse_fn_method_createsessionrequestbuilder_size(
                 uniffiTypeCreateSessionRequestBuilderObjectFactory.clonePointer(this),
         FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
                 callStatus);
@@ -5364,6 +5650,9 @@ const FfiConverterSequenceTypeContentBlock = new FfiConverterArray(FfiConverterT
 // FfiConverter for PolicySummary | undefined
 const FfiConverterOptionalTypePolicySummary = new FfiConverterOptional(FfiConverterTypePolicySummary);
 
+// FfiConverter for Array<SessionSize>
+const FfiConverterSequenceTypeSessionSize = new FfiConverterArray(FfiConverterTypeSessionSize);
+
 // FfiConverter for SessionInfo | undefined
 const FfiConverterOptionalTypeSessionInfo = new FfiConverterOptional(FfiConverterTypeSessionInfo);
 
@@ -5410,7 +5699,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_computeruse_checksum_method_client_base_url() !== 3049) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_computeruse_checksum_method_client_base_url");
     }
-    if (nativeModule().uniffi_computeruse_checksum_method_client_create_session() !== 53219) {
+    if (nativeModule().uniffi_computeruse_checksum_method_client_create_session() !== 59956) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_computeruse_checksum_method_client_create_session");
     }
     if (nativeModule().uniffi_computeruse_checksum_method_client_evaluate_policy() !== 58167) {
@@ -5430,6 +5719,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_computeruse_checksum_method_client_session() !== 4961) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_computeruse_checksum_method_client_session");
+    }
+    if (nativeModule().uniffi_computeruse_checksum_method_client_sizes() !== 51046) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_computeruse_checksum_method_client_sizes");
     }
     if (nativeModule().uniffi_computeruse_checksum_method_client_validate_policy() !== 56092) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_computeruse_checksum_method_client_validate_policy");
@@ -5487,6 +5779,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_computeruse_checksum_method_createsessionrequestbuilder_policy_preset() !== 10001) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_computeruse_checksum_method_createsessionrequestbuilder_policy_preset");
+    }
+    if (nativeModule().uniffi_computeruse_checksum_method_createsessionrequestbuilder_size() !== 36408) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_computeruse_checksum_method_createsessionrequestbuilder_size");
     }
     if (nativeModule().uniffi_computeruse_checksum_constructor_managementbuilder_new() !== 51554) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_computeruse_checksum_constructor_managementbuilder_new");
@@ -5563,6 +5858,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_computeruse_checksum_method_session_reset_policy() !== 30937) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_computeruse_checksum_method_session_reset_policy");
     }
+    if (nativeModule().uniffi_computeruse_checksum_method_session_resize() !== 53764) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_computeruse_checksum_method_session_resize");
+    }
     if (nativeModule().uniffi_computeruse_checksum_method_session_resume() !== 38912) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_computeruse_checksum_method_session_resume");
     }
@@ -5622,6 +5920,8 @@ export default Object.freeze({
     FfiConverterTypeRunJsResult,
     FfiConverterTypeSession,
     FfiConverterTypeSessionInfo,
+    FfiConverterTypeSessionSize,
+    FfiConverterTypeSessionSizes,
     FfiConverterTypeSessionState,
     FfiConverterTypeToolInfo,
     FfiConverterTypeToolResult,

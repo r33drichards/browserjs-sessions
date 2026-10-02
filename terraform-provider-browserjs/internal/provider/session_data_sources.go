@@ -16,26 +16,31 @@ import (
 )
 
 type sessionModel struct {
-	ID     types.String `tfsdk:"id"`
-	Name   types.String `tfsdk:"name"`
-	MCPURL types.String `tfsdk:"mcp_url"`
-	State  types.String `tfsdk:"state"`
-	Owner  types.String `tfsdk:"owner"`
+	ID          types.String `tfsdk:"id"`
+	Name        types.String `tfsdk:"name"`
+	MCPURL      types.String `tfsdk:"mcp_url"`
+	State       types.String `tfsdk:"state"`
+	Owner       types.String `tfsdk:"owner"`
+	Size        types.String `tfsdk:"size"`
+	PendingSize types.String `tfsdk:"pending_size"`
 }
 
 func sessionModelOf(s client.Session) sessionModel {
 	return sessionModel{
-		ID:     types.StringValue(s.ID),
-		Name:   types.StringValue(s.Name),
-		MCPURL: types.StringValue(s.MCPURL),
-		State:  types.StringValue(s.State),
-		Owner:  types.StringValue(s.Owner),
+		ID:          types.StringValue(s.ID),
+		Name:        types.StringValue(s.Name),
+		MCPURL:      types.StringValue(s.MCPURL),
+		State:       types.StringValue(s.State),
+		Owner:       types.StringValue(s.Owner),
+		Size:        types.StringValue(wantedSize(&s)),
+		PendingSize: types.StringValue(s.PendingSize),
 	}
 }
 
 var sessionAttrTypes = map[string]attr.Type{
 	"id": types.StringType, "name": types.StringType, "mcp_url": types.StringType,
 	"state": types.StringType, "owner": types.StringType,
+	"size": types.StringType, "pending_size": types.StringType,
 }
 
 // browserjs_session
@@ -66,9 +71,11 @@ func (d *sessionDataSource) Schema(_ context.Context, _ datasource.SchemaRequest
 				Optional: true, Computed: true,
 				MarkdownDescription: "The session's name, which must match exactly one of the token owner's sessions. Exactly one of `id` and `name` is required.",
 			},
-			"mcp_url": schema.StringAttribute{Computed: true, MarkdownDescription: "What an MCP client is pointed at."},
-			"state":   schema.StringAttribute{Computed: true, MarkdownDescription: "The session's state as the API reports it."},
-			"owner":   schema.StringAttribute{Computed: true, MarkdownDescription: "Who owns the session."},
+			"mcp_url":      schema.StringAttribute{Computed: true, MarkdownDescription: "What an MCP client is pointed at."},
+			"state":        schema.StringAttribute{Computed: true, MarkdownDescription: "The session's state as the API reports it."},
+			"owner":        schema.StringAttribute{Computed: true, MarkdownDescription: "Who owns the session."},
+			"size":         schema.StringAttribute{Computed: true, MarkdownDescription: "The session's size: `small`, `medium` or `large`. While a resize is waiting for the next start, the size asked for."},
+			"pending_size": schema.StringAttribute{Computed: true, MarkdownDescription: "The size the session takes at its next start, while a resize is waiting. Empty when none is."},
 		},
 	}
 }
@@ -160,11 +167,13 @@ func (d *sessionsDataSource) Schema(_ context.Context, _ datasource.SchemaReques
 				MarkdownDescription: "The sessions, in the order the API lists them.",
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
-						"id":      schema.StringAttribute{Computed: true, MarkdownDescription: "The session ID."},
-						"name":    schema.StringAttribute{Computed: true, MarkdownDescription: "The session's name."},
-						"mcp_url": schema.StringAttribute{Computed: true, MarkdownDescription: "What an MCP client is pointed at."},
-						"state":   schema.StringAttribute{Computed: true, MarkdownDescription: "The session's state as the API reports it."},
-						"owner":   schema.StringAttribute{Computed: true, MarkdownDescription: "Who owns the session."},
+						"id":           schema.StringAttribute{Computed: true, MarkdownDescription: "The session ID."},
+						"name":         schema.StringAttribute{Computed: true, MarkdownDescription: "The session's name."},
+						"mcp_url":      schema.StringAttribute{Computed: true, MarkdownDescription: "What an MCP client is pointed at."},
+						"state":        schema.StringAttribute{Computed: true, MarkdownDescription: "The session's state as the API reports it."},
+						"owner":        schema.StringAttribute{Computed: true, MarkdownDescription: "Who owns the session."},
+						"size":         schema.StringAttribute{Computed: true, MarkdownDescription: "The session's size: `small`, `medium` or `large`. While a resize is waiting for the next start, the size asked for."},
+						"pending_size": schema.StringAttribute{Computed: true, MarkdownDescription: "The size the session takes at its next start, while a resize is waiting. Empty when none is."},
 					},
 				},
 			},

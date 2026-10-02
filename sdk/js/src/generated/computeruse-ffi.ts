@@ -393,6 +393,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: true,
     },
+    "uniffi_computeruse_fn_method_client_sizes": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_computeruse_fn_method_client_validate_policy": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -484,6 +489,11 @@ const DEFINITIONS = {
       hasRustCallStatus: true,
     },
     "uniffi_computeruse_fn_method_createsessionrequestbuilder_policy_preset": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_computeruse_fn_method_createsessionrequestbuilder_size": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: true,
@@ -613,6 +623,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_computeruse_fn_method_session_resize": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_computeruse_fn_method_session_resume": {
       args: [FfiType.Handle],
       ret: FfiType.Handle,
@@ -723,6 +738,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_computeruse_checksum_method_client_sizes": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_computeruse_checksum_method_client_validate_policy": {
       args: [],
       ret: FfiType.UInt16,
@@ -814,6 +834,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_computeruse_checksum_method_createsessionrequestbuilder_policy_preset": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_computeruse_checksum_method_createsessionrequestbuilder_size": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -939,6 +964,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_computeruse_checksum_method_session_reset_policy": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_computeruse_checksum_method_session_resize": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -1084,6 +1114,7 @@ interface NativeModuleInterface {
     uniffi_computeruse_fn_method_client_me(uniffiSelf: bigint): bigint;
     uniffi_computeruse_fn_method_client_policy_presets(uniffiSelf: bigint): bigint;
     uniffi_computeruse_fn_method_client_session(uniffiSelf: bigint, id: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_computeruse_fn_method_client_sizes(uniffiSelf: bigint): bigint;
     uniffi_computeruse_fn_method_client_validate_policy(uniffiSelf: bigint, source: Uint8Array): bigint;
     uniffi_computeruse_fn_constructor_clientoptionsbuilder_new(uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_computeruse_fn_method_clientoptionsbuilder_allow_insecure_http(uniffiSelf: bigint, value: number, uniffi_out_err: UniffiRustCallStatus): bigint;
@@ -1103,6 +1134,7 @@ interface NativeModuleInterface {
     uniffi_computeruse_fn_method_createsessionrequestbuilder_name(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_computeruse_fn_method_createsessionrequestbuilder_policy(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_computeruse_fn_method_createsessionrequestbuilder_policy_preset(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_computeruse_fn_method_createsessionrequestbuilder_size(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_computeruse_fn_constructor_managementbuilder_new(uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_computeruse_fn_method_managementbuilder_build(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_computeruse_fn_method_managementbuilder_managed_url(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
@@ -1128,6 +1160,7 @@ interface NativeModuleInterface {
     uniffi_computeruse_fn_method_session_refresh(uniffiSelf: bigint): bigint;
     uniffi_computeruse_fn_method_session_rename(uniffiSelf: bigint, name: Uint8Array): bigint;
     uniffi_computeruse_fn_method_session_reset_policy(uniffiSelf: bigint): bigint;
+    uniffi_computeruse_fn_method_session_resize(uniffiSelf: bigint, size: Uint8Array): bigint;
     uniffi_computeruse_fn_method_session_resume(uniffiSelf: bigint): bigint;
     uniffi_computeruse_fn_method_session_run_js(uniffiSelf: bigint, code: Uint8Array): bigint;
     uniffi_computeruse_fn_method_session_run_js_with(uniffiSelf: bigint, request: Uint8Array): bigint;
@@ -1150,6 +1183,7 @@ interface NativeModuleInterface {
     uniffi_computeruse_checksum_method_client_me(): number;
     uniffi_computeruse_checksum_method_client_policy_presets(): number;
     uniffi_computeruse_checksum_method_client_session(): number;
+    uniffi_computeruse_checksum_method_client_sizes(): number;
     uniffi_computeruse_checksum_method_client_validate_policy(): number;
     uniffi_computeruse_checksum_constructor_clientoptionsbuilder_new(): number;
     uniffi_computeruse_checksum_method_clientoptionsbuilder_allow_insecure_http(): number;
@@ -1169,6 +1203,7 @@ interface NativeModuleInterface {
     uniffi_computeruse_checksum_method_createsessionrequestbuilder_name(): number;
     uniffi_computeruse_checksum_method_createsessionrequestbuilder_policy(): number;
     uniffi_computeruse_checksum_method_createsessionrequestbuilder_policy_preset(): number;
+    uniffi_computeruse_checksum_method_createsessionrequestbuilder_size(): number;
     uniffi_computeruse_checksum_constructor_managementbuilder_new(): number;
     uniffi_computeruse_checksum_method_managementbuilder_build(): number;
     uniffi_computeruse_checksum_method_managementbuilder_managed_url(): number;
@@ -1194,6 +1229,7 @@ interface NativeModuleInterface {
     uniffi_computeruse_checksum_method_session_refresh(): number;
     uniffi_computeruse_checksum_method_session_rename(): number;
     uniffi_computeruse_checksum_method_session_reset_policy(): number;
+    uniffi_computeruse_checksum_method_session_resize(): number;
     uniffi_computeruse_checksum_method_session_resume(): number;
     uniffi_computeruse_checksum_method_session_run_js(): number;
     uniffi_computeruse_checksum_method_session_run_js_with(): number;

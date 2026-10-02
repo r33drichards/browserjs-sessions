@@ -82,7 +82,10 @@ type Server struct {
 }
 
 type session struct {
-	id, name     string
+	id, name    string
+	size        string // what it runs at
+	pendingSize string // what it takes at its next start
+
 	legacy       bool // predates policies
 	startingLeft int
 	policy       policy
@@ -210,7 +213,7 @@ func (s *Server) add(name string) *session {
 		s.named++
 		name = fmt.Sprintf("session-%d", s.named)
 	}
-	se := &session{id: id, name: name}
+	se := &session{id: id, name: name, size: "small"}
 	se.policy.mode = client.ModeEditor
 	se.policy.set(Unrestricted, Validate(Unrestricted), "ui")
 	s.sessions[id] = se
@@ -256,7 +259,8 @@ func (p *policy) view() client.Policy {
 }
 
 func (s *Server) sessionView(se *session) client.Session {
-	v := client.Session{ID: se.id, Name: se.name, Owner: s.Owner, State: "running", MCPURL: s.BaseMCPURL + "/" + se.id + "/mcp"}
+	v := client.Session{ID: se.id, Name: se.name, Owner: s.Owner, State: "running", MCPURL: s.BaseMCPURL + "/" + se.id + "/mcp",
+		Size: se.size, PendingSize: se.pendingSize}
 	if se.legacy {
 		v.Policy = &client.PolicySummary{State: client.StateUnsupported}
 		return v
@@ -332,6 +336,7 @@ func (s *Server) session(h func(http.ResponseWriter, *http.Request, *session)) h
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name   string              `json:"name"`
+		Size   string              `json:"size"`
 		Policy *client.PolicyInput `json:"policy"`
 	}
 	if b := bodyOf(r); len(bytes.TrimSpace(b)) > 0 {
@@ -354,7 +359,13 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if body.Size != "" && !validSize(w, body.Size) {
+		return
+	}
 	se := s.add(body.Name)
+	if body.Size != "" {
+		se.size = body.Size
+	}
 	se.startingLeft = s.SessionStartingReads
 	if body.Policy != nil {
 		se.policy.set(body.Policy.Source, v, "token:fake")
@@ -387,10 +398,22 @@ func (s *Server) getSession(w http.ResponseWriter, _ *http.Request, se *session)
 func (s *Server) patchSession(w http.ResponseWriter, r *http.Request, se *session) {
 	var body struct {
 		Name *string `json:"name"`
+		Size *string `json:"size"`
 	}
 	if err := json.Unmarshal(bodyOf(r), &body); err != nil {
 		writeError(w, http.StatusBadRequest, "body must be JSON")
 		return
+	}
+	if body.Size != nil {
+		if !validSize(w, *body.Size) {
+			return
+		}
+		// A fake session is always awake: the size waits for its next
+		// start, and asking for the size it runs at withdraws the wait.
+		se.pendingSize = *body.Size
+		if se.pendingSize == se.size {
+			se.pendingSize = ""
+		}
 	}
 	if body.Name != nil {
 		if strings.TrimSpace(*body.Name) == "" {
@@ -400,6 +423,16 @@ func (s *Server) patchSession(w http.ResponseWriter, r *http.Request, se *sessio
 		se.name = *body.Name
 	}
 	writeJSON(w, http.StatusOK, s.sessionView(se))
+}
+
+// validSize answers 400 for a size the fake does not have.
+func validSize(w http.ResponseWriter, size string) bool {
+	switch size {
+	case "small", "medium", "large":
+		return true
+	}
+	writeError(w, http.StatusBadRequest, fmt.Sprintf(`size must be one of ["small" "medium" "large"], got %q`, size))
+	return false
 }
 
 func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {

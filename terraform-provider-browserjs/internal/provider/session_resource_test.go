@@ -133,3 +133,57 @@ func TestSessionLimit(t *testing.T) {
 		t.Errorf("a failed create left state %v", attrs(state))
 	}
 }
+
+// A size is asked for at creation, and changed in place: a resize never
+// replaces the session. The fake's sessions are awake, so the new size waits
+// for the next start, and `size` reports it all the same.
+func TestSessionSizeIsSetAndChangedInPlace(t *testing.T) {
+	h := newHarness(t)
+
+	// Left out: the server's default.
+	state := h.mustApply(sessionRes, h.null(sessionRes), cfg{"name": "a"})
+	if str(state, "size") != "small" || str(state, "pending_size") != "" {
+		t.Errorf("default size: %v", attrs(state))
+	}
+	if p := h.plan(sessionRes, state, cfg{"name": "a"}); p.changes() {
+		t.Errorf("a second plan changes %v", attrs(p.state))
+	}
+
+	state = h.mustApply(sessionRes, h.null(sessionRes), cfg{"name": "b", "size": "medium"})
+	id := str(state, "id")
+	if str(state, "size") != "medium" || str(state, "pending_size") != "" {
+		t.Errorf("created at medium: %v", attrs(state))
+	}
+
+	p := h.plan(sessionRes, state, cfg{"name": "b", "size": "large"})
+	noErrors(t, "plan", p.diags)
+	if len(p.replace) > 0 {
+		t.Fatalf("a resize plans a replacement: %v", p.replace)
+	}
+	next, diags := h.apply(p)
+	noErrors(t, "apply", diags)
+	if str(next, "id") != id || str(next, "size") != "large" || str(next, "pending_size") != "large" {
+		t.Errorf("after the resize: %v", attrs(next))
+	}
+	// The session still runs at medium; the plan is settled all the same.
+	if p := h.plan(sessionRes, next, cfg{"name": "b", "size": "large"}); p.changes() {
+		t.Errorf("a plan after the resize changes %v", attrs(p.state))
+	}
+
+	// Back to the size it runs at: the wait is withdrawn.
+	back := h.mustApply(sessionRes, next, cfg{"name": "b", "size": "medium"})
+	if str(back, "size") != "medium" || str(back, "pending_size") != "" {
+		t.Errorf("after withdrawing: %v", attrs(back))
+	}
+
+	// A name and a size in one apply.
+	both := h.mustApply(sessionRes, back, cfg{"name": "c", "size": "small"})
+	if str(both, "name") != "c" || str(both, "size") != "small" {
+		t.Errorf("after both: %v", attrs(both))
+	}
+
+	bad := h.plan(sessionRes, both, cfg{"name": "c", "size": "huge"})
+	noErrors(t, "plan", bad.diags)
+	_, diags = h.apply(bad)
+	wantError(t, diags, "resize session", "size must be one of")
+}

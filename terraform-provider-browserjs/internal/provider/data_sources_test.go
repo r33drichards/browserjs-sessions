@@ -18,6 +18,7 @@ func TestSessionDataSource(t *testing.T) {
 	want := map[string]any{
 		"id": a, "name": "research", "state": "running", "owner": "dev@example.com",
 		"mcp_url": "https://sessions.example.test/" + a + "/mcp",
+		"size":    "small", "pending_size": "",
 	}
 	if !reflect.DeepEqual(byID, want) || !reflect.DeepEqual(byName, want) {
 		t.Errorf("by id %v\nby name %v\nwant %v", byID, byName, want)

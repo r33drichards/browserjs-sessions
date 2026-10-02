@@ -83,9 +83,10 @@ pub use types::{
     ClientOptions, ClientOptionsBuilder, ContentBlock, CreateSessionRequest,
     CreateSessionRequestBuilder, Diagnostic, Evaluation, Loaded, Management, ManagementBuilder,
     ManagementMode, Me, Policy, PolicyInput, PolicyInputBuilder, PolicyPreset, PolicyState,
-    PolicySummary, RunJsRequest, RunJsRequestBuilder, RunJsResult, SessionInfo, SessionState,
-    ToolInfo, ToolResult, Validation, DEFAULT_BASE_URL, SCOPE_POLICIES_READ, SCOPE_POLICIES_WRITE,
-    SCOPE_SESSIONS_CONNECT, SCOPE_SESSIONS_READ, SCOPE_SESSIONS_WRITE,
+    PolicySummary, RunJsRequest, RunJsRequestBuilder, RunJsResult, SessionInfo, SessionSize,
+    SessionSizes, SessionState, ToolInfo, ToolResult, Validation, DEFAULT_BASE_URL,
+    SCOPE_POLICIES_READ, SCOPE_POLICIES_WRITE, SCOPE_SESSIONS_CONNECT, SCOPE_SESSIONS_READ,
+    SCOPE_SESSIONS_WRITE,
 };
 
 /// The SDK's version.
