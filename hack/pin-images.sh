@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Pin the three images deploy/gke runs, by digest.
+# Pin the images deploy/gke runs, by digest.
 #
-#   hack/pin-images.sh backend=sha256:… browser=sha256:… mcp-js=sha256:…
+#   hack/pin-images.sh backend=sha256:… browser=sha256:… mcp-js=sha256:… site=sha256:…
 #       writes the given digests (any subset) into the images: block of
 #       deploy/gke/kustomization.yaml, then copies the two session images
 #       into deploy/gke/blueprint.yaml and deploy/gke/warmpool.yaml
@@ -14,6 +14,9 @@
 #       changes nothing; fails if a placeholder is left or the files
 #       disagree. The deploy workflow runs this first.
 #
+# The site image (the public site, deploy/gke/site.yaml) is pinned only once
+# it has an entry in the images: block; until then it is skipped.
+#
 # The digests are in the summary of the "images" workflow run for the commit.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -21,7 +24,9 @@ cd "$(dirname "$0")/.."
 kustomization=deploy/gke/kustomization.yaml
 # Where the session images are named: a cold session's pod and a warm one's.
 blueprints=(deploy/gke/blueprint.yaml deploy/gke/warmpool.yaml)
-images=(backend browser mcp-js)
+images=(backend browser mcp-js site)
+# Named in the blueprints as well as in the images: block.
+session_images=(browser mcp-js)
 
 die() {
   echo "pin-images: $*" >&2
@@ -36,6 +41,11 @@ pinned() { # image
     current == want && $1 == "digest:" { digest = $2 }
     END { if (name == "" || digest == "") exit 1; print name, digest }
   ' "$kustomization" || die "no images: entry for browserjs/$1 in $kustomization"
+}
+
+# Whether the image has an entry at all. Only site may be without one.
+deployed() { # image
+  [ "$1" != site ] || grep -q "name: browserjs/site$" "$kustomization"
 }
 
 set_digest() { # image, digest
@@ -62,6 +72,7 @@ case "${1:-}" in
   --registry)
     tag="${2:-main}"
     for image in "${images[@]}"; do
+      deployed "$image" || continue
       read -r name _ <<<"$(pinned "$image")"
       digest="$(gcloud artifacts docker images describe "$name:$tag" --format='value(image_summary.digest)')"
       echo "$image:$tag is $digest"
@@ -72,7 +83,7 @@ case "${1:-}" in
     for arg in "$@"; do
       [[ "$arg" == *=* ]] || die "expected image=digest, got: $arg"
       case "${arg%%=*}" in
-        backend | browser | mcp-js) set_digest "${arg%%=*}" "${arg#*=}" ;;
+        backend | browser | mcp-js | site) set_digest "${arg%%=*}" "${arg#*=}" ;;
         *) die "unknown image: ${arg%%=*} (one of: ${images[*]})" ;;
       esac
     done
@@ -81,12 +92,13 @@ esac
 
 failed=""
 for image in "${images[@]}"; do
+  deployed "$image" || continue
   read -r name digest <<<"$(pinned "$image")"
   if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
     echo "pin-images: $image is not pinned in $kustomization (digest: $digest)" >&2
     failed=1
   fi
-  [ "$image" != backend ] || continue
+  [[ " ${session_images[*]} " == *" $image "* ]] || continue
   want="$name@$digest"
   for blueprint in "${blueprints[@]}"; do
     have="$(in_blueprint "$image" "$blueprint")"

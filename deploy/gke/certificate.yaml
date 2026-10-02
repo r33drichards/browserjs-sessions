@@ -11,6 +11,8 @@ spec:
     kind: ClusterIssuer
     name: letsencrypt-production
   dnsNames:
+    # The public site (site/), on the domain itself.
+    - computeruse.site
     - app.computeruse.site
     - api.computeruse.site
     - authenticate.computeruse.site
