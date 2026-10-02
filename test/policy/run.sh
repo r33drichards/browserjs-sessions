@@ -10,7 +10,8 @@
 # variable hack/policy-stage.sh writes. Stand-ins (stub.py): the policy
 # operator (a bundle server publishing what this script builds from the
 # contract's examples), the browser container (an MCP server that runs
-# nothing) and the backend (a listener). Session pods are plain Pods with
+# nothing) and the backend (a listener). With OPERATOR_IMAGE set, the last
+# part swaps the stand-in operator for the real one. Session pods are plain Pods with
 # the session label, not Sandboxes: no Agent Sandbox controller is needed.
 #
 # Needs: a cluster whose CNI enforces NetworkPolicy (kind 0.24 or later),
@@ -435,6 +436,84 @@ for _ in $(seq 1 100); do
   sleep 0.2
 done
 ok "calls are allowed again when OPA is reachable again" "$recovered"
+
+# --- 5. the operator itself -------------------------------------------------------
+# With OPERATOR_IMAGE (an image the cluster has), the stand-in operator is
+# replaced by deploy/base's own Deployment, and policies are SessionPolicy
+# objects from here on.
+if [ -n "${OPERATOR_IMAGE:-}" ]; then
+  step "5. the real operator ($OPERATOR_IMAGE)"
+  session_policy() { # id, example name
+    jq -n --arg id "$1" --rawfile source "$contracts/examples/$2.policy.json" \
+      '{apiVersion: "browserjs.dev/v1alpha1", kind: "SessionPolicy", metadata: {name: $id},
+        spec: {sessionRef: {name: $id}, kind: "json", source: $source}}'
+  }
+  # until <seconds> <operation> <outcome>: the first time a call has it.
+  until_outcome() {
+    local started
+    started="$(date +%s.%N)"
+    for _ in $(seq 1 $(($1 * 4))); do
+      if [ "$(outcome "$(call $P_WITH "$2")")" = "$3" ]; then
+        python3 -c "import time; print(round(time.time() - $started, 2))"
+        return
+      fi
+      sleep 0.25
+    done
+  }
+  kubectl kustomize deploy/base | sed "s|image: browserjs/policy-operator\$|image: $OPERATOR_IMAGE|" |
+    kubectl apply -l app=policy-operator -f - >/dev/null
+  if k rollout status deploy/policy-operator --timeout=180s; then
+    pass "the operator starts and becomes ready with the Role and NetworkPolicy of deploy/base"
+  else
+    fail "the operator starts and becomes ready with the Role and NetworkPolicy of deploy/base"
+    k describe pod -l app=policy-operator | tail -30
+  fi
+  operator_started="$(date +%s)"
+  ok "with no SessionPolicy the operator's bundle denies a session that was allowed" "$(until_outcome 30 url denied)"
+
+  session_policy "$WITH" no-scripting | k apply -f - >/dev/null
+  started="$(date +%s.%N)"
+  if k wait --for=condition=Ready "sessionpolicy/$WITH" --timeout=60s >/dev/null 2>&1; then
+    ready="$(python3 -c "import time; print(round(time.time() - $started, 2))")"
+    pass "a SessionPolicy becomes Ready: status written through the subresource, every OPA replica asked (${ready}s)"
+  else
+    ready=never
+    fail "a SessionPolicy becomes Ready" "$(k get sessionpolicy "$WITH" -o json | jq -c .status)"
+  fi
+  status="$(k get sessionpolicy "$WITH" -o json | jq -c '.status // {}')"
+  is "it is loaded by both replicas" "2 of 2" "$(jq -r '"\(.loaded.replicas) of \(.loaded.total)"' <<<"$status")"
+  ok "its status has the hash and the generated Rego" "$(jq -r 'select((.hash // "") | startswith("sha256:")) | select((.rego // "") | contains("package browserjs.policy")) | "yes"' <<<"$status")" "$status"
+  is "an allowed call runs" ran "$(outcome "$(call $P_WITH url)")"
+  is "a denied call does not" denied "$(outcome "$(call $P_WITH evaluate)")"
+  is "the session without a SessionPolicy is denied" denied "$(outcome "$(call $P_WITHOUT url)")"
+
+  k patch sessionpolicy "$WITH" --type=merge -p "$(session_policy "$WITH" unrestricted | jq -c '{spec: {source: .spec.source}}')" >/dev/null
+  edited="$(until_outcome 30 evaluate ran)"
+  ok "an edit applies with nothing restarted (${edited:-not} s after the patch)" "$edited"
+
+  k patch sessionpolicy "$WITH" --type=merge -p '{"spec":{"source":"{ this is not a policy"}}' >/dev/null
+  if k wait --for=condition=Compiled=False "sessionpolicy/$WITH" --timeout=60s >/dev/null 2>&1; then
+    pass "a policy that does not compile is reported (Compiled=False)"
+  else
+    fail "a policy that does not compile is reported (Compiled=False)" "$(k get sessionpolicy "$WITH" -o json | jq -c .status.conditions)"
+  fi
+  ok "with its errors" "$(k get sessionpolicy "$WITH" -o json | jq -r '.status.errors[0].code // empty')"
+  is "and the previous policy stays in force" ran "$(outcome "$(call $P_WITH evaluate)")"
+
+  k delete sessionpolicy "$WITH" --timeout=60s >/dev/null 2>&1
+  is "a deleted SessionPolicy goes (the operator's finalizer lets it)" "" "$(k get sessionpolicy "$WITH" --ignore-not-found -o name)"
+  removed="$(until_outcome 30 url denied)"
+  ok "and its session is denied (${removed:-not} s after the delete)" "$removed"
+
+  # Long enough for the kubelet's liveness probe (kopf's, on 8081) to have
+  # failed three times if it did not answer.
+  while [ $(($(date +%s) - operator_started)) -lt 75 ]; do sleep 5; done
+  is "the operator was not restarted (its liveness endpoint answers the kubelet)" "true 0" \
+    "$(k get pods -l app=policy-operator -o jsonpath='{.items[0].status.containerStatuses[0].ready} {.items[0].status.containerStatuses[0].restartCount}')"
+  note "" && note "### The real operator" && note "" &&
+    note "SessionPolicy created to Ready: ${ready} s. Edit to the first call judged by it: ${edited:-never} s. Delete to the first call denied: ${removed:-never} s." &&
+    note "" && note '```' && note "$(k logs deploy/policy-operator --tail=40 2>&1)" && note '```'
+fi
 
 printf '\n%d passed, %d failed\n' "$passed" "$failed"
 note "" && note "$passed checks passed, $failed failed."

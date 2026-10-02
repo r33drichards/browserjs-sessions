@@ -39,7 +39,9 @@ subjects:
   - kind: ServiceAccount
     name: policy-operator
 ---
-# kopf watches the definitions of the resources it handles.
+# The contract's rule for kopf, which watches the definitions of the
+# resources it handles. The operator runs with that scanning off, so today
+# nothing uses it.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -153,7 +155,8 @@ spec:
             - name: tmp
               mountPath: /tmp
       volumes:
-        # The root filesystem is read-only; `opa build` and Python write here.
+        # The root filesystem is read-only, and every run of `opa` works in a
+        # temporary directory.
         - name: tmp
           emptyDir: {}
 ---

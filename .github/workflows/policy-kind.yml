@@ -14,6 +14,7 @@ on:
       - "hack/policy-stage.sh"
       - "hack/pin-images.sh"
       - "images/mcp-js/**"
+      - "images/policy-operator/**"
       - "test/policy/**"
       - "backend/internal/sessions/deploy_test.go"
       - ".github/workflows/policy-kind.yml"
@@ -87,16 +88,20 @@ jobs:
       - name: mcp-js image
         run: docker build -t browserjs/mcp-js:dev images/mcp-js
 
+      # As images.yml builds it: the repository root is the context.
+      - name: Policy operator image
+        run: docker build -t browserjs/policy-operator:dev -f images/policy-operator/Dockerfile .
+
       - name: Cluster
         run: |
           set -euo pipefail
           kind version
           kind create cluster --name policy --wait 120s
-          kind load docker-image browserjs/mcp-js:dev --name policy
+          kind load docker-image browserjs/mcp-js:dev browserjs/policy-operator:dev --name policy
           kubectl version
 
       - name: test/policy/run.sh
-        run: OPA="$RUNNER_TEMP/opa" RESULTS="$RUNNER_TEMP/results.md" test/policy/run.sh
+        run: OPERATOR_IMAGE=browserjs/policy-operator:dev OPA="$RUNNER_TEMP/opa" RESULTS="$RUNNER_TEMP/results.md" test/policy/run.sh
 
       - name: Results to job summary
         if: ${{ !cancelled() }}

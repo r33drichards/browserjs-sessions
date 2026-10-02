@@ -248,6 +248,9 @@ jobs:
           overlay=deploy/gke
           [ "$ISSUER" = production ] || overlay=deploy/gke-staging-issuer
           kubectl apply -k "$overlay"
+          # The policy operator looks its resource up once, when it starts.
+          kubectl wait --for=condition=Established --timeout=60s \
+            crd/sessionpolicies.browserjs.dev crd/apitokens.browserjs.dev
 
       - name: Certificate
         run: |

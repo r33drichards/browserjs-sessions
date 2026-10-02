@@ -154,6 +154,8 @@ unset client_secret
 
 # --- the system ----------------------------------------------------------------
 kubectl apply -k deploy/local
+# The policy operator looks its resource up once, when it starts.
+kubectl wait --for=condition=Established crd/sessionpolicies.browserjs.dev --timeout=60s
 [ -z "$backend_changed" ] || kubectl -n "$NS" rollout restart deploy/backend
 # A new CA: Pomerium must serve the new certificate and the backend trust it.
 [ -z "$new_certificate" ] || kubectl -n "$NS" rollout restart statefulset/pomerium deploy/backend
