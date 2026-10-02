@@ -1,0 +1,25 @@
+# What a session pod runs as. It has no Kubernetes permissions, and its token
+# is not mounted (the blueprint says so, and Agent Sandbox's admission policy
+# requires it). infra/main grants this ServiceAccount the Pod Snapshots bucket
+# through Workload Identity; snapshots are not used yet, so today the name
+# only keeps session pods off the namespace's default ServiceAccount.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: session
+automountServiceAccountToken: false
+---
+# Disks for sessions and for Pomerium: balanced Persistent Disks, created in
+# the zone of the node the pod is scheduled to (the cluster has one zone
+# today; with more, WaitForFirstConsumer is what keeps disk and pod together).
+# A session's disk is deleted with its Sandbox.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: browserjs-zonal
+provisioner: pd.csi.storage.gke.io
+parameters:
+  type: pd-balanced
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete
+allowVolumeExpansion: true

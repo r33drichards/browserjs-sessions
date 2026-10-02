@@ -1,0 +1,101 @@
+# Pomerium's configuration for production (browserjs.com). Secrets
+# (SHARED_SECRET, COOKIE_SECRET, SIGNING_KEY, IDP_CLIENT_SECRET) come from
+# the environment.
+address: :8443
+health_check_addr: 0.0.0.0:28080
+certificate_file: /tls/tls.crt
+certificate_key_file: /tls/tls.key
+
+authenticate_service_url: https://authenticate.browserjs.com
+
+# Users sign in with Dex, which offers Google and GitHub. Pomerium itself
+# fetches this address (discovery, tokens), through its own public name.
+idp_provider: oidc
+idp_provider_url: https://dex.browserjs.com/dex
+idp_client_id: pomerium
+
+# Sessions, MCP client registrations and MCP refresh tokens: lose these and
+# every user and every MCP client has to sign in again.
+databroker_storage_type: file
+databroker_storage_connection_string: file:///data/databroker
+
+# MCP clients that identify themselves by a metadata document under these
+# domains may sign users in (Claude's apps and Claude Code).
+mcp_allowed_client_id_domains:
+  - claude.ai
+
+# The whole of a request must arrive within this: an upload is up to 16 MiB.
+timeout_read: 5m
+
+routes:
+  # Session hosts. The backend tells the sessions apart by Host, so every
+  # route keeps the caller's.
+
+  # mcp-js's one-time upload URL: the token in the path is the credential,
+  # checked by the session's pod.
+  - name: session-upload
+    from: https://*.sessions.browserjs.com
+    prefix: /api/artifact-uploads/
+    to: http://backend
+    allow_public_unauthenticated_access: true
+    preserve_host_header: true
+    timeout: 5m
+
+  # The session's screen, a websocket: the ticket in the query is the
+  # credential, checked by the backend.
+  - name: session-vnc
+    from: https://*.sessions.browserjs.com
+    path: /vnc
+    to: http://backend
+    allow_public_unauthenticated_access: true
+    allow_websockets: true
+    preserve_host_header: true
+
+  # OAuth discovery for the MCP endpoint. Pomerium v0.33.3 serves these two
+  # documents itself only on hosts with an exact route, not on wildcard
+  # hosts, so the backend answers them (backend/internal/proxy/metadata.go).
+  # Remove this route when Pomerium does.
+  - name: session-oauth-metadata
+    from: https://*.sessions.browserjs.com
+    prefix: /.well-known/oauth-
+    to: http://backend
+    allow_public_unauthenticated_access: true
+    preserve_host_header: true
+
+  # The session's MCP endpoint. Pomerium signs the MCP client's user in and
+  # says who it is; the backend decides whether the session is theirs. The
+  # list of who may sign in is shared with the app's route below.
+  - name: session-mcp
+    from: https://*.sessions.browserjs.com
+    prefix: /mcp
+    to: http://backend
+    mcp:
+      server:
+        max_request_bytes: 1048576
+    # Who may use the app at all: these email addresses, nobody else.
+    policy: &allowed
+      - allow:
+          or:
+            - email:
+                is: rwendt1337@gmail.com
+            - email:
+                is: browserjs06@gmail.com
+    pass_identity_headers: true
+    preserve_host_header: true
+
+  # Dex's own pages (sign-in, the callbacks from Google and GitHub).
+  - name: dex
+    from: https://dex.browserjs.com
+    to: http://dex:5556
+    allow_public_unauthenticated_access: true
+    preserve_host_header: true
+
+  # The UI and its API.
+  - name: app
+    from: https://app.browserjs.com
+    to: http://backend
+    policy: *allowed
+    pass_identity_headers: true
+    preserve_host_header: true
+    # A request may wait for a session's pod to answer.
+    timeout: 5m

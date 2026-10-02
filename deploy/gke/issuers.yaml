@@ -1,0 +1,48 @@
+# Where certificates come from: Let's Encrypt, proving each name by DNS-01.
+# cert-manager writes a TXT record in the Cloud DNS zone, as the Google
+# service account its ServiceAccount is bound to
+# (cert-manager/kustomization.yaml). The session hosts are a wildcard, which
+# no other kind of proof can cover.
+#
+# Two issuers. Production certificates are trusted, and Let's Encrypt limits
+# how many it issues (5 identical certificates a week, and 5 failed
+# validations an hour). Staging certificates are trusted by nothing and are
+# nearly unlimited: use them to prove that issuing works. Which one the
+# Certificate asks is chosen by the directory applied: deploy/gke
+# (production) or deploy/gke-staging-issuer.
+#
+# Applied on its own (kubectl apply -f), after cert-manager is ready and
+# before deploy/gke: these are cluster-wide objects, and the kustomization
+# beside this file would put its namespace on them.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-production
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    # Let's Encrypt writes here about expiry and incidents.
+    email: rwendt1337@gmail.com
+    privateKeySecretRef:
+      name: letsencrypt-production-account
+    solvers:
+      - dns01:
+          cloudDNS:
+            project: browserjs-sessions
+            hostedZoneName: browserjs-com
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: rwendt1337@gmail.com
+    privateKeySecretRef:
+      name: letsencrypt-staging-account
+    solvers:
+      - dns01:
+          cloudDNS:
+            project: browserjs-sessions
+            hostedZoneName: browserjs-com

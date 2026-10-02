@@ -1,0 +1,22 @@
+# One certificate for every public name, kept in the Secret Pomerium mounts
+# at /tls. The issuers are in issuers.yaml.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: pomerium-tls
+spec:
+  # The Secret Pomerium mounts at /tls.
+  secretName: pomerium-tls
+  issuerRef:
+    kind: ClusterIssuer
+    name: letsencrypt-production
+  dnsNames:
+    - app.browserjs.com
+    - authenticate.browserjs.com
+    - dex.browserjs.com
+    - "*.sessions.browserjs.com"
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    # A new key with each renewal.
+    rotationPolicy: Always

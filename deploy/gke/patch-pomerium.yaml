@@ -1,0 +1,20 @@
+# Pomerium is the public edge: a regional external passthrough Network Load
+# Balancer on the address infra/main reserved (output edge_ip_name). The load
+# balancer does not terminate anything; Pomerium does, with the certificate
+# in pomerium-tls.
+#
+# loadBalancerClass cannot be added to a Service that already exists: if this
+# Service was ever applied without it, delete the Service and apply again.
+apiVersion: v1
+kind: Service
+metadata:
+  name: pomerium
+  annotations:
+    # The NAME of the address resource, not the address (8.231.155.139).
+    networking.gke.io/load-balancer-ip-addresses: browserjs-edge
+spec:
+  type: LoadBalancer
+  loadBalancerClass: networking.gke.io/l4-regional-external
+  # Only the node Pomerium runs on takes traffic, and Pomerium sees the
+  # caller's own address.
+  externalTrafficPolicy: Local
