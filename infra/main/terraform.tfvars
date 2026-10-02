@@ -18,10 +18,17 @@ domain = "browserjs.com"
 # "gateway_alb":  a GKE Gateway terminates TLS with Certificate Manager.
 edge_mode = "pomerium_nlb"
 
-# Agent Sandbox needs GKE 1.36.3-gke.1767000 or later. If REGULAR's default is
-# older when you apply, pin the version or switch to RAPID.
-release_channel = "REGULAR"
-# kubernetes_version = "1.36"
+# The backend speaks Agent Sandbox's v1beta1 API (spec.operatingMode), which
+# the managed add-on serves from GKE 1.36.3-gke.1767000. The cluster was
+# created on REGULAR's default, 1.35.8, where the add-on serves v1alpha1 only.
+# "1.36" asks for the newest 1.36 the channel offers; changing it upgrades the
+# control plane in place (the API is unreachable for some minutes on a zonal
+# cluster) and the node pools follow by auto-upgrade. See what the channel
+# offers first:
+#   gcloud container get-server-config --location us-west1-a --format='yaml(channels)'
+# If REGULAR has nothing at or above 1.36.3-gke.1767000, use RAPID.
+release_channel    = "REGULAR"
+kubernetes_version = "1.36"
 
 # Who may reach the control plane's public IP endpoint. Leave empty and use
 # the DNS endpoint (see the get_credentials_command output) instead.
