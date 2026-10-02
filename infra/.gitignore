@@ -1,0 +1,16 @@
+# Provider binaries and module cache (hundreds of MB; recreated by `tofu init`).
+.terraform/
+
+# State lives in the bucket, never in git.
+*.tfstate
+*.tfstate.*
+
+# Saved plans.
+*.tfplan
+tfplan
+
+crash.log
+crash.*.log
+
+# terraform.tfvars IS tracked: GitHub Actions reads it. It must never hold a
+# secret, and this configuration takes none.

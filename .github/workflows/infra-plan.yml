@@ -1,0 +1,100 @@
+name: infra plan
+
+# Shows what a merge would change in Google Cloud. Changes nothing.
+#
+# Authentication is keyless: GitHub's OIDC token is exchanged through Workload
+# Identity Federation for the tofu-plan service account, which is read-only on
+# the project (viewer, security reviewer) and can write only the OpenTofu
+# state bucket, which it needs for the state lock.
+#
+# Pull requests from forks get no OIDC token (GitHub withholds id-token: write
+# from them), so this job fails at the auth step for a fork. That is intended:
+# plans for outside contributions are run by a maintainer from a branch in
+# this repository.
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - ".github/workflows/infra-plan.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: infra-plan-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TOFU_VERSION: "1.10.7"
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
+  TF_VAR_region: ${{ vars.GCP_REGION }}
+  TOFU_STATE_BUCKET: ${{ vars.TOFU_STATE_BUCKET }}
+
+jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+        working-directory: infra/main
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+          tofu_wrapper: false
+
+      - name: Format
+        run: tofu fmt -check -recursive -diff
+        working-directory: infra
+
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.TOFU_PLAN_SA }}
+
+      - name: Init
+        run: tofu init -backend-config="bucket=${TOFU_STATE_BUCKET}"
+
+      - name: Validate
+        run: tofu validate -no-color
+
+      # Mocked provider: checks the configuration's own logic, contacts nothing.
+      - name: Test
+        run: tofu test -no-color
+
+      - name: Plan
+        run: |
+          set -o pipefail
+          tofu plan -lock-timeout=5m -no-color 2>&1 | tee "${RUNNER_TEMP}/plan.txt"
+
+      - name: Plan to job summary
+        if: ${{ !cancelled() }}
+        run: |
+          plan="${RUNNER_TEMP}/plan.txt"
+          {
+            echo "## infra plan"
+            echo
+            if [ -s "$plan" ]; then
+              echo '```'
+              # A job summary holds at most 1 MiB.
+              head -c 900000 "$plan"
+              echo
+              echo '```'
+              if [ "$(wc -c < "$plan")" -gt 900000 ]; then
+                echo "_Truncated; the full plan is in the job log._"
+              fi
+            else
+              echo "_No plan was produced; see the job log._"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
