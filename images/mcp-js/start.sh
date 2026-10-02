@@ -11,15 +11,28 @@ trap 'exit 143' TERM INT
 up() {
   (exec 3<>"/dev/tcp/${1%:*}/${1##*:}") 2>/dev/null
 }
-# The seconds are shared: the second server is waited for with what is left.
-waited=0
-for addr in "${BROWSER_MCP_ADDR:-127.0.0.1:8081}" "${EXEC_MCP_ADDR:-127.0.0.1:8082}"; do
-  until up "$addr" || [ "$waited" -ge "${BROWSER_MCP_WAIT_SECONDS:-120}" ]; do
+wait_for() { # address, seconds
+  for _ in $(seq 1 "$2"); do
+    up "$1" && return 0
     sleep 1
-    waited=$((waited + 1))
   done
-  up "$addr" || echo "MCP server at $addr did not come up; starting mcp-v8 anyway" >&2
-done
+  up "$1"
+}
+
+browser="${BROWSER_MCP_ADDR:-127.0.0.1:8081}"
+wait_for "$browser" "${BROWSER_MCP_WAIT_SECONDS:-120}" ||
+  echo "browser MCP at $browser did not come up; starting mcp-v8 anyway" >&2
+
+# The exec server starts a moment after the browser MCP (entrypoint.sh). A
+# session without it (a browser image from before it existed, or one where it
+# failed to start) still gets its browser: mcp-v8 is started with the
+# browser server only, instead of exiting over and over on the missing one.
+# Shell commands are then unavailable until the pod is restarted.
+exec_addr="${EXEC_MCP_ADDR:-127.0.0.1:8082}"
+if ! wait_for "$exec_addr" "${EXEC_MCP_WAIT_SECONDS:-30}"; then
+  echo "exec MCP (mcp-exec) at $exec_addr did not come up; starting mcp-v8 without shell commands" >&2
+  export MCP_V8_MCP_CONFIG="${MCP_V8_MCP_CONFIG_NO_EXEC:-/etc/mcp/mcp-servers.no-exec.json}"
+fi
 
 # mcp-v8 has no TERM handler, and a process that is PID 1 is not stopped by a
 # signal it does not handle: exec'd, it sat out every pod shutdown until the

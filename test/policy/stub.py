@@ -94,6 +94,10 @@ class Browser(Handler):
     server_name = "browser"
     tools = ("browser_execute", "desktop_execute")
 
+    def ran(self, tool, arguments):
+        types = [op.get("type") for op in arguments.get("operations") or [] if isinstance(op, dict)]
+        return "stub browser ran: " + ",".join(map(str, types))
+
     def do_GET(self):
         if self.path == "/healthz":
             return self.answer(200, b"ok")
@@ -116,9 +120,7 @@ class Browser(Handler):
                                  "inputSchema": {"type": "object", "properties": {"operations": {"type": "array"}}}}
                                 for name in self.tools]}
         elif method == "tools/call":
-            operations = (params.get("arguments") or {}).get("operations") or []
-            types = [op.get("type") for op in operations if isinstance(op, dict)]
-            result = {"content": [{"type": "text", "text": "stub browser ran: " + ",".join(map(str, types))}]}
+            result = {"content": [{"type": "text", "text": self.ran(params.get("name"), params.get("arguments") or {})}]}
         elif method == "ping":
             result = {}
         else:
@@ -131,6 +133,9 @@ class Browser(Handler):
 class Exec(Browser):
     server_name = "exec"
     tools = ("exec", "stream_logs", "search_logs")
+
+    def ran(self, tool, arguments):
+        return "stub exec ran: %s %s" % (tool, json.dumps(arguments, sort_keys=True))
 
 
 class Backend(Handler):

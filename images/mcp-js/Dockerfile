@@ -3,7 +3,7 @@
 # artifacts and upload grants on the session disk.
 # v0.21.0-rc.3
 FROM wholelottahoopla/mcp-js@sha256:1615350e509c06e23bb79ec5d26a839e43c2fbed4675b6987b49088a77dd9bbc
-COPY mcp_tools.rego filesystem.rego mcp-servers.json run_js.md instructions.md /etc/mcp/
+COPY mcp_tools.rego filesystem.rego mcp-servers.json mcp-servers.no-exec.json run_js.md instructions.md /etc/mcp/
 COPY --chmod=755 start.sh /usr/local/bin/start.sh
 ENV MCP_V8_HTTP_PORT=8080 \
     MCP_V8_HEAP_STORE=none \
