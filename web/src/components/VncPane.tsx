@@ -3,6 +3,7 @@ import SpaceBetween from "@cloudscape-design/components/space-between"
 import Textarea from "@cloudscape-design/components/textarea"
 import type RFB from "@novnc/novnc"
 import { useEffect, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import { api } from "../api"
 import { signedOutHandled } from "../auth/signedOut"
 import { reconnectDelay } from "./backoff"
@@ -21,7 +22,9 @@ const STATUS_TEXT: Record<Exclude<Status, "connected">, string> = {
   paused: "Paused while this tab is in the background",
 }
 
-export function VncPane({ sessionId }: { sessionId: string }) {
+// `controls` is where the page wants the viewer's buttons (next to its own);
+// without it they sit in a bar above the screen.
+export function VncPane({ sessionId, controls }: { sessionId: string; controls?: HTMLElement | null }) {
   const screenRef = useRef<HTMLDivElement>(null)
   // The toolbar and the screen: what goes full screen.
   const viewerRef = useRef<HTMLDivElement>(null)
@@ -175,18 +178,23 @@ export function VncPane({ sessionId }: { sessionId: string }) {
   }
 
   const connected = status === "connected"
+  const fullscreenButton = (
+    <Button onClick={toggleFullscreen} ariaLabel={fullscreen ? "Leave full screen" : "Show the browser full screen"}>
+      {fullscreen ? "Exit full screen (Esc)" : "Full screen"}
+    </Button>
+  )
 
   return (
     <div>
       <div ref={viewerRef} className="wf-viewer">
-        {/* Not every browser can do it (an iPhone cannot). */}
-        {document.fullscreenEnabled && (
-          <div className="wf-screen-bar">
-            <Button onClick={toggleFullscreen} ariaLabel={fullscreen ? "Leave full screen" : "Show the browser full screen"}>
-              {fullscreen ? "Exit full screen (Esc)" : "Full screen"}
-            </Button>
-          </div>
-        )}
+        {/* Not every browser can do it (an iPhone cannot). In full screen only
+            this element shows, so the way out has to be inside it. */}
+        {document.fullscreenEnabled &&
+          (controls && !fullscreen ? (
+            createPortal(fullscreenButton, controls)
+          ) : (
+            <div className="wf-screen-bar">{fullscreenButton}</div>
+          ))}
         <div className="wf-screen-wrap">
           <div ref={screenRef} className="wf-screen" />
           {!connected && (

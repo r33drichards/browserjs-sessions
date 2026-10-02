@@ -32,6 +32,7 @@ export function SessionDetail({ id }: { id: string }) {
   const [actionError, setActionError] = useState("") // last failed action; polling leaves it alone
   const [name, setName] = useState<string | null>(null) // non-null while editing
   const [deleting, setDeleting] = useState(false)
+  const [viewerControls, setViewerControls] = useState<HTMLElement | null>(null)
   const [copied, setCopied] = useState<"copied" | "failed" | null>(null)
 
   const load = useCallback(() => {
@@ -111,6 +112,8 @@ export function SessionDetail({ id }: { id: string }) {
           variant="h1"
           actions={
             <SpaceBetween direction="horizontal" size="xs">
+              {/* The viewer puts its Full screen button here. */}
+              <span ref={setViewerControls} />
               {awake ? (
                 <Button onClick={() => actAndReload(() => api.setRunning(session.id, false))}>Stop</Button>
               ) : (
@@ -148,7 +151,7 @@ export function SessionDetail({ id }: { id: string }) {
         {error && <Box>⚠ {error}</Box>}
 
         {session.state === "running" ? (
-          <VncPane sessionId={session.id} />
+          <VncPane sessionId={session.id} controls={viewerControls} />
         ) : (
           <div className="wf-placeholder">
             <div>
