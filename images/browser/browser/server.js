@@ -18,6 +18,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import puppeteer from 'puppeteer-core';
+import { createClipboard } from './clipboard.js';
 import { createFiles, setDownloadDir } from './files.js';
 import { mcpCallerRefusal } from './callers.js';
 
@@ -38,7 +39,7 @@ const MAX_HEIGHT = 2160;
 // The folder the session page moves files in and out of (files.js); none
 // unless FILES_DIR says where it is.
 const files = process.env.FILES_DIR
-  ? createFiles({ dir: process.env.FILES_DIR, maxBytes: Number(process.env.FILES_MAX_BYTES) || undefined })
+  ? createFiles({ dir: process.env.FILES_DIR, maxBytes: Number(process.env.FILES_MAX_BYTES) || undefined, clipboard: createClipboard() })
   : null;
 
 const MAX_WAIT_MS = 30000;

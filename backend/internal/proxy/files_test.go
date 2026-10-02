@@ -322,3 +322,111 @@ func TestListingFilesIsNotUseOfTheSession(t *testing.T) {
 		t.Error("an upload did not wake the session")
 	}
 }
+
+// copy asks for names to be put on the session's clipboard, as the page does.
+func (e *env) copy(user, contentType, body string) *httptest.ResponseRecorder {
+	req := request("POST", appHost, "/api/sessions/"+e.id+"/clipboard", user, body)
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	req.Header.Set("Cookie", "_pomerium=secret")
+	rec := httptest.NewRecorder()
+	e.handler.ServeHTTP(rec, req)
+	return rec
+}
+
+// Putting files on a session's clipboard is its owner's, like the files.
+func TestClipboardIsTheOwners(t *testing.T) {
+	e := newEnv(t)
+	e.respondWith(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	const body = `{"files":["a.png","b c.txt"],"extra":"x"}`
+	for user, want := range map[string]int{alice: http.StatusNoContent, root: http.StatusNoContent, bob: http.StatusNotFound, "": http.StatusUnauthorized} {
+		before := len(e.seen())
+		if rec := e.copy(user, "application/json", body); rec.Code != want {
+			t.Errorf("copy as %q: %d, want %d", user, rec.Code, want)
+		}
+		if n := len(e.seen()) - before; (want == http.StatusNoContent) != (n == 1) {
+			t.Errorf("copy as %q: %d requests reached the pod", user, n)
+		}
+	}
+	// What the pod is sent is written anew, as the pod's own host, with
+	// nothing of the caller.
+	calls := e.seen()
+	got := calls[len(calls)-1]
+	if got.method != "POST" || got.uri != "/clipboard" || got.host != "localhost:8081" || got.body != `{"files":["a.png","b c.txt"]}` ||
+		got.header.Get("Content-Type") != "application/json" {
+		t.Errorf("pod got %s %s (Host %s, %s): %s", got.method, got.uri, got.host, got.header.Get("Content-Type"), got.body)
+	}
+	for _, h := range []string{"Cookie", "Authorization", "X-Pomerium-Jwt-Assertion", "Origin"} {
+		if v := got.header.Get(h); v != "" {
+			t.Errorf("pod saw %s: %q", h, v)
+		}
+	}
+	// Not on the session's own host, and no such session.
+	if rec := e.do("POST", "/api/sessions/"+e.id+"/clipboard", alice, body); rec.Code != http.StatusNotFound {
+		t.Errorf("copy on the session's host: %d, want 404", rec.Code)
+	}
+	if rec := e.app("POST", "/api/sessions/s-aaaaaaaaaa/clipboard", alice, body); rec.Code != http.StatusNotFound {
+		t.Errorf("copy for no session: %d, want 404", rec.Code)
+	}
+}
+
+// Only names of files of the folder are passed on, and only as JSON, which
+// a page of another site cannot post without asking.
+func TestClipboardTakesOnlyFileNames(t *testing.T) {
+	e := newEnv(t)
+	e.respondWith(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	for _, body := range []string{
+		`{"files":["../secret"]}`, `{"files":["a.png",".."]}`, `{"files":["/etc/passwd"]}`, `{"files":["a/b"]}`, `{"files":["a\\b"]}`,
+		`{"files":[".hidden"]}`, `{"files":["a\u0000b"]}`, `{"files":[""]}`, `{"files":["` + strings.Repeat("a", 256) + `"]}`,
+		`{"files":[]}`, `{}`, `{"files":"a.png"}`, `{"files":[1]}`, `[]`, `nonsense`, ``,
+		`{"files":[` + strings.Repeat(`"a",`, maxClipboardFiles) + `"a"]}`,
+		`{"files":["a"],"pad":"` + strings.Repeat("x", maxClipboardBytes) + `"}`,
+	} {
+		if rec := e.copy(alice, "application/json", body); rec.Code != http.StatusBadRequest {
+			t.Errorf("copy of %.40q: %d, want 400", body, rec.Code)
+		}
+	}
+	for _, contentType := range []string{"", "text/plain", "application/x-www-form-urlencoded", "multipart/form-data; boundary=x"} {
+		if rec := e.copy(alice, contentType, `{"files":["a.png"]}`); rec.Code != http.StatusUnsupportedMediaType {
+			t.Errorf("copy as %q: %d, want 415", contentType, rec.Code)
+		}
+	}
+	if n := len(e.seen()); n != 0 {
+		t.Errorf("%d refused requests reached the pod", n)
+	}
+	if rec := e.copy(alice, "application/json; charset=utf-8", `{"files":["café (1).png"]}`); rec.Code != http.StatusNoContent {
+		t.Errorf("an ordinary name: %d, want 204", rec.Code)
+	}
+}
+
+// Only the pod's status is handed on, as the backend's own words.
+func TestClipboardAnswersAreTheBackends(t *testing.T) {
+	e := newEnv(t)
+	for pod, want := range map[int]int{
+		http.StatusNotFound:            http.StatusNotImplemented, // an image without the route
+		http.StatusGone:                http.StatusNotFound,
+		http.StatusServiceUnavailable:  http.StatusServiceUnavailable,
+		http.StatusForbidden:           http.StatusBadGateway,
+		http.StatusInternalServerError: http.StatusBadGateway,
+	} {
+		e.respondWith(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/html")
+			w.Header().Add("Set-Cookie", "evil=1")
+			w.WriteHeader(pod)
+			_, _ = io.WriteString(w, "<script>alert(1)</script>")
+		})
+		rec := e.copy(alice, "application/json", `{"files":["a.png"]}`)
+		if rec.Code != want || rec.Header().Get("Content-Type") != "application/json" || rec.Header().Get("Set-Cookie") != "" ||
+			strings.Contains(rec.Body.String(), "script") {
+			t.Errorf("pod %d: %d %v %q, want %d as the backend's JSON", pod, rec.Code, rec.Header(), rec.Body, want)
+		}
+	}
+	// It is use of the session: it wakes one that sleeps.
+	e.respondWith(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	e.asleep(t)
+	_ = e.copy(alice, "application/json", `{"files":["a.png"]}`)
+	if s, _ := e.store.Get(t.Context(), e.id); s.State == sessions.Asleep {
+		t.Error("a copy did not wake the session")
+	}
+}

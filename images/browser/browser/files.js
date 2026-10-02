@@ -7,6 +7,8 @@
  *   GET    /files/<name>  the file, as an attachment
  *   PUT    /files/<name>  store the body; never replaces: answers the name used
  *   DELETE /files/<name>
+ *   POST   /clipboard     { files: [name, ...] }: put those files on the
+ *                         browser's clipboard (clipboard.js)
  *
  * There is no login here. The port is reachable by the backend, which checks
  * who is asking, and from inside the pod.
@@ -16,6 +18,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
+import { ClipboardUnavailable, MAX_CLIPBOARD_FILES } from './clipboard.js';
 
 export const DEFAULT_MAX_BYTES = 100 * 1024 * 1024;
 
@@ -65,7 +68,33 @@ function localHost(req) {
   return host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
 }
 
-export function createFiles({ dir, maxBytes = DEFAULT_MAX_BYTES }) {
+// Besides that, what puts files on the clipboard must not be a page in this
+// browser at all, even blind: a page's requests carry Origin and Sec-Fetch-*
+// headers it cannot remove, and one with a JSON body is preflighted (as for
+// the MCP endpoint, callers.js).
+function notAPage(req) {
+  const h = req.headers;
+  if (h.origin !== undefined || Object.keys(h).some((name) => name.startsWith('sec-fetch-'))) return false;
+  return String(h['content-type'] || '').split(';')[0].trim().toLowerCase() === 'application/json';
+}
+
+const MAX_CLIPBOARD_BODY = 64 * 1024;
+
+async function readJson(req) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    if ((size += chunk.length) > MAX_CLIPBOARD_BODY) return undefined;
+    chunks.push(chunk);
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch {
+    return undefined;
+  }
+}
+
+export function createFiles({ dir, maxBytes = DEFAULT_MAX_BYTES, clipboard = null }) {
   fs.mkdirSync(dir, { recursive: true });
   // Uploads a previous process did not finish.
   for (const name of fs.readdirSync(dir)) {
@@ -173,18 +202,49 @@ export function createFiles({ dir, maxBytes = DEFAULT_MAX_BYTES }) {
       const file = path.join(dir, name);
       if (!(await fs.promises.lstat(file)).isFile()) throw new Error('not a file');
       await fs.promises.unlink(file);
+      clipboard?.forget(file);
       res.writeHead(204).end();
     } catch {
       send(res, 404, 'no such file');
     }
   }
 
-  // Answers the request if it is for /files, and says whether it did.
+  // Only files of the folder go on the clipboard: each name is checked like
+  // any other, and must be a file that is there (410 if not; 404 is left to
+  // mean a server that has no such route).
+  async function copy(req, res) {
+    if (!notAPage(req)) return send(res, 403, 'forbidden', { Connection: 'close' });
+    const names = (await readJson(req))?.files;
+    if (!Array.isArray(names) || names.length === 0 || names.length > MAX_CLIPBOARD_FILES || !names.every(validName)) {
+      return send(res, 400, 'not a list of file names');
+    }
+    const paths = [...new Set(names)].map((name) => path.join(dir, name));
+    for (const file of paths) {
+      const stat = await fs.promises.lstat(file).catch(() => null);
+      if (!stat?.isFile()) return send(res, 410, 'no such file');
+    }
+    try {
+      await clipboard.set(paths);
+    } catch (err) {
+      if (err instanceof ClipboardUnavailable) return send(res, 503, 'the clipboard is not available');
+      throw err;
+    }
+    res.writeHead(204).end();
+  }
+
+  // Answers the request if it is for /files or /clipboard, and says whether
+  // it did.
   return async function handle(req, res) {
     const raw = String(req.url).split('?')[0];
-    if (raw !== '/files' && !raw.startsWith('/files/')) return false;
+    const forClipboard = clipboard && raw === '/clipboard';
+    if (raw !== '/files' && !raw.startsWith('/files/') && !forClipboard) return false;
     try {
       if (!localHost(req)) return send(res, 403, 'forbidden'), true;
+      if (forClipboard) {
+        if (req.method !== 'POST') return send(res, 405, 'method not allowed', { Allow: 'POST' }), true;
+        await copy(req, res);
+        return true;
+      }
       if (raw === '/files' || raw === '/files/') {
         if (req.method !== 'GET') return send(res, 405, 'method not allowed', { Allow: 'GET' }), true;
         await list(res);

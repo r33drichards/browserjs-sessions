@@ -9,6 +9,11 @@ session, shown under the Clipboard box on the session page:
 - **Save**: what the session's browser downloads lands in the same folder and
   is listed, with Save (to your computer) and Delete.
 
+- **Paste**: a file you send is also put on the session's clipboard (several
+  dropped together go on together; the last batch wins), and every listed file
+  has "Copy to browser clipboard". Ctrl+V in the session's browser then pastes
+  the file itself into pages that take pasted files, with no file chooser.
+
 ## How it works
 
 | Piece | What it does |
@@ -18,6 +23,34 @@ session, shown under the Clipboard box on the session page:
 | Pod | The browser container's Node server (port 8081) serves `GET /files`, and `GET`, `PUT`, `DELETE /files/<name>` (`images/browser/browser/files.js`). Bodies are streamed to and from disk. An upload never replaces a file: a taken name becomes `name (1).ext`. |
 | NetworkPolicy | The backend may reach session pods on 8081 as well as 6080 and 8080. |
 | Backend | `GET /api/sessions/{id}/files`, and `GET`, `PUT`, `DELETE /api/sessions/{id}/files/{name}` on the app's host, behind the same sign-in and owner check as the VNC ticket (`backend/internal/proxy/files.go`). |
+
+### Files on the clipboard
+
+`POST /api/sessions/{id}/clipboard` with `{"files": [name, ...]}` (the same
+sign-in and owner check as the file routes; JSON only) becomes `POST /clipboard`
+on the pod's port 8081. The browser container starts one `xclip` per copy,
+which owns the X11 CLIPBOARD selection and offers a single target,
+`text/uri-list`: the `file://` URIs of the files (`images/browser/browser/clipboard.js`).
+
+- Chromium reads pasted files from exactly that target
+  (`ClipboardOzone::ReadFilenames`, `ui/base/clipboard/clipboard_ozone.cc`), and
+  blink turns each into a file of the paste event
+  (`DataObject::CreateFromClipboard`,
+  `third_party/blink/renderer/core/clipboard/data_object.cc`). A page sees the
+  file with its name and its type by extension, as if it had been dropped on it.
+- No image target is offered beside it: blink makes a second file out of an
+  `image/png` on the clipboard, so an image would arrive twice. An editor that
+  only takes raw image data, and not pasted files, does not get the image.
+- No text target is offered: Xvnc announces a new clipboard owner to the
+  viewer only if it offers `STRING` or `UTF8_STRING`
+  (`unix/xserver/hw/vnc/vncSelection.c`), so the Clipboard box keeps the text
+  it had. Sending text from the box, or copying anything in the browser, takes
+  the selection: xclip exits and the files are off the clipboard.
+- Only names of files in the folder are accepted (the same name check, in the
+  backend and in the pod; a link or folder is refused), and the pod refuses
+  the request from anything that looks like a page of its own browser
+  (`Origin`, `Sec-Fetch-*`, or a body that is not JSON).
+- Deleting a file that is on the clipboard gives the clipboard up.
 
 What keeps it safe:
 
@@ -53,6 +86,6 @@ What keeps it safe:
 
 ```bash
 nix develop -c bash -c 'cd backend && go test ./internal/proxy/ -run File'
-nix develop -c node --test images/browser/test/files.test.mjs
+nix develop -c node --test images/browser/test/files.test.mjs images/browser/test/clipboard.test.mjs
 nix develop -c bash -c 'cd web && npx vitest run src/files.test.ts'
 ```

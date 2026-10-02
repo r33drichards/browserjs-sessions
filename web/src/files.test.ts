@@ -130,4 +130,20 @@ describe("files api", () => {
     ])
     await expect(api.listFiles("../x")).rejects.toBeInstanceOf(ApiError)
   })
+
+  it("asks for files to be put on the browser's clipboard by name, as JSON", async () => {
+    const calls: [string, string, RequestInit][] = []
+    const fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push([init?.method ?? "GET", String(input), init ?? {}])
+      return new Response(null, { status: 204 })
+    }
+    const api = createApi(fetch as typeof globalThis.fetch)
+    await api.copyFiles(ID, ["a.png", "b c.txt"])
+    expect(calls[0][0]).toBe("POST")
+    expect(calls[0][1]).toBe(`/api/sessions/${ID}/clipboard`)
+    expect(calls[0][2].body).toBe(JSON.stringify({ files: ["a.png", "b c.txt"] }))
+    expect(new Headers(calls[0][2].headers).get("Content-Type")).toBe("application/json")
+    await expect(api.copyFiles("../x", ["a"])).rejects.toBeInstanceOf(ApiError)
+    expect(calls.length).toBe(1)
+  })
 })

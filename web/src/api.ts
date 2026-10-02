@@ -109,6 +109,9 @@ export function createApi(fetchImpl: Fetch = fetch) {
     listFiles: async (id: string) => call<SessionFiles>("GET", await sessionPath(id, "/files")),
     deleteFile: async (id: string, name: string) =>
       call<void>("DELETE", await sessionPath(id, `/files/${encodeURIComponent(name)}`)),
+    // Puts files of the session's folder on its browser's clipboard, as one
+    // selection: Ctrl+V there pastes them.
+    copyFiles: async (id: string, names: string[]) => call<void>("POST", await sessionPath(id, "/clipboard"), { files: names }),
   }
 }
 

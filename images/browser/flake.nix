@@ -50,6 +50,8 @@
               pkgs.openbox
               pkgs.procps
               pkgs.python3Packages.websockify
+              # Owns the clipboard for files put on it (browser/clipboard.js).
+              pkgs.xclip
               pkgs.xorg.xdpyinfo
               xvnc
             ];
