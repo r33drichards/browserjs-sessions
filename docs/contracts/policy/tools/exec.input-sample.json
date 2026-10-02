@@ -3,7 +3,10 @@
   "server": "exec",
   "tool": "exec",
   "arguments": {
-    "cmd": "cd /home/browser/work && git status",
-    "timeout": 60
+    "bin": "git",
+    "args": ["clone", "--depth", "1", "https://github.com/octocat/Hello-World", "hello"],
+    "timeout": 120,
+    "cwd": "/home/browser/work",
+    "env": { "GIT_TERMINAL_PROMPT": "0" }
   }
 }

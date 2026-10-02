@@ -1,24 +1,43 @@
-# Only these command lines, character for character, for at most ten minutes
-# each. Nothing else in the session: no browser or desktop tool.
+# Only these commands, program and arguments exactly, for at most ten minutes
+# each, in these directories. Nothing else in the session: no browser or
+# desktop tool.
 #
-# The one policy on `exec` that needs no knowledge of the shell: the string
-# is on the list or it is not.
+# The strongest policy on `exec`, and the one to start from: a call is on
+# the list or it is not.
 package browserjs.policy
 
 import rego.v1
 
 allowed_commands := {
-	"git -C /home/browser/work/app pull --ff-only",
-	"cd /home/browser/work/app && npm ci && npm test",
-	"df -h /data/chrome",
+	{"bin": "git", "args": ["pull", "--ff-only"], "cwd": "/home/browser/work/app"},
+	{"bin": "npm", "args": ["test"], "cwd": "/home/browser/work/app"},
+	{"bin": "df", "args": ["-h", "/data/chrome"]},
 }
 
 allow_tool_call if {
 	input.server == "exec"
 	input.tool == "exec"
-	is_object(input.arguments)
-	input.arguments.cmd in allowed_commands
+	only_fields({"bin", "args", "timeout", "cwd"})
+	command in allowed_commands
 	timeout_within(600)
+}
+
+# The call as an entry of the list: `cwd` only when it was given.
+command := object.union({"bin": input.arguments.bin, "args": call_args}, cwd_given)
+
+cwd_given := {"cwd": input.arguments.cwd} if "cwd" in object.keys(input.arguments)
+
+cwd_given := {} if not "cwd" in object.keys(input.arguments)
+
+# The arguments, whether the call gave `args` or left it out (the server
+# treats both as none). Undefined when `args` is not an array of strings, which
+# denies.
+call_args := args if {
+	args := object.get(input.arguments, "args", [])
+	is_array(args)
+	every a in args {
+		is_string(a)
+	}
 }
 
 # Seconds. The server has no maximum of its own.
@@ -28,9 +47,16 @@ timeout_within(limit) if {
 	input.arguments.timeout <= limit
 }
 
-# Reading the output of a command starts nothing.
+# The call has no field this policy has not looked at. `env` among them: it
+# can set PATH, which decides what a program name means.
+only_fields(known) if {
+	is_object(input.arguments)
+	count(object.keys(input.arguments) - known) == 0
+}
+
+# Reading the output of a command, and stopping one, start nothing.
 allow_tool_call if {
 	input.server == "exec"
-	input.tool in {"stream_logs", "search_logs"}
+	input.tool in {"stream_logs", "search_logs", "kill"}
 }
 

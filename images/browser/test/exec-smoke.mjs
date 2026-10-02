@@ -17,7 +17,7 @@ const PORT = 18082;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const home = fs.realpathSync(process.env.HOME || os.homedir());
-const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'exec-smoke-logs-'));
+const logDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'exec-smoke-logs-')));
 
 // What a previous pod leaves on the session's disk: a command that was
 // running when the pod went away, and logs from long ago.
@@ -89,9 +89,9 @@ async function call(name, args) {
 
 // exec, then stream_logs from the offset it returns until the command ended:
 // the flow run_js.md documents.
-async function run(label, cmd, timeout = 20) {
+async function run(label, exec, timeout = 20) {
   const started = Date.now();
-  const { id, status } = await call('exec', { cmd, timeout });
+  const { id, status } = await call('exec', { timeout, ...exec });
   assert.equal(status, 'started');
   let logs = '';
   let offset = 0;
@@ -106,6 +106,31 @@ async function run(label, cmd, timeout = 20) {
     assert.ok(Date.now() - started < 60000, `${label}: still running: ${logs}`);
     await sleep(100);
   }
+}
+const sh = (script) => ({ bin: 'sh', args: ['-c', script] });
+
+// A call the server must refuse; the reason it gives.
+async function refusedCall(args) {
+  const res = await post(JSON.stringify({ jsonrpc: '2.0', id: nextId++, method: 'tools/call', params: { name: 'exec', arguments: args } }), {
+    ...MCP_HEADERS,
+    'Mcp-Session-Id': session,
+  });
+  const msg = message(res);
+  assert.ok(msg.error, `accepted: ${JSON.stringify(msg)}`);
+  return msg.error.message;
+}
+
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+async function goneSoon(pid) {
+  for (let i = 0; i < 50 && alive(pid); i++) await sleep(100);
+  return !alive(pid);
 }
 
 try {
@@ -129,18 +154,25 @@ try {
   // The tools and their arguments are what docs/contracts/policy/tools/ says.
   const { tools } = await rpc('tools/list', {});
   const shape = Object.fromEntries(
-    tools.map((t) => [t.name, Object.fromEntries(Object.entries(t.inputSchema.properties).map(([k, v]) => [k, v.type]))]),
+    tools.map((t) => [t.name, { fields: Object.keys(t.inputSchema.properties).sort(), required: [...t.inputSchema.required].sort() }]),
   );
   assert.deepEqual(shape, {
-    exec: { cmd: 'string', timeout: 'integer' },
-    search_logs: { id: 'string', pattern: 'string' },
-    stream_logs: { id: 'string', offset: 'integer' },
+    exec: { fields: ['args', 'bin', 'cwd', 'env', 'timeout'], required: ['bin', 'timeout'] },
+    kill: { fields: ['id'], required: ['id'] },
+    search_logs: { fields: ['id', 'pattern'], required: ['id', 'pattern'] },
+    stream_logs: { fields: ['id', 'offset'], required: ['id', 'offset'] },
   });
-  for (const t of tools) assert.deepEqual([...t.inputSchema.required].sort(), Object.keys(t.inputSchema.properties).sort());
-  console.log('ok   tools: exec {cmd, timeout}, stream_logs {id, offset}, search_logs {id, pattern}');
+  console.log('ok   tools: exec {bin, args?, timeout, cwd?, env?}, stream_logs {id, offset}, search_logs {id, pattern}, kill {id}');
 
-  // A command end to end: who and where it is, both streams, the exit code.
-  let r = await run('a command, its output and exit code', 'printf "%s|%s|%s\\n" "$(id -u)" "$PWD" "$DISPLAY"; echo problem >&2; echo "a b" | tr a-z A-Z; exit 3');
+  // A program and its arguments, with no shell in between: what a policy
+  // read is what runs.
+  const literal = ['$HOME', '*', 'a b', '; echo injected', '`id`', '$(id)'];
+  let r = await run('arguments reach the program as they are', { bin: 'printf', args: ['[%s]\\n', ...literal] });
+  assert.equal(r.status, 'completed:0');
+  assert.equal(r.logs, literal.map((a) => `[${a}]\n`).join(''));
+
+  // Who and where a command is, both streams, the exit code.
+  r = await run('a command, its output and exit code', sh('printf "%s|%s|%s\\n" "$(id -u)" "$PWD" "$DISPLAY"; echo problem >&2; echo "a b" | tr a-z A-Z; exit 3'));
   assert.equal(r.status, 'completed:3');
   assert.deepEqual(r.logs.split('\n').sort(), ['', `${process.getuid()}|${home}|${process.env.DISPLAY || ''}`, 'A B', 'problem'].sort());
   assert.equal(r.offset, Buffer.byteLength(r.logs));
@@ -148,8 +180,21 @@ try {
   assert.deepEqual((await call('search_logs', { id: r.id, pattern: '^prob' })).matches.map((m) => m.line), ['problem']);
   console.log('ok   stream_logs from an offset, search_logs');
 
+  r = await run('cwd and env', { bin: 'sh', args: ['-c', 'pwd; echo "$SMOKE_A|$HOME"'], cwd: logDir, env: { SMOKE_A: 'one two' } });
+  assert.equal(r.logs, `${logDir}\none two|${home}\n`);
+
+  // The old form, and anything else the server does not know, is refused.
+  assert.match(await refusedCall({ cmd: 'echo hi', timeout: 5 }), /unknown field `cmd`.*`bin`.*`args`/);
+  assert.match(await refusedCall({ bin: 'echo', args: ['hi'], cmd: 'id', timeout: 5 }), /unknown field `cmd`/);
+  assert.match(await refusedCall({ bin: 'echo', args: 'hi', timeout: 5 }), /args|sequence/);
+  assert.match(await refusedCall({ bin: 'pwd', timeout: 5, cwd: 'relative' }), /absolute/);
+  console.log('ok   refused: cmd, unknown fields, args that is not an array, a relative cwd');
+
+  r = await run('a program that does not exist', { bin: 'no-such-program-xyz' });
+  assert.match(r.status, /^failed:.*no-such-program-xyz/);
+
   // Output arrives while the command runs.
-  const slow = await call('exec', { cmd: 'echo first; sleep 2; echo second', timeout: 20 });
+  const slow = await call('exec', { ...sh('echo first; sleep 2; echo second'), timeout: 20 });
   let seen;
   for (let i = 0; i < 50; i++) {
     seen = await call('stream_logs', { id: slow.id, offset: 0 });
@@ -159,12 +204,35 @@ try {
   assert.deepEqual([seen.logs, seen.status], ['first\n', 'running']);
   console.log('ok   output is readable while the command runs');
 
-  r = await run('a command past its timeout', 'exec sleep 30', 1);
+  // The timeout ends what the command started too, promptly.
+  let started = Date.now();
+  r = await run('a command past its timeout', sh('sleep 60 & echo $!; wait'), 1);
   assert.equal(r.status, 'timeout');
+  assert.ok(Date.now() - started < 10000);
+  assert.ok(await goneSoon(Number(r.logs)), 'the child of the command outlived the timeout');
+  console.log('ok   and its child process is gone');
+
+  // kill does the same, on request.
+  const long = await call('exec', { ...sh('sleep 60 & echo $!; wait'), timeout: 120 });
+  let pid = '';
+  for (let i = 0; i < 50 && !pid; i++) {
+    await sleep(100);
+    pid = (await call('stream_logs', { id: long.id, offset: 0 })).logs.trim();
+  }
+  assert.ok(alive(Number(pid)));
+  assert.deepEqual(await call('kill', { id: long.id }), { id: long.id, status: 'cancelled' });
+  assert.equal((await call('stream_logs', { id: long.id, offset: 0 })).status, 'cancelled');
+  assert.ok(await goneSoon(Number(pid)), 'the child of the command outlived kill');
+  console.log('ok   kill: cancelled, and its child process is gone');
+
+  // Output that is not UTF-8 does not end the log.
+  r = await run('binary output', sh("printf 'a\\377b\\nafter\\n'"));
+  assert.equal(r.logs, 'a\ufffdb\nafter\n');
 
   // The logs are files in EXEC_LOG_DIR, and the previous pod's are still
   // readable: its running command is reported as interrupted, old logs are gone.
   assert.ok(fs.existsSync(path.join(logDir, `${r.id}.log`)));
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(logDir, `${r.id}.meta`), 'utf8')).bin, 'sh');
   const stale = await call('stream_logs', { id: STALE, offset: 0 });
   assert.equal(stale.logs, 'before the restart\n');
   assert.match(stale.status, /^failed:interrupted/);
@@ -200,11 +268,11 @@ try {
   if (process.env.DISPLAY) {
     // A command can put a window on the desktop the person watches.
     const title = 'exec-smoke-window';
-    const term = await call('exec', { cmd: `xterm -fa "DejaVu Sans Mono" -T ${title} -e sleep 4`, timeout: 20 });
+    const term = await call('exec', { bin: 'xterm', args: ['-fa', 'DejaVu Sans Mono', '-T', title, '-e', 'sleep', '4'], timeout: 20 });
     let tree = '';
     for (let i = 0; i < 30 && !tree.includes(title); i++) {
       await sleep(200);
-      tree = (await run('the windows of the display', 'xwininfo -root -tree')).logs;
+      tree = (await run('the windows of the display', { bin: 'xwininfo', args: ['-root', '-tree'] })).logs;
     }
     assert.ok(tree.includes(title), `no window titled ${title}:\n${tree}`);
     for (let i = 0; i < 100; i++) {

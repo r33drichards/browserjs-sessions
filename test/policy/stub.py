@@ -12,7 +12,7 @@ standard library only; one file, mounted into three pods.
                      and desktop_execute beside it, which run nothing and
                      say what they were asked.
                      Beside it on 8082, the "exec" server (mcp-exec), the
-                     second server mcp-js connects to at start: its three
+                     second server mcp-js connects to at start: its four
                      tools, which run nothing either.
   stub.py backend    something listening where the backend does, on 8080.
 """
@@ -132,7 +132,7 @@ class Browser(Handler):
 
 class Exec(Browser):
     server_name = "exec"
-    tools = ("exec", "stream_logs", "search_logs")
+    tools = ("exec", "stream_logs", "search_logs", "kill")
 
     def ran(self, tool, arguments):
         return "stub exec ran: %s %s" % (tool, json.dumps(arguments, sort_keys=True))

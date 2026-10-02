@@ -7,7 +7,8 @@ The code run in the session calls the browser tool (or, with
 TOOL=desktop_execute in the environment, that one) with one operation of
 that type and prints what it got, or what was thrown: that is what an
 agent's code sees. With SERVER=exec it calls the exec server's `exec` tool
-instead, and the second argument is the command. Prints one JSON line a call: {"outcome": "ran" | "denied"
+instead, and the second argument is the command: the program and its
+arguments, separated by spaces. Prints one JSON line a call: {"outcome": "ran" | "denied"
 | "error", "seconds": <the whole run_js call>, "seen": <the text>}.
 """
 import json
@@ -23,7 +24,7 @@ deadline = time.time() + float(repeat[:-1]) if repeat.endswith("s") else None
 count = 10 ** 9 if deadline else int(repeat)
 
 if os.environ.get("SERVER") == "exec":
-    target = '"exec", "exec", %s' % json.dumps({"cmd": operation, "timeout": 5})
+    target = '"exec", "exec", %s' % json.dumps({"bin": operation.split(" ")[0], "args": operation.split(" ")[1:], "timeout": 5})
 else:
     target = '"browser", %s, { operations: [{ type: %s, params: {} }] }' % (
         json.dumps(os.environ.get("TOOL", "browser_execute")), json.dumps(operation))

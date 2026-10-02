@@ -509,15 +509,17 @@ if [ -n "${OPERATOR_IMAGE:-}" ]; then
   # mcp-js. The same rule: its own file policy allows it, the session's
   # decides, and a policy that does not name it denies it.
   is "a policy that does not name the exec server denies a command" denied "$(outcome "$(SERVER="exec" call $P_WITH 'git status')")"
-  rego='package browserjs.policy\n\nimport rego.v1\n\nallow_tool_call if {\n\tinput.server == \"exec\"\n\tinput.tool == \"exec\"\n\tinput.arguments.cmd in {\"git status\"}\n}\n'
+  rego='package browserjs.policy\n\nimport rego.v1\n\nallow_tool_call if {\n\tinput.server == \"exec\"\n\tinput.tool == \"exec\"\n\tinput.arguments.bin == \"git\"\n\tinput.arguments.args[0] in {\"status\", \"log\"}\n}\n'
   k patch sessionpolicy "$WITH" --type=merge -p "{\"spec\":{\"kind\":\"rego\",\"source\":\"$rego\"}}" >/dev/null
   command=""
   for _ in $(seq 1 60); do
     [ "$(outcome "$(SERVER="exec" call $P_WITH 'git status')")" = ran ] && command=1 && break
     sleep 0.25
   done
-  ok "a Rego policy that lists a command allows exactly it" "$command" "$(k get sessionpolicy "$WITH" -o json | jq -c .status.errors)"
-  is "a command that only starts like it is denied" denied "$(outcome "$(SERVER="exec" call $P_WITH 'git status; id')")"
+  ok "a Rego policy on the program and its first argument allows git status" "$command" "$(k get sessionpolicy "$WITH" -o json | jq -c .status.errors)"
+  is "and another subcommand on its list" ran "$(outcome "$(SERVER="exec" call $P_WITH 'git log --oneline')")"
+  is "a subcommand that is not on it is denied" denied "$(outcome "$(SERVER="exec" call $P_WITH 'git push')")"
+  is "another program is denied" denied "$(outcome "$(SERVER="exec" call $P_WITH 'sh -c git')")"
   is "and so is the browser, which that policy does not name" denied "$(outcome "$(call $P_WITH url)")"
   k patch sessionpolicy "$WITH" --type=merge -p "$(session_policy "$WITH" unrestricted | jq -c '{spec: {kind: "json", source: .spec.source}}')" >/dev/null
   back=""

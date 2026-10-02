@@ -22,20 +22,21 @@
       "server": "exec",
       "tool": "exec",
       "arguments": {
-        "cmd": "ls",
+        "bin": "ls",
         "timeout": 60
       }
     },
     "allow": false
   },
   {
-    "name": "a command with a short timeout",
+    "name": "a command with arguments and a short timeout",
     "input": {
       "operation": "mcp_call_tool",
       "server": "exec",
       "tool": "exec",
       "arguments": {
-        "cmd": "true",
+        "bin": "true",
+        "args": [],
         "timeout": 1
       }
     },
@@ -63,6 +64,18 @@
       "arguments": {
         "id": "215e7d1d-cc35-47ac-8fd1-e018fd03d2b9",
         "pattern": "(?i)error"
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "stop a command",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "kill",
+      "arguments": {
+        "id": "215e7d1d-cc35-47ac-8fd1-e018fd03d2b9"
       }
     },
     "allow": false
@@ -116,13 +129,40 @@
     "allow": false
   },
   {
-    "name": "cmd is an array",
+    "name": "arguments is an array",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": [
+        {
+          "bin": "ls",
+          "timeout": 60
+        }
+      ]
+    },
+    "allow": false
+  },
+  {
+    "name": "no bin",
     "input": {
       "operation": "mcp_call_tool",
       "server": "exec",
       "tool": "exec",
       "arguments": {
-        "cmd": [
+        "timeout": 60
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "bin is an array",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "bin": [
           "ls"
         ],
         "timeout": 60
@@ -131,14 +171,14 @@
     "allow": false
   },
   {
-    "name": "cmd is an object",
+    "name": "bin is an object",
     "input": {
       "operation": "mcp_call_tool",
       "server": "exec",
       "tool": "exec",
       "arguments": {
-        "cmd": {
-          "cmd": "ls"
+        "bin": {
+          "bin": "ls"
         },
         "timeout": 60
       }
@@ -146,14 +186,128 @@
     "allow": false
   },
   {
-    "name": "the command under another field name",
+    "name": "args is a string",
     "input": {
       "operation": "mcp_call_tool",
       "server": "exec",
       "tool": "exec",
       "arguments": {
-        "command": "ls",
+        "bin": "ls",
+        "timeout": 60,
+        "args": "x"
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "an argument that is not a string",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "bin": "ls",
+        "timeout": 60,
+        "args": [
+          {
+            "x": 1
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "an argument that is a nested array",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "bin": "ls",
+        "timeout": 60,
+        "args": [
+          []
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "the old form: a command line in cmd",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "cmd": "ls",
         "timeout": 60
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "cmd beside bin and args",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "bin": "ls",
+        "timeout": 60,
+        "cmd": "id"
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "a field the server does not have",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "bin": "ls",
+        "timeout": 60,
+        "shell": true
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "no timeout",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "bin": "ls"
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "a timeout that is a string",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "bin": "ls",
+        "timeout": "60"
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "a timeout of zero",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "bin": "ls",
+        "timeout": 0
       }
     },
     "allow": false
@@ -165,7 +319,7 @@
       "server": "browser",
       "tool": "exec",
       "arguments": {
-        "cmd": "ls",
+        "bin": "ls",
         "timeout": 60
       }
     },
@@ -178,7 +332,7 @@
       "server": "exec",
       "tool": "exec2",
       "arguments": {
-        "cmd": "ls",
+        "bin": "ls",
         "timeout": 60
       }
     },
