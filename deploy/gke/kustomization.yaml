@@ -27,7 +27,7 @@ images:
     digest: sha256:c6c19eac56481e3ff3b196cca85c4539561b7fd9df8d3c83afafa692997fca7b
   - name: browserjs/browser
     newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/browser
-    digest: sha256:0d9862ca0e421ad29b3fce8c4a44cf67e4ac9316e5ed32759e3d0e2401529a24
+    digest: sha256:2c8b673ffdea5dd72fbc347ec0120b4574e1e7637301d0283c624959fb9c486e
   - name: browserjs/mcp-js
     newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/mcp-js
     digest: sha256:984dceedf06bf2e18473807617bbc491b409b4fe43e1cea93865128719c0cf3b
