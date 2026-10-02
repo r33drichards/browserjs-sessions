@@ -127,7 +127,7 @@ describe("the gate", () => {
   it("is one alert for a blocked account", async () => {
     open("/", "blocked")
     expect(await screen.findByText("This account is suspended")).toBeTruthy()
-    expect(screen.getByRole("link", { name: "support@computeruse.site" })).toBeTruthy()
+    expect(screen.getByRole("link", { name: "browserjs06@gmail.com" })).toBeTruthy()
     expect(screen.queryByRole("table")).toBeNull()
   })
 })
