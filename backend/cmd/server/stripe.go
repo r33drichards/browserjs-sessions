@@ -32,7 +32,7 @@ func newStripe(ctx context.Context, cfg config.Config, bill *billingParts) (*bst
 	if bill == nil {
 		return nil, errors.New("STRIPE_MODE requires BILLING to be meter or enforce")
 	}
-	client := bstripe.NewAPI(cfg.StripeAPIKey.Reveal(), bill.catalogue.Catalogue().Currency, "")
+	client := bstripe.NewAPI(cfg.StripeAPIKey.Reveal(), bill.catalogue.Catalogue().Currency, "").IDsFile(cfg.BillingIDs, cfg.StripeMode)
 	svc, err := bstripe.New(bill.accounts, bill.ledger, client, billing.SystemClock{}, bstripe.Options{
 		Mode:           cfg.StripeMode,
 		WebhookSecret:  cfg.StripeWebhookSecret.Reveal(),

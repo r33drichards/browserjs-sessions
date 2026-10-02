@@ -47,6 +47,7 @@ webhook, no call to Stripe, and the server's handler is the very one it was
 | `STRIPE_MODE` | unset | `test` or `live`. Unset: nothing of this side exists. Requires `BILLING` other than `off`, and `API_URL`. |
 | `STRIPE_API_KEY` | | required with `STRIPE_MODE`. The backend refuses to start if the key's prefix is of the other mode (`sk_live_`/`rk_live_` with `test`, or the reverse). |
 | `STRIPE_WEBHOOK_SECRET` | | required with `STRIPE_MODE` |
+| `BILLING_IDS` | `/etc/browserjs/billing-iac/ids.json` | the file of `infra/billing`'s IDs; it need not exist |
 | `AUTO_RECHARGE` | `off` | `on`: accounts may turn auto-recharge on |
 
 The key and the signing secret are held as `config.Secret`, which prints as
@@ -67,7 +68,7 @@ token gets `403 ui_only`; a blocked or deleted account `403 account_blocked`.
 | `POST /api/billing/checkout` `{}` | a Checkout in setup mode: saves a card, charges nothing. `409 too_many_cards` with 5 cards saved; `429 rate_limited` after 5 setup checkouts in 24 hours (counted from Stripe's list of the customer's sessions). |
 | `POST /api/billing/checkout` `{"item": "<lookupKey>"}` | a Checkout that subscribes to a plan or buys a pack. `400 unknown_item` for what is not in the catalogue, not enabled, or has no price at Stripe; `409 already_subscribed` while the account's subscription is `active`, `trialing`, `past_due` or `incomplete`. |
 | `GET /api/billing/checkout/{id}` | what became of a Checkout the caller started, and fulfils it (a late webhook does not keep the user waiting). `404` for another account's. |
-| `POST /api/billing/portal` | a link to Stripe's Customer Portal, with the configuration `infra/billing` made (found by `metadata.managed_by = stripe-setup`; one made through the API is never the account's default). `409 no_customer` before the account has been to Stripe. Changing plan there is off for now: the provider cannot yet set the portal's products, so `already_subscribed` sends a user to a portal that can cancel and not switch. |
+| `POST /api/billing/portal` | a link to Stripe's Customer Portal, with the configuration `infra/billing` made: its ID from the file `BILLING_IDS` (the ConfigMap `billing-iac`, key `ids.json`, if it is mounted and of this mode), else found at Stripe by `metadata.managed_by = stripe-setup`. One made through the API is never the account's default. `409 no_customer` before the account has been to Stripe. |
 | `PUT /api/billing/auto-recharge` | the caller's automatic top-up. `404 auto_recharge_off` while `AUTO_RECHARGE` is off; turning it on needs `agree: true` and a saved card (`402 payment_method_required`). |
 
 Any call to Stripe that fails is `502 stripe_unavailable`: nothing was
@@ -83,6 +84,21 @@ that is ignored.
 The Stripe customer is made the first time an account starts a Checkout,
 with the idempotency key `customer-<ownerHash>`, and written to
 `spec.stripeCustomerId` before the Checkout is made.
+
+### Changing plan
+
+**A subscriber cannot change plan in place yet.** The portal's plan
+switching is off (the Stripe provider cannot set its products;
+`docs/billing-iac.md`), and this side has no route that changes a
+subscription. What a subscriber can do: cancel in the portal (it ends at the
+period's end, and the period's credit runs to its expiry), then subscribe to
+another plan once it has ended; and buy credit packs at any time.
+`409 already_subscribed` says so. An in-place change through our own API
+would be a new call on `billing.Stripe` and a contract change.
+
+Nothing here reads a Stripe product by its ID: prices are found by lookup
+key, and a subscription's plan by its price's lookup key. The catalogue's
+`productId` is checked for being present and never sent.
 
 ## How it stays correct
 

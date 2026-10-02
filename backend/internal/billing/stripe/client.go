@@ -2,9 +2,11 @@ package stripe
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -58,8 +60,10 @@ type API struct {
 	// Stripe still wants to know.
 	currency string
 
+	idsPath, mode string // IDsFile
+
 	mu     sync.Mutex
-	portal string // the portal configuration's ID, once found
+	portal string // the portal configuration's ID, once found at Stripe
 }
 
 var (
@@ -164,10 +168,44 @@ func checkoutSession(cs *sdk.CheckoutSession) billing.CheckoutSession {
 // never the account's default, so a portal session has to name it.
 const PortalManagedBy = "stripe-setup"
 
+// IDsFile says where infra/billing's IDs are (the ConfigMap billing-iac,
+// key ids.json, mounted): the portal configuration's is taken from there.
+// With no file, or none that is of this mode and names one, it is found at
+// Stripe by its metadata.
+func (a *API) IDsFile(path, mode string) *API {
+	a.idsPath, a.mode = path, mode
+	return a
+}
+
+// portalFromFile is ids.json's stripe_portal_configuration_id, "" when the
+// file is not there, is of the other mode, or names none. Read each time:
+// an apply that replaces the configuration rewrites the file.
+func (a *API) portalFromFile() string {
+	if a.idsPath == "" {
+		return ""
+	}
+	data, err := os.ReadFile(a.idsPath)
+	if err != nil {
+		return ""
+	}
+	var ids struct {
+		Mode   string `json:"mode"`
+		Portal string `json:"stripe_portal_configuration_id"`
+	}
+	if json.Unmarshal(data, &ids) != nil || (ids.Mode != "" && ids.Mode != a.mode) {
+		return ""
+	}
+	return ids.Portal
+}
+
 // portalConfiguration is the ID of the portal configuration infra/billing
 // made, "" when there is none: the portal is then the Dashboard's default.
-// Found once and remembered; looked for again while there is none.
+// From the IDs file; failing that, found at Stripe once and remembered,
+// and looked for again while there is none.
 func (a *API) portalConfiguration(ctx context.Context) (string, error) {
+	if id := a.portalFromFile(); id != "" {
+		return id, nil
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.portal != "" {

@@ -52,5 +52,8 @@ func (c *Config) stripeFromEnv(get func(string) string) error {
 	if mode != c.StripeMode {
 		return fmt.Errorf("STRIPE_API_KEY is a %s key and STRIPE_MODE is %s", mode, c.StripeMode)
 	}
+	if c.BillingIDs = get("BILLING_IDS"); c.BillingIDs == "" {
+		c.BillingIDs = "/etc/browserjs/billing-iac/ids.json"
+	}
 	return nil
 }
