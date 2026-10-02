@@ -187,8 +187,18 @@ func SetPolicyStatus(t *testing.T, client dynamic.Interface, id string, status m
 }
 
 // TrySetPolicyStatus is SetPolicyStatus for use off the test goroutine.
+//
+// It writes the status and nothing else, onto the policy as it is when the
+// status is written: as the status subresource does, it cannot put back a
+// spec the backend has replaced since the caller last read it. (It once
+// wrote back a whole object read earlier, which undid a write made in
+// between and made TestPutPolicy fail now and then.) The fake client's lock
+// keeps its own writes out while it reads and writes.
 func TrySetPolicyStatus(client dynamic.Interface, id string, status map[string]any) error {
-	tracker := client.(*dynfake.FakeDynamicClient).Tracker()
+	fake := client.(*dynfake.FakeDynamicClient)
+	fake.Lock()
+	defer fake.Unlock()
+	tracker := fake.Tracker()
 	cur, err := tracker.Get(sessions.PolicyGVR, Namespace, id)
 	if err != nil {
 		return err
