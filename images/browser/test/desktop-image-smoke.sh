@@ -351,9 +351,12 @@ check "maximised again" wait_for 30 browser_ok
 kill -TERM "$(main_browser)"
 wait_for 20 gone
 chromium >/dev/null 2>&1 &
+one=$!
 chromium >/dev/null 2>&1 &
+two=$!
 browser_execute_ok
-wait
+wait "$one" "$two"
+sleep 2
 [ "$(main_browser | wc -l)" = 1 ] && ok "three starters at once start one Chromium" || bad "main Chromium processes after starting three at once: $(main_browser | tr '\n' ' ')"
 
 # Nothing that could lock, blank or end the session.
