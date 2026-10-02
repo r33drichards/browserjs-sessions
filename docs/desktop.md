@@ -26,6 +26,7 @@ fonts are the ones the image had (DejaVu, Noto, colour emoji). The image's
 fontconfig now says what the generic families mean (`sans-serif` is DejaVu
 Sans, `monospace` DejaVu Sans Mono): before, they resolved to a serif font,
 in Chromium's own interface and in pages that ask for a generic family too.
+Mousepad's text is still drawn in a serif font; the terminal's is fixed-width.
 
 ### What is left out, and why
 
@@ -44,7 +45,7 @@ in Chromium's own interface and in pages that ask for a generic family too.
 - **colord and xapp** in `xfce4-settings`, and **libsystemd** in the
   terminal's vte: 340 MB of scanner, printer, MATE and systemd files that
   nothing here uses. Both packages are rebuilt without them (`flake.nix`),
-  which adds about eight minutes to the image build in CI (14 minutes, from about 6).
+  which makes the image build in CI 12 to 14 minutes, from about 6.
 - **A compositor.** `xfwm4 --compositor=off`, and off in the defaults: the
   display is software rendered and sent over VNC.
 - **The accessibility bus** (`NO_AT_BRIDGE=1`).
@@ -165,23 +166,30 @@ What each part needs, and where it comes from:
 ## Memory, and how many sessions fit a node
 
 Measured by the smoke test on a GitHub runner (Docker, runc; run
-37030834704), from `/proc/<pid>/smaps_rollup` and the container's cgroup.
+37038273254), from `/proc/<pid>/smaps_rollup` and the container's cgroup.
 PSS divides shared pages among the processes that map them, and most of
 XFCE's pages are GTK's, which Chromium maps too.
 
 | | RSS, MiB | PSS, MiB |
 |---|---|---|
-| The desktop, idle: xfwm4, panel, xfdesktop, xfsettingsd, xfconfd, dbus-daemon | 181 | 79 |
-| A terminal, Thunar and Mousepad open | 133 | 49 |
-| Chromium on about:blank, 12 processes | 1256 | 437 |
-| Xvnc | 51 | 36 |
-| browser-mcp (node) | 91 | 85 |
+| xfwm4 | 40 | 16 |
+| xfce4-panel | 40 | 15 |
+| xfdesktop | 55 | 26 |
+| xfsettingsd | 33 | 15 |
+| xfconfd and dbus-daemon | 10 | 2 |
+| Thunar, started in the background by xfdesktop | 28 | 9 |
+| **The desktop, idle** | **208** | **85** |
+| A terminal, Thunar's window and Mousepad open | 133 | 49 |
+| Chromium on about:blank, 12 processes | 1244 | 436 |
+| Xvnc | 50 | 36 |
+| browser-mcp (node) | 108 | 102 |
 | websockify | 41 | 35 |
 
-The container's cgroup counted 423 MiB with the desktop idle and Chromium on
-`about:blank`, and 464 MiB with the three programs open. So the desktop
-costs about 80 MiB a session when nobody uses it, and about 50 MiB more with
-a terminal, a file manager and an editor open.
+The container's cgroup counted 369 MiB with the desktop idle and Chromium on
+`about:blank` (423 in another run), and 445 MiB with the three programs
+open and `desktop_execute` used once. So the desktop costs about 85 MiB a
+session when nobody uses it, and about 40 MiB more with a terminal, a file
+manager and an editor open.
 
 **The requests and limits do not change.** The browser container requests
 1Gi and is limited to 2Gi. Idle use stays well under the request, so the
@@ -215,9 +223,11 @@ already in Chromium's closure. The built image is 3.14 GB as Docker counts
 it. So a cold pull grows by about 6 %; registry layers are gzip, somewhat
 larger than xz.
 
-Start, in the smoke test (Docker, image already on the node): the MCP
-server answered `/healthz` 3.1 s after the container started, Chromium's
-debugging port 3.3 s, and the panel had its window at 3.4 s. The entrypoint
+Start, in the smoke test (Docker, image already on the node), over four
+runs: the MCP server answered `/healthz` 2.9 to 5.0 s after the container
+started, Chromium's debugging port 0.2 s later, and the panel had its
+window 0.1 s after that. There is no measurement of the image before XFCE
+on the same runners to compare with. The entrypoint
 waits for xfwm4 before starting Chromium (at most 5 s; it took about half
 a second), so that Chromium's first window is maximised.
 
