@@ -1,0 +1,118 @@
+name: policy kind
+
+# Session policies on a throwaway kind cluster inside the runner: the checks
+# of test/policy/run.sh (the CRDs' rules, decisions through the real mcp-js
+# and OPA images, who reaches whom, OPA replicas going away), and before
+# them the checks that need no cluster. Nothing here signs in anywhere or
+# touches the production cluster. What it measures is in the job summary.
+
+on:
+  pull_request:
+    paths:
+      - "deploy/**"
+      - "docs/contracts/policy/**"
+      - "hack/policy-stage.sh"
+      - "hack/pin-images.sh"
+      - "images/mcp-js/**"
+      - "test/policy/**"
+      - "backend/internal/sessions/deploy_test.go"
+      - ".github/workflows/policy-kind.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: policy-kind-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kind:
+    name: kind
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Manifests, in every stage
+        run: |
+          set -euo pipefail
+          shellcheck hack/policy-stage.sh hack/pin-images.sh hack/gke-status.sh test/policy/run.sh
+          render() {
+            for overlay in deploy/base deploy/local deploy/local-test deploy/gke deploy/gke-staging-issuer test/policy; do
+              kubectl kustomize "$overlay" >/dev/null
+            done
+          }
+          hack/pin-images.sh --check
+          hack/policy-stage.sh --check
+          render
+          (cd backend && go test ./internal/sessions/)
+          # The other stages render too, the pod templates stay in step, and
+          # going back leaves the files as they were.
+          for stage in serving enforcing; do
+            hack/policy-stage.sh gke "$stage"
+            hack/policy-stage.sh local "$stage"
+            hack/policy-stage.sh --check
+            render
+            (cd backend && go test -count=1 ./internal/sessions/)
+          done
+          # An unpinned operator is refused once policies are not off.
+          if hack/pin-images.sh --check; then
+            echo "::error::pin-images accepted an unpinned policy-operator with session policies on"
+            exit 1
+          fi
+          hack/policy-stage.sh gke off
+          hack/policy-stage.sh local off
+          git diff --exit-code
+
+      # The binary the deployed image runs, so the bundle below is built by
+      # the version that will load it.
+      - name: OPA of the pinned image
+        run: |
+          set -euo pipefail
+          image="$(awk '$1 == "image:" && $2 ~ /openpolicyagent\/opa/ { print $2 }' deploy/base/opa.yaml)"
+          echo "image: $image"
+          id="$(docker create "$image")"
+          docker cp "$id:/opa" "$RUNNER_TEMP/opa"
+          docker rm "$id" >/dev/null
+          "$RUNNER_TEMP/opa" version
+          # The contract's examples, under the capabilities file, with it.
+          python3 docs/contracts/policy/spike/run-cases.py "$RUNNER_TEMP/opa" docs/contracts/policy
+
+      - name: mcp-js image
+        run: docker build -t browserjs/mcp-js:dev images/mcp-js
+
+      - name: Cluster
+        run: |
+          set -euo pipefail
+          kind version
+          kind create cluster --name policy --wait 120s
+          kind load docker-image browserjs/mcp-js:dev --name policy
+          kubectl version
+
+      - name: test/policy/run.sh
+        run: OPA="$RUNNER_TEMP/opa" RESULTS="$RUNNER_TEMP/results.md" test/policy/run.sh
+
+      - name: Results to job summary
+        if: ${{ !cancelled() }}
+        run: |
+          if [ -f "$RUNNER_TEMP/results.md" ]; then
+            { echo "## Session policies on kind"; echo; cat "$RUNNER_TEMP/results.md"; } | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: What the cluster looked like
+        if: ${{ failure() }}
+        run: |
+          ns=browserjs-sessions
+          kubectl -n "$ns" get pods,services,endpointslices,networkpolicies -o wide || true
+          kubectl -n "$ns" describe pods || true
+          for pod in $(kubectl -n "$ns" get pods -o name); do
+            echo "=== $pod"
+            kubectl -n "$ns" logs "$pod" --all-containers --prefix --tail=80 || true
+          done
+          kubectl -n "$ns" get events --sort-by=.lastTimestamp | tail -60 || true

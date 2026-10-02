@@ -1,0 +1,157 @@
+# The shared OPA: every session's mcp-js asks it whether a browser call is
+# allowed (docs/contracts/policy/rego-contract.md). It serves decisions and
+# nothing else: its configuration and its API's own policy are the contract
+# files (ConfigMap opa-config, generated in docs/contracts/policy), and what
+# it decides with is the one bundle it polls from the policy operator.
+#
+# It has no Kubernetes credentials: no token is mounted and no Role exists.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: opa
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opa
+  labels:
+    app: opa
+spec:
+  replicas: 2
+  # With every replica away, every browser call of every enforcing session is
+  # denied. So a new pod is ready (it has the bundle) before an old one goes.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: opa
+  template:
+    metadata:
+      # The NetworkPolicies select on this label: nothing else may carry it.
+      labels:
+        app: opa
+    spec:
+      serviceAccountName: opa
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        # The image's own user.
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      # On different nodes when there are several; on one node rather than
+      # not at all when there is one.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: opa
+      containers:
+        - name: opa
+          # 1.9.0, the version the contracts were checked with. The digest is
+          # the multi-platform index (amd64 and arm64). The operator image
+          # carries the same binary; change the two together, and regenerate
+          # capabilities.json (docs/contracts/policy/README.md).
+          image: openpolicyagent/opa:1.9.0-static@sha256:60b6af32b58377718546ac7d4634eecbfe50ec36f7d3ca3f8ebf515f9826c2ac
+          args:
+            - run
+            - --server
+            - --addr=:8181
+            - --authentication=token
+            - --authorization=basic
+            - --config-file=/config/opa-config.yaml
+            - /config/system-authz.rego
+          env:
+            # Presented to the operator when fetching the bundle.
+            - name: BUNDLE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: policy-tokens
+                  key: bundle-token
+            # What the operator must present to read browserjs/loaded
+            # (system-authz.rego reads it from the environment).
+            - name: OPERATOR_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: policy-tokens
+                  key: opa-token
+          ports:
+            - name: http
+              containerPort: 8181
+          # Not ready, so not behind the Service, until the bundle is active:
+          # a replica never answers from a partial or empty state.
+          readinessProbe:
+            httpGet:
+              path: /health?bundles
+              port: http
+            periodSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 20
+          # The Service stops sending to a pod a moment after the pod is told
+          # to stop. Keep answering through that moment. (The image has no
+          # shell; this is the kubelet's own sleep.)
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            # A tenant's expensive policy slows the others down; it does not
+            # take the node.
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: bundles
+              mountPath: /var/opa
+      volumes:
+        - name: config
+          configMap:
+            name: opa-config
+        # persist: true in opa-config.yaml: a restarted container serves its
+        # last bundle while the operator is away.
+        - name: bundles
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opa
+spec:
+  selector:
+    app: opa
+  ports:
+    - name: http
+      port: 8181
+      targetPort: http
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: opa
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: opa

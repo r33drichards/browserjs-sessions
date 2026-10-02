@@ -48,11 +48,19 @@ if [ -z "$(image_id browserjs/browser:dev)" ]; then
   docker build -t browserjs/browser:dev images/browser
 fi
 
+# The policy operator, once its source is in the tree. The context is the
+# repository root: the image copies files of docs/contracts/policy.
+have_operator=""
+if [ -f images/policy-operator/Dockerfile ]; then
+  have_operator=1
+  docker build --provenance=false -t browserjs/policy-operator:dev -f images/policy-operator/Dockerfile .
+fi
+
 # kind does not recognise an image it already has when Docker uses the
 # containerd image store, and would copy all of them (4 GB) every time. What
 # was loaded is noted on the node itself, so the note goes with the cluster.
 node="$CLUSTER-control-plane"
-for image in backend mcp-js browser; do
+for image in backend mcp-js browser ${have_operator:+policy-operator}; do
   id=$(image_id "browserjs/$image:dev")
   if [ "$(docker exec "$node" cat "/kind/loaded-$image" 2>/dev/null)" = "$id" ]; then
     echo "browserjs/$image:dev is already on the node"
@@ -115,6 +123,18 @@ else
   client_secret=$(kubectl -n "$NS" get secret pomerium -o jsonpath='{.data.IDP_CLIENT_SECRET}' | base64 -d)
 fi
 
+# Session policies: the tokens OPA, the operator and the backend know each
+# other by (docs/contracts/policy/deploy.md). Made once: all three read them
+# at startup.
+random_b64url() { head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n'; }
+if ! kubectl -n "$NS" get secret policy-tokens >/dev/null 2>&1; then
+  {
+    echo "bundle-token=$(random_b64url)"
+    echo "opa-token=$(random_b64url)"
+    echo "operator-api-token=$(random_b64url)"
+  } | secret_from_stdin policy-tokens
+fi
+
 # The Google and GitHub OAuth apps, from the Keychain. Without them Dex
 # still starts, and the test users still work; those two buttons do not.
 keychain() {
@@ -142,6 +162,10 @@ kubectl -n "$NS" rollout status deploy/dex --timeout=300s
 kubectl -n "$NS" rollout status statefulset/pomerium --timeout=300s
 kubectl -n "$NS" rollout status deploy/backend --timeout=300s
 kubectl -n agent-sandbox-system rollout status deploy/agent-sandbox-controller --timeout=300s
+# Session policies (hack/policy-stage.sh). Off, both have no pods and this
+# returns at once; OPA is ready only once it has the operator's bundle.
+kubectl -n "$NS" rollout status deploy/policy-operator --timeout=300s
+kubectl -n "$NS" rollout status deploy/opa --timeout=300s
 
 cat <<EOF
 

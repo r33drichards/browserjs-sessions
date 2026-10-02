@@ -1,0 +1,12 @@
+# The two contract files OPA runs with, as the ConfigMap deploy/base mounts.
+# It is here, and not in deploy/base, because kustomize reads files only in
+# or below a kustomization's own directory: this way the deployed files are
+# the contract files themselves, not copies of them.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+configMapGenerator:
+  - name: opa-config
+    files:
+      - opa-config.yaml
+      - system-authz.rego

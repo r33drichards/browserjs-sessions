@@ -19,6 +19,19 @@ rules:
   - apiGroups: ["extensions.agents.x-k8s.io"]
     resources: ["sandboxclaims"]
     verbs: ["get", "list", "create", "delete"]
+  # A session's policy and a user's API tokens are custom resources, and
+  # these are all the Role gains: no rule here names configmaps or secrets,
+  # which in this namespace would reach Pomerium's and Dex's.
+  # sessionpolicies/status is the policy operator's alone.
+  - apiGroups: ["browserjs.dev"]
+    resources: ["sessionpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["browserjs.dev"]
+    resources: ["apitokens"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: ["browserjs.dev"]
+    resources: ["apitokens/status"]
+    verbs: ["patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -74,6 +87,18 @@ spec:
               value: https://app.example.com/.well-known/pomerium/jwks.json
             - name: ADMIN_EMAILS
               value: ""
+            # Session policies. They are off, and the API is as it was,
+            # while POLICY_OPERATOR_URL is unset: patch-policy-off.yaml in an
+            # overlay removes it (docs/policy-deployment.md).
+            - name: POLICY_OPERATOR_URL
+              value: http://policy-operator.browserjs-sessions.svc:8080
+            - name: OPERATOR_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: policy-tokens
+                  key: operator-api-token
+                  # A cluster without the Secret still gets a backend.
+                  optional: true
             # API tokens (docs/api-tokens.md), off while either is empty.
             # API_URL is the API host of pomerium-config.yaml's "api" route;
             # ALLOWED_EMAILS is who may use a token, the same addresses as

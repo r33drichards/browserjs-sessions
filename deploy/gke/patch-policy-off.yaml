@@ -1,0 +1,36 @@
+# SESSION POLICIES ARE OFF while this patch is listed in kustomization.yaml.
+#
+# Everything is installed (the CRDs, the Roles, the NetworkPolicies, the
+# Service names) and nothing runs: OPA and the operator have no pods, and the
+# backend is not told where the operator is, which is how it knows policies
+# are off. Sessions are exactly as they were before the feature.
+#
+# hack/policy-stage.sh gke serving  takes this patch out of the list;
+# docs/policy-deployment.md says what has to be true first, and what each
+# stage does to the sessions that already exist.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opa
+spec:
+  replicas: 0
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: policy-operator
+spec:
+  replicas: 0
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  template:
+    spec:
+      containers:
+        - name: backend
+          env:
+            - name: POLICY_OPERATOR_URL
+              $patch: delete

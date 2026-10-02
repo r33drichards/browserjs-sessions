@@ -85,6 +85,10 @@ jobs:
       - name: Images are pinned
         run: hack/pin-images.sh --check
 
+      # off, serving or enforcing, and that the files agree on which.
+      - name: Session policy stage
+        run: hack/policy-stage.sh --check
+
       - name: OAuth secrets are set
         env:
           GOOGLE_CLIENT_ID: ${{ secrets.DEX_GOOGLE_CLIENT_ID }}
@@ -203,6 +207,20 @@ jobs:
             } | secret_from_stdin pomerium
           fi
 
+          # Session policies: the tokens OPA, the policy operator and the
+          # backend know each other by (docs/contracts/policy/deploy.md).
+          # Made once, like Pomerium's; all three read them at startup.
+          random_b64url() { head -c 32 /dev/urandom | base64 -w0 | tr '+/' '-_' | tr -d '='; }
+          if kubectl -n "$NS" get secret policy-tokens >/dev/null 2>&1; then
+            echo "secret/policy-tokens exists: left alone"
+          else
+            {
+              echo "bundle-token=$(random_b64url)"
+              echo "opa-token=$(random_b64url)"
+              echo "operator-api-token=$(random_b64url)"
+            } | secret_from_stdin policy-tokens
+          fi
+
           # Dex and Pomerium share the secret of Dex's one client.
           client_secret="$(kubectl -n "$NS" get secret pomerium -o jsonpath='{.data.IDP_CLIENT_SECRET}' | base64 -d)"
           echo "::add-mask::$client_secret"
@@ -287,6 +305,20 @@ jobs:
             kubectl -n "$NS" rollout status statefulset/pomerium --timeout=600s
             echo "restarted=true" >> "$GITHUB_OUTPUT"
           fi
+
+      # With session policies off both have no pods, and this passes at once.
+      # The operator first: OPA is not ready until it has the operator's
+      # bundle.
+      - name: Policy operator and OPA
+        run: |
+          for deployment in policy-operator opa; do
+            if ! kubectl -n "$NS" rollout status "deployment/$deployment" --timeout=300s; then
+              echo "::error::deployment/$deployment did not become ready; see the status below and docs/policy-deployment.md"
+              kubectl -n "$NS" describe "deployment/$deployment" || true
+              kubectl -n "$NS" logs "deployment/$deployment" --tail=100 || true
+              exit 1
+            fi
+          done
 
       - name: Backend
         env:
