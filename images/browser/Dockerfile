@@ -30,6 +30,13 @@ RUN shell="$(grep -o '/nix/store/[^/]*-bash-interactive-[^/]*/bin/bash' "$(readl
  && ln -s "$shell" /rootfs/bin/bash \
  && ln -s "$env" /rootfs/usr/bin/env \
  && echo 6272736a732d73657373696f6e2d3031 > /rootfs/etc/machine-id
+# Chromium runs with --no-sandbox (gVisor is the sandbox) and says so in a
+# bar under the address bar of every window. This policy turns off that
+# warning about command-line flags and nothing else; --test-type would hide
+# it too, but also changes how Chromium behaves. The cost: Chromium's menu
+# says the browser is managed.
+RUN mkdir -p /rootfs/etc/chromium/policies/managed \
+ && echo '{ "CommandLineFlagSecurityWarningsEnabled": false }' > /rootfs/etc/chromium/policies/managed/session.json
 
 # The image runs as root unless told otherwise, which is what the standalone
 # (Railway) deployment does: its volume at /data belongs to root. A browserjs
