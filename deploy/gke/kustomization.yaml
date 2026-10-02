@@ -27,10 +27,10 @@ resources:
 images:
   - name: browserjs/backend
     newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/backend
-    digest: sha256:b0b0516a919f9cb84393ad7cfc534ab99168d04122c0989016a410b97609319e
+    digest: sha256:cf1a2b00060be14a960c571cbd5f266be53d8be8cea47621a554c8191507ac37
   - name: browserjs/browser
     newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/browser
-    digest: sha256:f91cef5c5101239cc9728a6cc64c6f7efa585e134c25ee2e2ca49a509be52ed1
+    digest: sha256:e0b9ce739233ab7f7f281cc24567c7dfd54bfb4f277e35eb78bc47f589888a49
   - name: browserjs/mcp-js
     newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/mcp-js
     digest: sha256:984dceedf06bf2e18473807617bbc491b409b4fe43e1cea93865128719c0cf3b
