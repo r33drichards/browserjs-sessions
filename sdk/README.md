@@ -195,6 +195,29 @@ the test process; each language's smoke test starts its own and makes real
 calls through the built library: the token exchange, create, `run_js` over
 MCP, sleep, and a typed error.
 
+### Against the real API
+
+`scripts/live.sh` runs the same scenario in each language against the real
+service: the token exchange, `me`, create, wait until running, `run_js`
+(console output, a `browser_execute` call, an `exec` call followed by
+`stream_logs`), the tools, the policy (read it, put the `browser-only` preset
+and see `exec` denied, put `unrestricted` back), sleep with a snapshot, wake,
+rename, delete. Each language creates one session and deletes it, whatever
+happens in between.
+
+```bash
+nix develop ..#sdk -c scripts/live.sh            # all four
+nix develop ..#sdk -c scripts/live.sh rust go    # some
+```
+
+It needs an API token with every scope. It takes it from
+`COMPUTERUSE_API_TOKEN`, or on macOS from the Keychain item
+`computeruse-api-token`
+(`security add-generic-password -s computeruse-api-token -a computeruse -w`),
+and passes it to the tests in their environment only. `COMPUTERUSE_BASE_URL`
+names another deployment. The tests are skipped unless `COMPUTERUSE_LIVE=1`,
+which the script sets; CI never runs them, since it has no token.
+
 After changing the exported surface (anything under `#[uniffi::export]`, a
 `uniffi::Record`, an enum, **or a doc comment on one of them**: UniFFI's
 checksums cover the docs, and stale bindings refuse to load), run `scripts/bindings.sh go` and
