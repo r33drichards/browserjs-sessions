@@ -128,6 +128,12 @@ spec:
             # or a missed tick costs the product, not the user.
             - name: MAX_GAP
               value: 150s
+            # One event a session for each window: awake time every five
+            # minutes, kept disk every six hours.
+            - name: AWAKE_WINDOW
+              value: 5m
+            - name: KEPT_WINDOW
+              value: 6h
             # For sessionDiskGB only: the prices are Metronome's.
             - name: BILLING_CATALOGUE
               value: /etc/browserjs/catalogue.yaml

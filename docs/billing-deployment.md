@@ -156,8 +156,9 @@ variable and repository-level secrets reach it.
 The objects in Stripe (products, prices, the portal's configuration) and in
 Metronome (billable metrics, products, the rate card, the alert) are made
 with OpenTofu from `infra/billing/`, by its own plan and apply workflows,
-which have their own credentials. They are not part of this change, and
-there is no `stripe-setup` or `metronome-setup` workflow here.
+which use `STRIPE_TEST_SETUP_KEY` (later `STRIPE_LIVE_SETUP_KEY`) and the
+same Metronome tokens as above. They are not part of this change, and
+there is no setup workflow or command.
 
 ## Rolling out on production, from workflows only
 
@@ -383,23 +384,19 @@ Look for these at the step named:
    Stripe's are, so that the manifests apply with billing off and no
    Secret. The contract says "with `secretKeyRef`"; the backend itself
    refuses to start without the two once `BILLING` is set.
-5. **No `stripe-setup.yml` and no `metronome-setup.yml`.** The product
-   owner chose OpenTofu for the objects in Stripe and Metronome
-   (`infra/billing/`, another change); the contract's two setup workflows
-   are not built.
-6. **The operator's Lease**: `create` on `leases` without a name (RBAC
+5. **The operator's Lease**: `create` on `leases` without a name (RBAC
    cannot name a create), `get` and `update` on `billing-observer` only.
-7. **The export bucket's role is `roles/storage.objectCreator`**, and the
+6. **The export bucket's role is `roles/storage.objectCreator`**, and the
    export authenticates by the ServiceAccount's federated identity, with no
    Google service account. The contract says only "through Workload
    Identity".
-8. **The operator's pod**: a read-only root filesystem with an `emptyDir`
+7. **The operator's pod**: a read-only root filesystem with an `emptyDir`
    at `/tmp`, uid 65532 and `USER` in its environment, as the policy
    operator needed (kopf asks who it runs as). Track A's image has to run
    as a non-root uid with no entry in `/etc/passwd`.
-9. **`backend/internal/auth/deploy_test.go`** (a test, not backend code)
+8. **`backend/internal/auth/deploy_test.go`** (a test, not backend code)
    now expects five routes on the API host: the two more are
    `api-stripe-webhook` and `api-metronome-webhook`.
-10. **`ZERO_BALANCE_DELETE_AFTER`** (`336h`) is written out beside
-    `ZERO_BALANCE_DELETE`; the contract names it in that row's text.
-11. `docs/build-pipeline.md` still says four images; it is not this track's.
+9. **`ZERO_BALANCE_DELETE_AFTER`** (`336h`) is written out beside
+   `ZERO_BALANCE_DELETE`; the contract names it in that row's text.
+10. `docs/build-pipeline.md` still says four images; it is not this track's.
