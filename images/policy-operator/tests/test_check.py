@@ -5,7 +5,7 @@ import subprocess
 import pytest
 
 from policy_operator import opa
-from policy_operator.check import BYPASS, KNOWN_TOOLS, check, evaluate, policy_hash
+from policy_operator.check import WARNINGS, KNOWN_TOOLS, check, evaluate, policy_hash
 
 from conftest import EXAMPLES, H, cases, example
 
@@ -37,9 +37,9 @@ def test_every_case_of_every_example_through_real_opa(cfg, tmp_path, name):
     assert wrong == []
 
 
-def test_all_222_cases_are_run():
+def test_all_264_cases_are_run():
     assert EXAMPLES == ["browser-only", "form-filling", "no-scripting", "observe-only", "one-site", "read-only-shell", "unrestricted"]
-    assert sum(len(cases(n)) for n in EXAMPLES) == 222
+    assert sum(len(cases(n)) for n in EXAMPLES) == 264
 
 
 def test_examples_begin_with_what_they_are(cfg):
@@ -241,7 +241,9 @@ BROWSER_ONLY_SAFE = 'allow_tool_call if {\n\tinput.server == "browser"\n\tinput.
 DESKTOP = 'allow_tool_call if input.tool == "desktop_execute"\n'
 SCREEN = 'allow_tool_call if {\n\tinput.tool == "desktop_execute"\n\tevery op in input.arguments.operations { startswith(op.type, "screen.") }\n}\n'
 SHELL = 'allow_tool_call if input.server == "exec"\n'
-ONE_COMMAND = 'allow_tool_call if {\n\tinput.tool == "exec"\n\tinput.arguments.cmd == "git status"\n}\n'
+ONE_COMMAND = 'allow_tool_call if {\n\tinput.tool == "exec"\n\tinput.arguments.bin == "git"\n\tinput.arguments.args == ["status"]\n\tnot input.arguments.env\n}\n'
+PROGRAMS = 'allow_tool_call if {\n\tinput.tool == "exec"\n\tinput.arguments.bin in {"git", "ls", "%s"}\n\tobject.get(input.arguments, "env", {}) == {}\n}\n'
+ANY_ENV = 'allow_tool_call if {\n\tinput.tool == "exec"\n\tinput.arguments.bin in {"git", "ls"}\n}\n'
 ANY_BROWSER = 'allow_tool_call if input.tool == "browser_execute"\n'
 
 
@@ -258,6 +260,13 @@ ANY_BROWSER = 'allow_tool_call if input.tool == "browser_execute"\n'
     (ANY_BROWSER + DESKTOP, ["shell_bypass_desktop"]),
     (ANY_BROWSER + DESKTOP + ONE_COMMAND, ["shell_bypass_desktop"]),
     (ANY_BROWSER + SHELL, []),
+    # A list of programs with a launcher on it is a list of every program.
+    (ANY_BROWSER + PROGRAMS % "cat", []),
+    (ANY_BROWSER + PROGRAMS % "bash", ["shell_launcher_allowed"]),
+    (ANY_BROWSER + PROGRAMS % "xargs", ["shell_launcher_allowed"]),
+    (BROWSER_ONLY_SAFE + PROGRAMS % "env", ["browser_bypass_shell", "shell_launcher_allowed"]),
+    # A list of programs that does not look at env lets PATH say what they are.
+    (ANY_BROWSER + ANY_ENV, ["shell_env_allowed"]),
     # The policy that looks at arguments and never at the tool.
     ('allow_tool_call if not "evaluate" in {op.type | some op in input.arguments.operations}\n',
      ["browser_bypass_desktop", "browser_bypass_shell"]),
@@ -266,7 +275,7 @@ def test_a_policy_whose_rules_can_be_walked_around_is_warned_about(cfg, body, co
     v = check(cfg, "rego", H + body)
     assert v.ok, v.errors
     assert [w["code"] for w in v.warnings] == codes
-    assert all(set(w) == {"code", "message"} and w["message"] == BYPASS[w["code"]] for w in v.warnings)
+    assert all(set(w) == {"code", "message"} and w["message"] == WARNINGS[w["code"]] for w in v.warnings)
 
 
 def test_warnings_never_fail_a_policy(cfg, monkeypatch):

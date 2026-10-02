@@ -34,7 +34,7 @@ evaluates every case the way OPA will be asked:
 
 ```
 python3 docs/contracts/policy/spike/run-cases.py "$(command -v opa)" docs/contracts/policy
-222/222 cases pass
+264/264 cases pass
 ```
 
 The Rego policies for the exec server (`tools/examples/`, written by hand) have a runner of their own, which also applies the operator's

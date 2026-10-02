@@ -175,13 +175,13 @@ restricts the browser denies both, because either can drive the browser
 around its rules: with the mouse and keyboard, or with a command that
 reaches the browser's control ports on loopback. A policy that does
 otherwise is saved with a warning (`browser_bypass_desktop`,
-`browser_bypass_shell`, `shell_bypass_desktop`). The desktop under the
+`browser_bypass_shell`, `shell_bypass_desktop`, and for a list of programs
+that is not one, `shell_launcher_allowed` and `shell_env_allowed`). The desktop under the
 unrestricted policy and under `no-scripting` is checked on kind (item 5).
 
-The shell is a second upstream server of mcp-js, `exec`
-(mcp-exec in the browser container), with the tools `exec`, `stream_logs`
-and `search_logs`. The decision module already lists them; nothing in the
-deployment of OPA or the operator changes when that server is added.
+The shell is a second upstream server of mcp-js, `exec` (mcp-exec in the
+browser container), with the tools `exec`, `stream_logs`, `search_logs` and
+`kill`. The decision module lists them.
 
 ## Rolling out on production, from workflows only
 

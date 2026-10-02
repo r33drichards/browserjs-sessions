@@ -12,9 +12,10 @@ describe("sample calls", () => {
     expect(SAMPLE_GROUPS.map(g => [g.label, g.samples.length])).toEqual([
       ["browser / browser_execute", 5],
       ["browser / desktop_execute", 4],
-      ["exec / exec", 2],
+      ["exec / exec", 3],
       ["exec / stream_logs", 1],
       ["exec / search_logs", 1],
+      ["exec / kill", 1],
       ["browser / file_write", 1],
     ])
     expect(SAMPLE_GROUPS.flatMap(g => g.samples)).toEqual(SAMPLES)
@@ -36,11 +37,14 @@ describe("sample calls", () => {
       "Read the clipboard",
     ])
     expect(byLabel("Read the clipboard").arguments.operations).toEqual([{ type: "clipboard.getContent" }])
-    expect(byLabel("Run git status").arguments).toEqual({ cmd: "git status", timeout: 30 })
-    expect(byLabel("Run a command that talks to the browser's debugging port").arguments).toEqual({
-      cmd: "curl -s http://127.0.0.1:9222/json/version",
+    expect(byLabel("Run git status").arguments).toEqual({ bin: "git", args: ["status"], timeout: 30 })
+    expect(byLabel("Run a program that talks to the browser's debugging port").arguments).toEqual({
+      bin: "curl",
+      args: ["-s", "http://127.0.0.1:9222/json/version"],
       timeout: 30,
     })
+    expect(byLabel("Run a shell").arguments).toEqual({ bin: "sh", args: ["-c", "id"], timeout: 30 })
+    expect(byLabel("Stop a command")).toMatchObject({ server: "exec", tool: "kill" })
     expect(byLabel("Read a command's output")).toMatchObject({ server: "exec", tool: "stream_logs", arguments: { offset: 0 } })
     expect(byLabel("Search a command's output")).toMatchObject({ server: "exec", tool: "search_logs", arguments: { pattern: "error" } })
     expect(byLabel("A tool that does not exist")).toMatchObject({ server: "browser", tool: "file_write" })

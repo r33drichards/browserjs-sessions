@@ -50,8 +50,8 @@ A policy is a Rego module of package `browserjs.policy` that defines
 `allow_tool_call`. Rego is the only kind: there is no JSON format. The
 platform asks the policy about every tool call an agent makes, with
 `input.server`, `input.tool` and `input.arguments`: `browser_execute` and
-`desktop_execute` on server `browser`, and `exec`, `stream_logs` and
-`search_logs` on server `exec`. A call the policy does not allow is refused,
+`desktop_execute` on server `browser`, and `exec`, `stream_logs`,
+`search_logs` and `kill` on server `exec`. A call the policy does not allow is refused,
 so a policy covers the desktop and the shell by having a rule for them, or by
 having none. The reference is
 [`contracts/policy/rego-contract.md`](contracts/policy/rego-contract.md), and

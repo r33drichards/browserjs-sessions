@@ -127,14 +127,14 @@ describe("policy workbench", () => {
     const { sent } = startBackend()
     render(<Bench start={rego(presetSource("one-site"))} />)
     chooseSample("Run git status")
-    expect(callText().value).toContain('"cmd": "git status"')
+    expect(callText().value).toContain('"bin": "git"')
     runTest()
     expect(await screen.findByText("Denied")).toBeTruthy()
     const call = sent.find(r => r.path === "/api/policies/evaluate")!
     expect(call.body).toEqual({
       kind: "rego",
       source: presetSource("one-site"),
-      input: { operation: "mcp_call_tool", server: "exec", tool: "exec", arguments: { cmd: "git status", timeout: 30 } },
+      input: { operation: "mcp_call_tool", server: "exec", tool: "exec", arguments: { bin: "git", args: ["status"], timeout: 30 } },
     })
 
     fireEvent.change(await editor(), { target: { value: presetSource("unrestricted") } })
@@ -155,7 +155,7 @@ describe("policy workbench", () => {
     const select = createWrapper().findSelect()!
     select.openDropdown()
     const groups = select.findDropdown().findGroups().map(g => g.getElement().textContent)
-    expect(groups).toEqual(["browser / browser_execute", "browser / desktop_execute", "exec / exec", "exec / stream_logs", "exec / search_logs", "browser / file_write"])
+    expect(groups).toEqual(["browser / browser_execute", "browser / desktop_execute", "exec / exec", "exec / stream_logs", "exec / search_logs", "exec / kill", "browser / file_write"])
     expect(select.findDropdown().findOptions()).toHaveLength(SAMPLES.length)
     select.selectOptionByValue("desktop-clipboard")
     expect(JSON.parse(callText().value)).toMatchObject({

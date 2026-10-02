@@ -102,7 +102,7 @@ allow_tool_call if input.server == "exec"
 allow_tool_call if {
 	input.server == "exec"
 	input.tool == "exec"
-	input.arguments.cmd in {"pwd", "ls"}
+	input.arguments.bin in {"pwd", "ls"}
 }
 `
 	for name, tc := range map[string]struct {

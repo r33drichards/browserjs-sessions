@@ -84,9 +84,40 @@ one, which does not mention the browser tools, refuses them.
 The package name is fixed. It carries the product's earlier name, as a few
 technical identifiers do.
 
+## Allow some programs
+
+The shell is the `exec` server. A call names a program and its arguments,
+and runs it with no shell in between. Allow programs by exact name, and
+check the arguments:
+
+```txt
+allow_tool_call if {
+	input.server == "exec"
+	input.tool == "exec"
+	count(object.keys(input.arguments) - {"bin", "args", "timeout"}) == 0
+	input.arguments.bin == "git"
+	input.arguments.args[0] in {"status", "log", "diff"}
+	input.arguments.timeout <= 60
+}
+
+allow_tool_call if {
+	input.server == "exec"
+	input.tool in {"stream_logs", "search_logs", "kill"}
+}
+```
+
+The third line refuses any field the rule has not looked at, such as `env`,
+which could change what `git` means. Do not list `sh`, `bash`, `env` or
+`xargs`: each runs any other program. The **Read-only shell** policy is a
+fuller example.
+
+## Keep the rules from being walked around
+
 If a policy restricts the browser, keep desktop control and the shell
-refused: the mouse and keyboard, or a shell command, can drive the browser
-around the rules. Saving a policy that leaves one open shows a warning.
+refused: the mouse and keyboard, or a program, can drive the browser around
+the rules. If it restricts the shell, keep desktop control refused: the
+keyboard can type into a terminal. Saving a policy that leaves one open
+shows a warning that says which.
 
 ## Manage it as code
 

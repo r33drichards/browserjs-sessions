@@ -59,11 +59,11 @@ export const regoMonarch = {
 export const REGO_TEMPLATE = `# What an agent may do in this session. The policy is asked about every tool
 # call (input.server, input.tool, input.arguments) and a call is refused
 # unless a rule allows it: desktop_execute and the exec server's tools (exec,
-# stream_logs, search_logs) are refused until a rule here allows them.
+# stream_logs, search_logs, kill) are refused until a rule here allows them.
 #
 # Restricting the browser while allowing desktop control or the shell can be
 # walked around: desktop_execute can type into the address bar or DevTools,
-# and a shell command can reach the browser's own control ports.
+# and a program run with exec can reach the browser's own control ports.
 package browserjs.policy
 
 import rego.v1

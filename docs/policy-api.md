@@ -164,7 +164,7 @@ left out of a request. (The JSON form of the first design, and
 `GET /policy-schema.json` with it, were removed before policies were
 enforced anywhere.) What a module may say, the input for each tool
 (`browser_execute`, `desktop_execute`, and `exec`, `stream_logs`,
-`search_logs` on the `exec` server) and the warnings `validate` returns
+`search_logs`, `kill` on the `exec` server) and the warnings `validate` returns
 when a policy restricts one tool and leaves open another that walks around
 it are in [`contracts/policy/rego-contract.md`](contracts/policy/rego-contract.md).
 `evaluate` answers as a session is answered: a server or tool the platform

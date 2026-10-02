@@ -33,8 +33,8 @@ package browserjs.policy
 import rego.v1
 
 # The platform asks a policy only about the tools it knows: browser_execute
-# and desktop_execute on server "browser"; exec, stream_logs and search_logs
-# on server "exec". This allows all of them, with any arguments.
+# and desktop_execute on server "browser"; exec, stream_logs, search_logs and
+# kill on server "exec". This allows all of them, with any arguments.
 allow_tool_call := true
 `
 
@@ -567,9 +567,9 @@ var (
 	// A rule that defines allow_tool_call, at the start of a line.
 	allowRule = regexp.MustCompile(`(?m)^allow_tool_call\b`)
 	// What a module that looks inside a call's arguments mentions: the
-	// operations of browser_execute, the command of exec.
+	// operations of browser_execute, the program of exec.
 	readsOperations = regexp.MustCompile(`\boperations\b`)
-	readsCommand    = regexp.MustCompile(`\bcmd\b`)
+	readsCommand    = regexp.MustCompile(`\bbin\b`)
 	namesDesktop    = regexp.MustCompile(`"desktop_execute"`)
 	namesShell      = regexp.MustCompile(`"exec"`)
 )

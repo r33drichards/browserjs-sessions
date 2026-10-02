@@ -218,24 +218,50 @@ DESKTOP_PROBES = _operations(
     ("keyboard.type", {"text": "probe"}),
     ("keyboard.pressKey", {"keys": ["LeftControl", "L"]}),
 )
-SHELL_PROBES = [
-    _call("exec", "exec", {"cmd": "curl -s http://127.0.0.1:9222/json/version", "timeout": 30}),
-    _call("exec", "exec", {"cmd": "bash -c 'id'", "timeout": 30}),
-]
-_PROBES = BROWSER_PROBES + DESKTOP_PROBES + SHELL_PROBES
 
-BYPASS = {
+
+def _exec(bin: str, *args: str, **more) -> dict:
+    return _call("exec", "exec", {"bin": bin, "args": list(args), "timeout": 5, **more})
+
+
+# Programs that run other programs named in their arguments: allowing one
+# allows every program.
+LAUNCHERS = ("sh", "bash", "env", "xargs")
+SHELL_PROBES = [
+    _exec("curl", "-s", "http://127.0.0.1:9222/json/version"),
+    _exec("policy-probe"),
+]
+LAUNCHER_PROBES = [_exec("sh", "-c", "id"), _exec("bash", "-c", "id"), _exec("env", "id"), _exec("xargs", "id")]
+# The same calls, and a few programs a restrictive policy is likely to
+# allow, with a PATH of the caller's choosing.
+ENV_PROBES = [
+    {**probe, "arguments": {**probe["arguments"], "env": {"PATH": "/tmp/policy-probe"}}}
+    for probe in SHELL_PROBES + LAUNCHER_PROBES + [
+        _exec(program, *args) for program in ("git", "ls", "cat", "pwd", "echo") for args in ((), ("status",))]
+]
+_GROUPS = (BROWSER_PROBES, DESKTOP_PROBES, SHELL_PROBES, LAUNCHER_PROBES, ENV_PROBES)
+_PROBES = [probe for group in _GROUPS for probe in group]
+
+WARNINGS = {
     "browser_bypass_desktop": (
         "the policy refuses some browser_execute calls but allows desktop_execute to click or type: "
         "with the mouse and keyboard an agent can use the address bar and DevTools, so the rules on "
         "browser_execute can be walked around. Deny desktop_execute, or allow only its screen operations"),
     "browser_bypass_shell": (
-        "the policy refuses some browser_execute calls but allows exec to run arbitrary commands: a command "
-        "can reach the browser's own control ports on 127.0.0.1 (8081, 9222), so the rules on browser_execute "
-        "can be walked around. Deny exec, or allow only whole commands that cannot make requests or start programs"),
+        "the policy refuses some browser_execute calls but allows exec to run programs that can make requests "
+        "or start other programs: a program can reach the browser's own control ports on 127.0.0.1 (8081, 9222), "
+        "so the rules on browser_execute can be walked around. Deny exec, or allow only programs and arguments "
+        "that can neither make requests nor start programs"),
     "shell_bypass_desktop": (
-        "the policy refuses some exec commands but allows desktop_execute to click or type: an agent can open "
+        "the policy refuses some exec calls but allows desktop_execute to click or type: an agent can open "
         "a terminal on the desktop and type any command. Deny desktop_execute, or allow only its screen operations"),
+    "shell_launcher_allowed": (
+        "the policy refuses some programs but allows sh, bash, env or xargs: each runs whatever program its "
+        "arguments name, so every program is allowed. Leave them out, or pin their arguments exactly"),
+    "shell_env_allowed": (
+        "the policy refuses some programs but lets a call set PATH in env: PATH decides which file a program "
+        "name means, so an allowed name can be made to run anything. Refuse env, or allow only listed names "
+        "that are not PATH or LD_*"),
 }
 
 
@@ -247,16 +273,22 @@ def lint(cfg: Config, rego: str) -> list[dict]:
         return []
     if allowed is None:
         return []
-    b, d = len(BROWSER_PROBES), len(DESKTOP_PROBES)
-    browser, desktop, shell = allowed[:b], allowed[b:b + d], allowed[b + d:]
+    answers = iter(allowed)
+    browser, desktop, programs, launchers, env = ([next(answers) for _ in group] for group in _GROUPS)
+    shell_open = any(programs) or any(launchers)
+    shell_restricted = not all(programs + launchers)
     codes = []
     if not all(browser) and any(desktop):
         codes.append("browser_bypass_desktop")
-    if not all(browser) and any(shell):
+    if not all(browser) and shell_open:
         codes.append("browser_bypass_shell")
-    if not all(shell) and any(desktop):
+    if shell_restricted and any(desktop):
         codes.append("shell_bypass_desktop")
-    return [diagnostic(code, BYPASS[code]) for code in codes]
+    if shell_restricted and any(launchers):
+        codes.append("shell_launcher_allowed")
+    if shell_restricted and any(env):
+        codes.append("shell_env_allowed")
+    return [diagnostic(code, WARNINGS[code]) for code in codes]
 
 
 # --- check ----------------------------------------------------------------
@@ -299,7 +331,7 @@ def _check(cfg: Config, kind: str, source: str, session_id: str | None, warn: bo
 # decision-module.rego.tmpl: the servers of a session and their tools.
 KNOWN_TOOLS = {
     "browser": {"browser_execute", "desktop_execute"},
-    "exec": {"exec", "search_logs", "stream_logs"},
+    "exec": {"exec", "kill", "search_logs", "stream_logs"},
 }
 
 

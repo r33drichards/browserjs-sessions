@@ -1,6 +1,6 @@
-# Everything in the browser, and a short list of read-only shell commands:
-# pwd, ls, a few git commands, and cat of a file below the working
-# directory. No desktop control.
+# Everything in the browser, and a short list of read-only programs: pwd,
+# ls, cat of files below the home directory, and git status, log, diff and
+# show. No desktop control.
 package browserjs.policy
 
 import rego.v1
@@ -13,30 +13,77 @@ allow_tool_call if {
 # Desktop control is denied, and must stay denied in a policy that restricts
 # the shell: desktop_execute can open a terminal and type any command.
 
-# exec runs `sh -c <cmd>`. A policy sees the command as one string: there is
-# no program and argument list to check, so the only sound rules are whole
-# commands, or an expression anchored at both ends that admits no shell
-# metacharacter (; | & $ ` > < ( ) newline, quotes, spaces where none are
-# meant). This is a list of commands, not a sandbox: what a listed command
-# does is up to the program (git runs what the repository's config names).
+# exec runs a program directly, with no shell: `bin` is the program and
+# `args` its arguments, exactly as given. This is a list of entry points,
+# not a sandbox: what an allowed program does is up to the program (git runs
+# what the repository's config names), so no shell, interpreter or launcher
+# (sh, bash, env, xargs, python3) is on the list.
 allow_tool_call if {
 	input.server == "exec"
 	input.tool == "exec"
-	is_string(input.arguments.cmd)
-	command_allowed(input.arguments.cmd)
+
+	# No field this policy has not looked at. That refuses `env`, which
+	# could set PATH and change what a program name means, and `cwd`: the
+	# program runs in the home directory.
+	is_object(input.arguments)
+	count(object.keys(input.arguments) - {"bin", "args", "timeout"}) == 0
+	command_allowed(input.arguments.bin, call_args)
+
+	# Seconds. The server has no maximum of its own.
 	is_number(input.arguments.timeout)
 	input.arguments.timeout >= 1
 	input.arguments.timeout <= 60
 }
 
-command_allowed(cmd) if cmd in {"pwd", "ls", "ls -la", "git status", "git log --oneline -n 20", "git diff --stat"}
+# The arguments, whether the call gave `args` or left it out (the server
+# treats both as none). Undefined, which denies, when it is not an array of
+# strings.
+call_args := args if {
+	args := object.get(input.arguments, "args", [])
+	is_array(args)
+	every arg in args {
+		is_string(arg)
+	}
+}
 
-# cat of one relative path with no "..", no hidden name and nothing but
-# letters, digits, "_", "." and "-" in each part.
-command_allowed(cmd) if regex.match(`^cat [A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*$`, cmd)
+# The program is compared as a whole string: "git" is found on the desktop's
+# PATH; "/tmp/git" and "./git" are other strings, and denied.
+command_allowed("pwd", args) if count(args) == 0
 
-# Reading the output of a command that was started. These start nothing.
+command_allowed("ls", args) if {
+	every arg in args {
+		ls_argument(arg)
+	}
+}
+
+ls_argument(arg) if arg in {"-l", "-a", "-la", "-al"}
+
+ls_argument(arg) if relative_path(arg)
+
+command_allowed("cat", args) if {
+	count(args) >= 1
+	every arg in args {
+		relative_path(arg)
+	}
+}
+
+# The subcommand at args[0] keeps git's own options (-c, -C, --exec-path,
+# which come before it) out. After it, a flag must be one of those listed;
+# anything else must not begin with "-".
+command_allowed("git", args) if {
+	args[0] in {"status", "log", "diff", "show"}
+	every arg in array.slice(args, 1, count(args)) {
+		regex.match(`^(--oneline|--stat|--name-only|--cached|-n|[^-].*)$`, arg)
+	}
+}
+
+# A path below the working directory: no leading "/", no "..", no hidden
+# name, and only letters, digits, "_", "." and "-" in each part.
+relative_path(arg) if regex.match(`^[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*$`, arg)
+
+# Reading the output of a command that was started, and stopping one. These
+# start nothing.
 allow_tool_call if {
 	input.server == "exec"
-	input.tool in {"stream_logs", "search_logs"}
+	input.tool in {"stream_logs", "search_logs", "kill"}
 }

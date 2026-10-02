@@ -105,7 +105,7 @@ export interface MockOptions {
 }
 
 // The tools a policy is asked about, by server. Any other pair is refused.
-const TOOLS: Record<string, string[]> = { browser: ["browser_execute", "desktop_execute"], exec: ["exec", "stream_logs", "search_logs"] }
+const TOOLS: Record<string, string[]> = { browser: ["browser_execute", "desktop_execute"], exec: ["exec", "stream_logs", "search_logs", "kill"] }
 const UNRESTRICTED = "packagebrowserjs.policyimportrego.v1allow_tool_call:=true"
 const SCOPES = ["sessions:read", "sessions:write", "policies:read", "policies:write"]
 const ME = { email: "you@example.com", name: "You", admin: false }

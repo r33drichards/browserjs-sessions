@@ -13,7 +13,7 @@ default allow := false
 allow if {
 	input.tool in {
 		"browser": {"browser_execute", "desktop_execute"},
-		"exec": {"exec", "search_logs", "stream_logs"},
+		"exec": {"exec", "kill", "search_logs", "stream_logs"},
 	}[input.server]
 	data.browserjs.tenant["{{SESSION_ID}}"].allow_tool_call == true
 }

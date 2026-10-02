@@ -251,27 +251,55 @@
     "allow": true
   },
   {
-    "name": "shell: a command",
+    "name": "shell: a program",
     "input": {
       "operation": "mcp_call_tool",
       "server": "exec",
       "tool": "exec",
       "arguments": {
-        "cmd": "git status",
+        "bin": "git",
+        "args": [
+          "status"
+        ],
         "timeout": 30
       }
     },
     "allow": true
   },
   {
-    "name": "shell: a command that talks to the browser's debugging port",
+    "name": "shell: a program that talks to the browser's debugging port",
     "input": {
       "operation": "mcp_call_tool",
       "server": "exec",
       "tool": "exec",
       "arguments": {
-        "cmd": "curl -s http://127.0.0.1:9222/json/version",
+        "bin": "curl",
+        "args": [
+          "-s",
+          "http://127.0.0.1:9222/json/version"
+        ],
         "timeout": 30
+      }
+    },
+    "allow": true
+  },
+  {
+    "name": "shell: a shell",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "bin": "sh",
+        "args": [
+          "-c",
+          "id"
+        ],
+        "timeout": 30,
+        "env": {
+          "PATH": "/tmp"
+        },
+        "cwd": "/tmp"
       }
     },
     "allow": true
@@ -313,6 +341,18 @@
     "allow": true
   },
   {
+    "name": "shell: stopping a command",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "kill",
+      "arguments": {
+        "id": "3f0e8a52-5d2b-4a57-9f3b-0c1d2e3f4a5b"
+      }
+    },
+    "allow": true
+  },
+  {
     "name": "a tool the browser server does not have",
     "input": {
       "operation": "mcp_call_tool",
@@ -331,7 +371,7 @@
       "server": "other",
       "tool": "exec",
       "arguments": {
-        "cmd": "pwd",
+        "bin": "pwd",
         "timeout": 5
       }
     },
@@ -344,9 +384,19 @@
       "server": "browser",
       "tool": "exec",
       "arguments": {
-        "cmd": "pwd",
+        "bin": "pwd",
         "timeout": 5
       }
+    },
+    "allow": false
+  },
+  {
+    "name": "a tool the exec server does not have",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "list",
+      "arguments": {}
     },
     "allow": false
   },

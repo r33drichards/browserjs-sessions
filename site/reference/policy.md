@@ -27,7 +27,7 @@ The input for each call:
 | --- | --- |
 | `input.operation` | `"mcp_call_tool"` |
 | `input.server` | The capability's server: `"browser"`, or `"exec"` for the shell |
-| `input.tool` | The tool: `"browser_execute"` or `"desktop_execute"` on `browser`; `"exec"`, `"stream_logs"` or `"search_logs"` on `exec` |
+| `input.tool` | The tool: `"browser_execute"` or `"desktop_execute"` on `browser`; `"exec"`, `"stream_logs"`, `"search_logs"` or `"kill"` on `exec` |
 | `input.arguments` | The arguments as the code passed them. Not validated first: any field can be missing or of any type |
 
 A call to a server or tool not listed here is refused whatever the policy
@@ -38,11 +38,48 @@ A call no rule allows is refused, so a policy that only speaks of
 
 Nothing in the input says which user or client is calling.
 
-A policy that restricts `browser_execute` should refuse `desktop_execute`
-and `exec`: the mouse and keyboard, or a shell command, can drive the
-browser around its rules. A policy that restricts `exec` should refuse
-`desktop_execute`, which can type into a terminal. Saving a policy that
-does otherwise gives a warning.
+### Arguments of each tool
+
+| Server | Tool | `input.arguments` |
+| --- | --- | --- |
+| `browser` | `browser_execute` | `{ operations: [{ type, params }] }`. Types: `navigate`, `click`, `type`, `press`, `select`, `wait`, `screenshot`, `setViewport`, `url`, `evaluate`, `setContent` |
+| `browser` | `desktop_execute` | `{ operations: [{ type, params }] }`. Types such as `mouse.click`, `keyboard.type`, `keyboard.pressKey`, `screen.grab`, `clipboard.getContent` |
+| `exec` | `exec` | `{ bin, args, timeout, cwd, env }`: a program run directly, with no shell. `args`, `cwd` and `env` are optional; `timeout` is in seconds |
+| `exec` | `stream_logs`, `search_logs`, `kill` | `{ id, ... }`: read or stop a command that was started. They start nothing |
+
+For `exec`, compare `bin` as a whole string (`"git"` and `"/usr/bin/git"`
+are different), check `args` one by one, bound `timeout`, and refuse `env`
+and `cwd` unless a rule checks them: `env` can set `PATH`, which changes
+what a program name runs. A list of programs is a list of entry points, not
+a sandbox. An allowed program can start others.
+
+## Ready-made policies
+
+| Policy | Browser | Desktop | Shell |
+| --- | --- | --- | --- |
+| Unrestricted (the default) | Everything | Everything | Everything |
+| Browser only | Everything | Refused | Refused |
+| No scripting | Everything except running script in a page or replacing its content | Refused | Refused |
+| Observe only | Open https pages, wait, take screenshots | Refused | Refused |
+| One site | One site and its subdomains, short typed text | Refused | Refused |
+| Form filling | The sites you name, printable text, a few keys | Refused | Refused |
+| Read-only shell | Everything | Refused | `pwd`, `ls`, `cat` on files below the home folder, `git status`, `log`, `diff`, `show`; 60 seconds at most |
+
+## Warnings when saving
+
+The tools are not independent, so some policies restrict less than they
+appear to. Saving one of these succeeds with a warning.
+
+| Warning | The policy |
+| --- | --- |
+| `browser_bypass_desktop` | Restricts the browser but lets the desktop click or type. The mouse and keyboard reach the address bar and DevTools |
+| `browser_bypass_shell` | Restricts the browser but lets `exec` run arbitrary programs. A program can call the browser's control ports inside the session |
+| `shell_bypass_desktop` | Restricts `exec` but lets the desktop click or type. The keyboard can type any command into a terminal |
+| `shell_launcher_allowed` | Lists programs but allows `sh`, `bash`, `env` or `xargs`, each of which runs any other program |
+| `shell_env_allowed` | Lists programs but lets a call set `PATH` |
+
+The warnings come from trying a few calls against the policy. They catch
+the common mistakes, not every one.
 
 ## Where it is kept
 

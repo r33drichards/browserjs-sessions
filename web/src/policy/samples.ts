@@ -52,13 +52,16 @@ export const SAMPLES: Sample[] = [
   ]),
   desktop("desktop-clipboard", "Read the clipboard", [{ type: "clipboard.getContent" }]),
 
-  sample("shell-git-status", "Run git status", "exec", "exec", { cmd: "git status", timeout: 30 }),
-  sample("shell-debug-port", "Run a command that talks to the browser's debugging port", "exec", "exec", {
-    cmd: "curl -s http://127.0.0.1:9222/json/version",
+  sample("shell-git-status", "Run git status", "exec", "exec", { bin: "git", args: ["status"], timeout: 30 }),
+  sample("shell-debug-port", "Run a program that talks to the browser's debugging port", "exec", "exec", {
+    bin: "curl",
+    args: ["-s", "http://127.0.0.1:9222/json/version"],
     timeout: 30,
   }),
+  sample("shell-sh", "Run a shell", "exec", "exec", { bin: "sh", args: ["-c", "id"], timeout: 30 }),
   sample("shell-stream-logs", "Read a command's output", "exec", "stream_logs", { id: COMMAND_ID, offset: 0 }),
   sample("shell-search-logs", "Search a command's output", "exec", "search_logs", { id: COMMAND_ID, pattern: "error" }),
+  sample("shell-kill", "Stop a command", "exec", "kill", { id: COMMAND_ID }),
 
   // Refused whatever the policy says: the platform does not know the tool.
   sample("unknown-tool", "A tool that does not exist", "browser", "file_write", { operations: [] }),

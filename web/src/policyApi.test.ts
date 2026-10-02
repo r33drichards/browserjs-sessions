@@ -192,7 +192,7 @@ describe("presets", () => {
       expect(p.source).toMatch(/^package browserjs\.policy$/m)
       expect(p.cases.length).toBeGreaterThan(0)
     }
-    expect(presets.reduce((n, p) => n + p.cases.length, 0)).toBe(222)
+    expect(presets.reduce((n, p) => n + p.cases.length, 0)).toBe(264)
   })
 
   it("take the title from the id and the description from the comment the file begins with", () => {

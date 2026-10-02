@@ -55,9 +55,10 @@ MCP client.
 |---|---|---|---|
 | `browser` | `browser_execute` | drives pages over CDP | `{operations: [{type, params?}], tab?, close?}` |
 | `browser` | `desktop_execute` | drives the X display with nut.js: mouse, keyboard, screen, clipboard. Whatever a person at the VNC view can do | `{operations: [{type, params?}], config?}` |
-| `exec` | `exec` | runs `sh -c <cmd>` as the desktop's user, in its home directory, and returns at once with `{id, status: "started"}` | `{cmd: string, timeout: integer}` (seconds) |
+| `exec` | `exec` | runs a program directly (no shell) as the desktop's user and returns at once with `{id, status: "started"}` | `{bin: string, args?: [string], timeout: integer (seconds), cwd?: string, env?: {name: string}}` |
 | `exec` | `stream_logs` | reads a started command's output from a byte offset | `{id: string, offset: integer}` |
 | `exec` | `search_logs` | searches a started command's output | `{id: string, pattern: string}` |
+| `exec` | `kill` | stops a running command and its process group | `{id: string}` |
 
 The platform's decision module (`decision-module.rego.tmpl`) asks the
 tenant's policy only for these pairs. **A call to any other server or tool
@@ -99,28 +100,45 @@ operation run (screenshots only, no keyboard, no clipboard), how many, what
 text and which keys.
 
 The `exec` server is [mcp-exec](https://github.com/r33drichards/mcp-exec)
-running in the browser container. Its tools take exactly the fields in the
-table: `tools/*.schema.json` are the schemas, and
-[`exec-input.md`](exec-input.md) is the longer guide to writing rules on a
-command line, with six worked policies in `tools/examples/`.
+running in the browser container. `tools/*.schema.json` are the schemas of
+its tools, and [`exec-input.md`](exec-input.md) is the longer guide to
+writing rules on a program and its arguments, with six worked policies in
+`tools/examples/`.
 
 ```json
 { "operation": "mcp_call_tool", "server": "exec", "tool": "exec",
-  "arguments": { "cmd": "git status", "timeout": 30 } }
+  "arguments": { "bin": "git", "args": ["status"], "timeout": 30 } }
 ```
 
-A policy sees the command as **one string handed to a shell**. There is no
-program and argument list, no working directory and no environment in the
-input. So the rules that hold are: compare `cmd` with whole commands
-(`cmd in {"git status", "ls -la"}`), or match it with an expression anchored
-at both ends that admits no shell metacharacter (`;`, `|`, `&`, `$`, a
-backquote, `>`, `<`, parentheses, quotes, a newline); and bound `timeout`.
-A substring or prefix test (`startswith(cmd, "git ")`) allows
-`git status; curl … | sh`. Even a whole allowed command is an entry point,
-not a sandbox: what it does is up to the program (`git` runs what the
-repository's config names). What confines a command is the container.
-`stream_logs` and `search_logs` start nothing and can be allowed whenever
-`exec` is.
+A policy sees the program and each argument as the program will receive
+them: nothing is split, globbed or expanded. What it must do for itself,
+because the server does not:
+
+- **Compare `bin` as a whole string.** `"git"` is looked up on `PATH`;
+  `"/usr/bin/git"` and `"./git"` are other strings (the last one relative to
+  `cwd`). Allow exact names.
+- **Handle `args` absent and `args: []` alike** (the server does), and
+  require an array of strings: `object.get(input.arguments, "args", [])`,
+  then `is_array` and `is_string` on each.
+- **Refuse `env`, or allow only listed names.** The server accepts any
+  name, `PATH` and `LD_PRELOAD` included, and a `PATH` of the caller's
+  choosing changes what an allowed name runs.
+- **Refuse `cwd`, or check it yourself.** It is used as written: no
+  normalisation, no symbolic links resolved. A "below this directory" rule
+  must refuse `..`, `.` and empty segments, and cannot see a link that
+  leads out.
+- **Bound `timeout`.** The server has no maximum.
+- **Allow-list the field names** (`object.keys(input.arguments) - {…}` is
+  empty): the policy is asked before the server refuses unknown fields.
+
+And what no rule can do: confine what an allowed program starts. `sh`,
+`bash`, `env`, `xargs`, every interpreter, `find -exec`, `git -c` and
+`git` in a repository whose config names programs all run something else.
+A policy on `exec` is **a list of entry points, not a sandbox**; what
+confines a command is the container. So list few programs, pin their
+arguments (a subcommand at `args[0]`, a pattern every argument must
+match), and leave launchers out. `stream_logs`, `search_logs` and `kill`
+start nothing and can be allowed whenever `exec` is.
 
 ### Tools that undo each other's rules
 
@@ -131,8 +149,8 @@ written with that in mind:
   (or allow only its `screen.*` operations): with the mouse and keyboard an
   agent types into the address bar, opens DevTools, or pastes script.
 - **A policy that restricts `browser_execute` must deny `exec`** (or allow
-  only whole commands that can neither make requests nor start programs): a
-  command runs inside the container and can call the browser's MCP server
+  only programs and arguments that can neither make requests nor start
+  programs): a program runs inside the container and can call the browser's MCP server
   on `127.0.0.1:8081` and Chromium's debugging port on `127.0.0.1:9222`
   directly, with no policy in the way.
 - **A policy that restricts `exec` must deny `desktop_execute`**: the
@@ -141,14 +159,17 @@ written with that in mind:
 The operator checks this by asking, not by reading: after a module passes
 the checks below, it is evaluated against a few probe calls (a page script,
 a navigation, a click; a desktop click and keystrokes; `curl` to the
-debugging port and `bash -c`). The outcome is a **warning**, shown by the
+debugging port, a program nobody lists, `sh`, `bash`, `env` and `xargs`,
+and the same and a few common programs with `PATH` set in `env`). The outcome is a **warning**, shown by the
 editor, the API and `status.warnings`, never an error:
 
 | Code | When |
 |---|---|
 | `browser_bypass_desktop` | some browser probe is refused, and a desktop click or keystroke is allowed |
-| `browser_bypass_shell` | some browser probe is refused, and an arbitrary command is allowed |
-| `shell_bypass_desktop` | an arbitrary command is refused, and a desktop click or keystroke is allowed |
+| `browser_bypass_shell` | some browser probe is refused, and an arbitrary program or a launcher is allowed |
+| `shell_bypass_desktop` | some program is refused, and a desktop click or keystroke is allowed |
+| `shell_launcher_allowed` | some program is refused, and `sh`, `bash`, `env` or `xargs` is allowed: the list of programs is then every program |
+| `shell_env_allowed` | some program is refused, and a call that sets `PATH` in `env` is allowed |
 
 A warning and not an error because the probes are a heuristic (a policy can
 have reasons the operator cannot see, and one can restrict in ways the
@@ -161,7 +182,7 @@ author to `allow_tool_call := true`.
 serves them on the create page. Each begins with a comment that says what
 it allows, which is the description people see.
 
-| Preset | `browser_execute` | `desktop_execute` | `exec`, `stream_logs`, `search_logs` |
+| Preset | `browser_execute` | `desktop_execute` | `exec`, `stream_logs`, `search_logs`, `kill` |
 |---|---|---|---|
 | `unrestricted` (a new session's default) | everything | everything | everything |
 | `browser-only` | everything | denied | denied |
@@ -169,7 +190,7 @@ it allows, which is the description people see.
 | `observe-only` | https pages, `wait`, `screenshot`, `url`, `setViewport` | denied | denied |
 | `one-site` | one site over https, short text, no script | denied | denied |
 | `form-filling` | two sites, printable text, three keys, bounded viewport | denied | denied |
-| `read-only-shell` | everything | denied | `pwd`, `ls`, `ls -la`, three `git` commands, `cat` of one relative path; `timeout` 1 to 60; reading output |
+| `read-only-shell` | everything | denied | `pwd`; `ls` and `cat` on relative paths with no `..` and no hidden names; `git status`, `log`, `diff`, `show` with a few flags; no `env`, no `cwd`; `timeout` 1 to 60; reading output and stopping a command |
 
 ## How mcp-js asks
 

@@ -7,7 +7,7 @@ without a backend it runs against a mock of that contract.
 A policy decides what an agent connected over MCP may do in the browser, on
 the desktop and in the shell: it is asked about every tool call
 (`browser_execute` and `desktop_execute` on server `browser`; `exec`,
-`stream_logs` and `search_logs` on server `exec`). It is a Rego module and
+`stream_logs`, `search_logs` and `kill` on server `exec`). It is a Rego module and
 nothing else. There is no JSON form, no format switch, no generated-Rego
 pane and no schema: `kind` is still sent, and its only value is `"rego"`.
 
@@ -152,9 +152,10 @@ The Test panel's select, grouped by server and tool
 |---|---|
 | browser / browser_execute | Sign in on a page; Navigate to a URL; Take a screenshot; Run script in the page; Navigate to another site |
 | browser / desktop_execute | Take a screenshot of the desktop; Click and type on the desktop; Press a key combination; Read the clipboard |
-| exec / exec | Run git status; Run a command that talks to the browser's debugging port |
+| exec / exec | Run git status; Run a program that talks to the browser's debugging port; Run a shell |
 | exec / stream_logs | Read a command's output |
 | exec / search_logs | Search a command's output |
+| exec / kill | Stop a command |
 | browser / file_write | A tool that does not exist |
 
 ## Developing without a backend

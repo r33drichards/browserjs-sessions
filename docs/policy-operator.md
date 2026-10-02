@@ -119,13 +119,13 @@ cd images/policy-operator
 nix develop -c pytest
 ```
 
-190 tests, about thirty seconds, no cluster and no Docker. The dev shell
+195 tests, about thirty seconds, no cluster and no Docker. The dev shell
 takes OPA 1.9.0 from the release (checksums in `flake.nix`), because
 `nixpkgs#open-policy-agent` does not build here (design, section 11).
 
 | File | What it shows |
 |---|---|
-| `test_check.py` | all 222 cases of the seven examples through the real `opa`, as a tenant package behind the decision module, and no example earning a warning; the decision module refusing servers and tools it has not heard of under `allow_tool_call := true`; the three bypass warnings, and that they never fail a policy; the corpus of `spike/tenant-guard.py` and more (a second package clause, `data` in a rule head, a default, a function argument, an `every`, an `else`, a comprehension, `with` on a built-in, the built-ins that are not on the allow-list…) refused; legitimate modules accepted and rewritten; positions of errors; the hash; `evaluate`, its timeout included |
+| `test_check.py` | all 264 cases of the seven examples through the real `opa`, as a tenant package behind the decision module, and no example earning a warning; the decision module refusing servers and tools it has not heard of under `allow_tool_call := true`; the five warnings (three bypasses, a launcher among the allowed programs, `PATH` settable in `env`), and that they never fail a policy; the corpus of `spike/tenant-guard.py` and more (a second package clause, `data` in a rule head, a default, a function argument, an `every`, an `else`, a comprehension, `with` on a built-in, the built-ins that are not on the allow-list…) refused; legitimate modules accepted and rewritten; positions of errors; the hash; `evaluate`, its timeout included |
 | `test_bundle.py` | the layout, the `loaded` document, byte stability, the build under the capabilities file |
 | `test_operator.py` | 503-until-first-pass, revisions, last good from memory and from `status.rego`, a hostile `status.rego`, removal, a build that fails; the loaded check against fake OPA replicas |
 | `test_status.py` | every field and condition of `status` |
@@ -154,7 +154,7 @@ python -m policy_operator example-resources /tmp/policies     # the seven exampl
 python -m policy_operator bundle /tmp/policies -o /tmp/browserjs.tar.gz
 opa run --server --addr 127.0.0.1:8181 -b /tmp/browserjs.tar.gz &
 python -m policy_operator run-cases http://127.0.0.1:8181
-222/222 cases pass
+264/264 cases pass
 ```
 
 `run-cases` asks as mcp-js does (`POST

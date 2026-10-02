@@ -146,7 +146,8 @@ components:
         `rego_type_error`, `rego_compile_error`, `rego_unsafe_var_error`,
         `rego_recursion_error`), `eval_error`, `eval_timeout`; warnings use
         the codes of rego-contract.md (`browser_bypass_desktop`,
-        `browser_bypass_shell`, `shell_bypass_desktop`).
+        `browser_bypass_shell`, `shell_bypass_desktop`,
+        `shell_launcher_allowed`, `shell_env_allowed`).
       properties:
         row: {type: integer, minimum: 1}
         col: {type: integer, minimum: 1}
