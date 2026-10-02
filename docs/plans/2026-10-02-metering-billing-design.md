@@ -774,6 +774,23 @@ owner's card. Session policies are not involved. Reading, stopping and
 deleting are never refused. API tokens and policies cost nothing and are
 not gated.
 
+### 5.1a How the backend reads balance and card state
+
+Create and wake must answer in milliseconds, and the ledger's writer is a
+separate process. The backend keeps an **informer** (a watch with a local
+cache) on Accounts: a decision reads `spec.paymentMethod` and `status` from
+memory, with no call to the API server, to the operator or to Stripe. The
+cache is at most as old as the operator's last tick (60 s) for the balance,
+and a watch event behind (well under a second) for the card, which the
+backend itself wrote. A balance that is a minute old can only err by a
+minute of use, which the grace already allows for.
+
+That read is the `Accounts` and `Ledger` interfaces of
+[`testing.md`](../contracts/billing/testing.md): the informer-backed
+implementation in production, an in-memory fake in tests. The decision
+function and the sweep see nothing else, so the card-gate scenario runs
+with no Kubernetes and no Stripe.
+
 ### 5.2 The gate
 
 A session is the only billable resource. Without a saved card it cannot be
@@ -792,6 +809,11 @@ message and the link.
 | when its calls have finished, or after 10 minutes at most | the session is **snapshotted, then suspended**, marked `stopped-by: credit`. |
 | Credit arrives at any point before the sleep | the stop is called off; nothing was interrupted. |
 | Credit arrives after the sleep | sessions become wakeable. They are not woken: the next use, or Resume, wakes them. |
+
+The short grace is kept and does not contradict "calls in flight
+finish": the grace comes first and exists only so that a top-up already in
+progress interrupts nothing; the finish-then-sleep rule is what happens
+when it ends. Setting `BILLING_GRACE` to 0 starts the drain at zero.
 
 The 10 minute bound is the proxy's own limit on an MCP call
 (`mcpResponseTimeout`); a call cannot outlive it today either. The grace
