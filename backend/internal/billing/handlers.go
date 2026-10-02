@@ -206,7 +206,7 @@ func (h *Handlers) viewOf(ctx context.Context, st standing) (BillingView, error)
 		HasPaymentMethod: spec.PaymentMethod != nil && spec.PaymentMethod.Present,
 		Rates:            cat.publicRates(),
 		ExhaustedAt:      st.exhaustedAt(),
-		Limits:           PublicTier{st.tier.MaxSessions, st.tier.MaxAwake},
+		Limits:           PublicTier{st.tier.MaxSessions, st.tier.MaxAwake, cat.included(st.tier.Sizes)},
 		Payments:         h.cfg.Payments,
 		HasCustomer:      spec.StripeCustomerID != "",
 	}
@@ -256,7 +256,7 @@ func (h *Handlers) viewOf(ctx context.Context, st standing) (BillingView, error)
 	}
 	for _, s := range mine {
 		if s.State == sessions.Running {
-			v.BurnMicrosPerHour += cat.Rates.AwakeMicrosPerHour
+			v.BurnMicrosPerHour += cat.AwakeRate(s.Size)
 		}
 		v.BurnMicrosPerHour += int64(cat.SessionDiskGB) * cat.Rates.DiskMicrosPerGBHour
 	}

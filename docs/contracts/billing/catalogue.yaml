@@ -14,9 +14,20 @@ currency: usd
 
 # One balance of credit per account, in dollars. It is used up by:
 rates:
-  awakeMicrosPerHour: 200000     # $0.20 for each hour a session is awake
+  awakeMicrosPerHour: 200000     # $0.20 for each hour a small session is awake
   diskMicrosPerGBHour: 384       # $0.28 per GB-month (730 h): $1.40 a month for a 5 GB session, awake or asleep
 sessionDiskGB: 5
+
+# The awake rate of each size of session other than small (whose rate is
+# rates.awakeMicrosPerHour). The sizes themselves, what each gives a
+# session, are the deployment's (deploy/gke/sizes.yaml): a size named here
+# and not there is never used, and one there and not here is charged as
+# small. The disk is the same 5 GB at every size.
+sizes:
+  medium:
+    awakeMicrosPerHour: 400000   # $0.40: a third of a session node
+  large:
+    awakeMicrosPerHour: 800000   # $0.80: a whole session node
 
 # Given once, when the first card is saved.
 signupCredit:
@@ -31,6 +42,7 @@ payg:
   name: Pay as you go
   maxSessions: 3
   maxAwake: 2
+  sizes: [medium]                # besides small, which every plan has
 
 # Subscriptions: a monthly price that buys more credit than it costs. One
 # Stripe Product each (the Customer Portal can only switch between
@@ -45,6 +57,7 @@ plans:
     creditMicros: 10000000       # $10 of credit: about 40 awake hours with one session kept
     maxSessions: 3
     maxAwake: 2
+    sizes: [medium]
     enabled: true
   - key: pro
     name: Pro
@@ -54,6 +67,7 @@ plans:
     creditMicros: 44000000       # $44: about 200 awake hours with three sessions kept
     maxSessions: 10
     maxAwake: 4
+    sizes: [medium, large]
     enabled: true
   - key: scale
     name: Scale
@@ -63,6 +77,7 @@ plans:
     creditMicros: 240000000      # $240: about 1100 awake hours with ten sessions kept
     maxSessions: 25
     maxAwake: 8
+    sizes: [medium, large]
     # Not sold until the project's CPU quota is raised: eight awake sessions
     # of one account would be most of today's eleven places.
     enabled: false

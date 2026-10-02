@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -103,6 +104,21 @@ func run() error {
 	store, err := sessions.NewStore(dyn, cfg.Namespace, string(blueprint), cfg.PublicURL, cfg.SessionURLs)
 	if err != nil {
 		return err
+	}
+	// The sizes other than small. No file: every session is small.
+	switch raw, err := os.ReadFile(cfg.SizesPath); {
+	case errors.Is(err, os.ErrNotExist):
+	case err != nil:
+		return err
+	default:
+		file, err := sessions.ParseSizes(raw)
+		if err == nil {
+			err = store.EnableSizes(file)
+		}
+		if err != nil {
+			return err
+		}
+		slog.Info("session sizes", "sizes", store.Sizes(), "capacity", file.Capacity)
 	}
 	if cfg.Snapshots {
 		store.EnableSnapshots(dyn, cfg.Namespace, sessions.SnapshotOptions{Timeout: cfg.SnapshotTimeout})

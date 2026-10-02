@@ -317,7 +317,7 @@ func (m *Metronome) Tick(now time.Time) []MetronomeEvent {
 			observed = map[string]Observed{}
 		}
 		// The step's seconds and money; the credits are Metronome's to draw.
-		charged := Step(&c.meter, nil, observed, now, cat.Rates)
+		charged := StepSized(&c.meter, nil, observed, now, cat)
 		day := now.UTC().Format("2006-01-02")
 		for session := range observed {
 			key := [2]string{session, day}
@@ -325,6 +325,12 @@ func (m *Metronome) Tick(now time.Time) []MetronomeEvent {
 				c.usage[key] = &billing.MetronomeUsageRow{SessionID: session, Day: day}
 			}
 			c.usage[key].AwakeSeconds += charged.AwakeSeconds[session]
+			if size := observed[session].Size; size != "" && size != billing.SizeSmall && charged.AwakeSeconds[session] > 0 {
+				if c.usage[key].AwakeBySize == nil {
+					c.usage[key].AwakeBySize = map[string]int64{}
+				}
+				c.usage[key].AwakeBySize[size] += charged.AwakeSeconds[session]
+			}
 			c.usage[key].DiskGBSeconds += charged.DiskGBSeconds[session]
 		}
 		owed := charged.AwakeMicros + charged.DiskMicros

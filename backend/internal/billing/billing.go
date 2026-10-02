@@ -429,8 +429,11 @@ type MetronomeUsage struct {
 type MetronomeUsageRow struct {
 	SessionID     string
 	Day           string // yyyy-mm-dd
-	AwakeSeconds  int64
+	AwakeSeconds  int64  // of every size
 	DiskGBSeconds int64
+	// AwakeBySize is the part of AwakeSeconds that was at a size other than
+	// small, by size: it is charged at that size's rate.
+	AwakeBySize map[string]int64
 }
 
 // What the backend says to Stripe and hears back, reduced to the fields

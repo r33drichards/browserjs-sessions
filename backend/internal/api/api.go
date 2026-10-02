@@ -31,8 +31,17 @@ type Store interface {
 	Delete(ctx context.Context, id string) error
 }
 
+// Sizer is what the API needs of a store whose sessions come in sizes (a
+// *sessions.Store). A store without it has small sessions only.
+type Sizer interface {
+	Sizes() []sessions.SizeInfo
+	CreateSized(ctx context.Context, name, owner, size string, policy *sessions.PolicySpec) (sessions.Session, error)
+	Resize(ctx context.Context, id, size string) error
+}
+
 type API struct {
 	store Store
+	sizer Sizer // nil: small only
 	authz authz.Checker
 	urls  *sessions.URLTemplate
 	cap   int
@@ -72,7 +81,8 @@ func (a *API) SetCanary(emails []string) {
 func (a *API) OnCreated(f func(id string)) { a.onCreated = f }
 
 func New(store Store, az authz.Checker, urls *sessions.URLTemplate, maxPerUser int) *API {
-	return &API{store: store, authz: az, urls: urls, cap: maxPerUser, petName: petName}
+	sizer, _ := store.(Sizer)
+	return &API{store: store, sizer: sizer, authz: az, urls: urls, cap: maxPerUser, petName: petName}
 }
 
 // petName is an adjective and an animal, like "brave-otter".
@@ -136,6 +146,7 @@ func (k *keyedMutex) lock(key string) (unlock func()) {
 
 func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/me", a.user(a.me))
+	mux.HandleFunc("GET /api/sizes", a.user(a.sizes))
 	mux.HandleFunc("GET /api/sessions", a.user(a.list))
 	mux.HandleFunc("POST /api/sessions", a.user(a.create))
 	mux.HandleFunc("GET /api/sessions/{id}", a.session(a.get))
@@ -200,8 +211,12 @@ func (a *API) storeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, sessions.ErrNotFound):
 		writeError(w, http.StatusNotFound, "session not found")
-	case errors.Is(err, sessions.ErrInvalidName), errors.Is(err, sessions.ErrInvalidAction), errors.Is(err, sessions.ErrCanary):
+	case errors.Is(err, sessions.ErrInvalidName), errors.Is(err, sessions.ErrInvalidAction), errors.Is(err, sessions.ErrCanary), errors.Is(err, sessions.ErrInvalidSize):
 		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, sessions.ErrNoCapacity):
+		// Nothing was made or started. Room comes back as sessions sleep.
+		w.Header().Set("Retry-After", "120")
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error(), "code": "no_capacity"})
 	case errors.Is(err, sessions.ErrPolicyUnsupported):
 		writeError(w, http.StatusConflict, "new sessions cannot be given a policy here yet")
 	default:
@@ -231,6 +246,38 @@ func (a *API) me(w http.ResponseWriter, _ *http.Request, u auth.User) {
 	writeJSON(w, http.StatusOK, map[string]any{"email": u.Subject, "name": u.Name, "admin": u.Admin})
 }
 
+// offered is the sizes a session can have here, small first.
+func (a *API) offered() []sessions.SizeInfo {
+	if a.sizer == nil {
+		return []sessions.SizeInfo{{Name: sessions.DefaultSize, Warm: true}}
+	}
+	return a.sizer.Sizes()
+}
+
+// sizes lists the sizes a session can have: what each gives the desktop
+// (the limits of the pod's browser container). What each costs, where
+// billing is on, is the catalogue's (GET /api/billing/catalogue).
+func (a *API) sizes(w http.ResponseWriter, _ *http.Request, _ auth.User) {
+	writeJSON(w, http.StatusOK, map[string]any{"default": sessions.DefaultSize, "sizes": a.offered()})
+}
+
+// checkSize is the size asked for, as the store names it ("" is small), or
+// the error of one that is not offered.
+func (a *API) checkSize(asked string) (string, error) {
+	if asked == "" {
+		return sessions.DefaultSize, nil
+	}
+	offered := a.offered()
+	names := make([]string, 0, len(offered))
+	for _, s := range offered {
+		if s.Name == asked {
+			return asked, nil
+		}
+		names = append(names, s.Name)
+	}
+	return "", &sessions.InvalidSizeError{Size: asked, Offered: names}
+}
+
 func (a *API) list(w http.ResponseWriter, r *http.Request, u auth.User) {
 	var list []sessions.Session
 	var err error
@@ -256,6 +303,7 @@ func (a *API) list(w http.ResponseWriter, r *http.Request, u auth.User) {
 func (a *API) create(w http.ResponseWriter, r *http.Request, u auth.User) {
 	var body struct {
 		Name   string        `json:"name"`
+		Size   string        `json:"size"`
 		Policy *policy.Input `json:"policy"`
 		// Container name to image digest: see SetCanary.
 		Canary map[string]string `json:"canary"`
@@ -263,6 +311,11 @@ func (a *API) create(w http.ResponseWriter, r *http.Request, u auth.User) {
 	// The name is optional, and so is a body that would only carry it.
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, a.maxCreateBody())).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "body must be JSON, optionally with a name")
+		return
+	}
+	size, err := a.checkSize(body.Size)
+	if err != nil {
+		a.storeError(w, err)
 		return
 	}
 	ctx := r.Context()
@@ -296,13 +349,22 @@ func (a *API) create(w http.ResponseWriter, r *http.Request, u auth.User) {
 		a.notAdmitted(w, err)
 		return
 	}
+	if err := a.maySize(r.Context(), u.Subject, size); err != nil {
+		a.refused(w, err)
+		return
+	}
 	name := body.Name
 	if strings.TrimSpace(name) == "" {
 		name = a.freshName(mine)
 	}
 	// The owner is recorded on the session itself; that is all there is to
 	// who may use it.
-	s, err := a.store.CreateWithPolicy(ctx, name, u.Subject, asked)
+	var s sessions.Session
+	if a.sizer != nil {
+		s, err = a.sizer.CreateSized(ctx, name, u.Subject, size, asked)
+	} else {
+		s, err = a.store.CreateWithPolicy(ctx, name, u.Subject, asked)
+	}
 	if err != nil {
 		a.storeError(w, err)
 		return
@@ -392,6 +454,7 @@ func (a *API) patch(w http.ResponseWriter, r *http.Request, id string) {
 	var body struct {
 		Name   *string `json:"name"`
 		Action string  `json:"action"`
+		Size   *string `json:"size"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "body must be JSON")
@@ -401,6 +464,13 @@ func (a *API) patch(w http.ResponseWriter, r *http.Request, id string) {
 		a.refused(w, err)
 		return
 	}
+	// The size first: a resume in the same request starts at the new size.
+	// Everything of the request is checked before any of it is done.
+	if body.Size != nil {
+		if !a.resize(w, r, id, *body.Size, body.Name, body.Action) {
+			return
+		}
+	}
 	// One write, validated as a whole: a bad action must not leave a rename
 	// behind.
 	if err := a.store.Update(r.Context(), id, body.Name, body.Action); err != nil {
@@ -408,6 +478,49 @@ func (a *API) patch(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	a.get(w, r, id)
+}
+
+// resize changes a session's size (sessions.Store.Resize): at once for one
+// that is asleep or stopped, at its next start for one that is awake. The
+// name and action of the same request are only checked here, so that a bad
+// one leaves the size as it was. It reports whether the request goes on.
+func (a *API) resize(w http.ResponseWriter, r *http.Request, id, asked string, name *string, action string) bool {
+	// A resize names its size: "" is not small here.
+	size, err := a.checkSize(asked)
+	if err == nil && asked == "" {
+		_, err = a.checkSize("(none)")
+	}
+	if err == nil && action != "" && action != sessions.ActionStop && action != sessions.ActionResume {
+		err = sessions.ErrInvalidAction
+	}
+	if err == nil && name != nil {
+		err = sessions.CheckName(*name)
+	}
+	if err != nil {
+		a.storeError(w, err)
+		return false
+	}
+	s, err := a.store.Get(r.Context(), id)
+	if err != nil {
+		a.storeError(w, err)
+		return false
+	}
+	if size == s.Size && s.PendingSize == "" {
+		return true
+	}
+	// The plan is the session's owner's, whoever asks.
+	if err := a.maySize(r.Context(), s.Owner, size); err != nil {
+		a.refused(w, err)
+		return false
+	}
+	if a.sizer == nil {
+		return true // small is all there is, and it is small
+	}
+	if err := a.sizer.Resize(r.Context(), id, size); err != nil {
+		a.storeError(w, err)
+		return false
+	}
+	return true
 }
 
 // sleep puts a running session to sleep on its user's request: what the
