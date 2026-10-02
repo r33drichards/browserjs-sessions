@@ -51,6 +51,9 @@ jobs:
           }
           hack/pin-images.sh --check
           hack/policy-stage.sh --check
+          # The stages the repository is at, to come back to at the end.
+          gke_stage="$(hack/policy-stage.sh --check | sed -n 's|^policy-stage: deploy/gke is ||p')"
+          local_stage="$(hack/policy-stage.sh --check | sed -n 's|^policy-stage: deploy/local is ||p')"
           render
           (cd backend && go test ./internal/sessions/)
           # The other stages render too, the pod templates stay in step, and
@@ -62,13 +65,17 @@ jobs:
             render
             (cd backend && go test -count=1 ./internal/sessions/)
           done
-          # An unpinned operator is refused once policies are not off.
+          # An unpinned operator is refused once policies are not off. With
+          # the operator pinned (any stage past off), unpin it to see that.
+          sed -i '/name: browserjs\/policy-operator/,/digest:/ s|digest: sha256:[0-9a-f]\{64\}|digest: REPLACE_WITH_POLICY_OPERATOR_DIGEST|' deploy/gke/kustomization.yaml
           if hack/pin-images.sh --check; then
             echo "::error::pin-images accepted an unpinned policy-operator with session policies on"
             exit 1
           fi
-          hack/policy-stage.sh gke off
-          hack/policy-stage.sh local off
+          git checkout -- deploy/gke/kustomization.yaml
+          hack/policy-stage.sh gke enforcing
+          hack/policy-stage.sh gke "$gke_stage"
+          hack/policy-stage.sh local "$local_stage"
           git diff --exit-code
 
       # The binary the deployed image runs, so the bundle below is built by
