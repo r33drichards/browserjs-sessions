@@ -1,0 +1,52 @@
+# Three Sandboxes: the user's session awake, the user's session asleep, and
+# a warm-pool Sandbox nobody owns yet (never charged).
+apiVersion: agents.x-k8s.io/v1beta1
+kind: Sandbox
+metadata:
+  name: s-aaaaa
+  namespace: browserjs-sessions
+  labels:
+    browserjs.dev/owner: 7615aafcb45bcc853c4ed32cc5539842
+  annotations:
+    browserjs.dev/owner-id: u@example.com
+spec:
+  operatingMode: Running
+status:
+  conditions:
+    - type: Ready
+      status: "True"
+      lastTransitionTime: "2026-10-02T09:59:40Z"
+---
+apiVersion: agents.x-k8s.io/v1beta1
+kind: Sandbox
+metadata:
+  name: s-bbbbb
+  namespace: browserjs-sessions
+  labels:
+    browserjs.dev/owner: 7615aafcb45bcc853c4ed32cc5539842
+  annotations:
+    browserjs.dev/owner-id: u@example.com
+    browserjs.dev/stopped-by: idle
+spec:
+  operatingMode: Suspended
+status:
+  conditions:
+    - type: Suspended
+      status: "True"
+      lastTransitionTime: "2026-10-02T08:00:00Z"
+    - type: Ready
+      status: "False"
+      lastTransitionTime: "2026-10-02T08:00:00Z"
+---
+apiVersion: agents.x-k8s.io/v1beta1
+kind: Sandbox
+metadata:
+  name: s-warm1
+  namespace: browserjs-sessions
+spec:
+  operatingMode: Running
+status:
+  conditions:
+    - type: Ready
+      status: "True"
+      lastTransitionTime: "2026-10-02T09:00:00Z"

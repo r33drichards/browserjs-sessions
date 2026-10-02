@@ -1,0 +1,10 @@
+# For docker build -f images/billing-operator/Dockerfile . (context: the
+# repository root), and for docker build images/billing-operator (context:
+# this directory). Only what the Dockerfile copies.
+*
+!images/billing-operator/requirements.txt
+!images/billing-operator/billing_operator
+!requirements.txt
+!billing_operator
+**/__pycache__
+**/*.pyc

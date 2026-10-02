@@ -1,0 +1,11 @@
+# What the image installs. requirements.txt is this, resolved and locked
+# with hashes:
+#
+#   nix develop -c uv pip compile requirements.in --generate-hashes \
+#     --python-version 3.12 --python-platform x86_64-manylinux_2_28 -o requirements.txt
+#
+# The versions are those of the Nix dev shell (flake.lock), which the tests
+# run against, and of images/policy-operator.
+kopf==1.44.6
+aiohttp==3.14.3
+PyYAML==6.0.3
