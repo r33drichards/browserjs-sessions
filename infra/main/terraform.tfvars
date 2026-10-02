@@ -66,3 +66,10 @@ session_fallback_machine_types = {
 sessions_namespace      = "browserjs-sessions"
 session_service_account = "session"
 snapshot_token_source   = "podKSA"
+
+# Boot disk of a session node. The project's SSD quota in us-west1 is 250 GB
+# and not adjustable; pd-balanced counts against it, together with the system
+# node's 50 GB and 5 GB per session. At the default 100 GB a second session
+# node did not fit ("GCE quota exceeded"). 40 GB holds the two images (under
+# 5 GB unpacked) and the pods' scratch space, and leaves room for three nodes.
+session_disk_size_gb = 40
