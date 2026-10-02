@@ -45,6 +45,11 @@ session_max_nodes    = 3
 # notice; sessions on it restart from their disks (tabs reopen, pages reload).
 session_spot = true
 
+# A new node starts the browser from a remote mount of its image instead of
+# pulling all 905 MB first (docs/cold-start.md). Changing this recreates
+# every session node that is running, at once.
+session_image_streaming = true
+
 # us-west1-a alone had no n2-standard-4 capacity when the first session was
 # created ("GCE out of resources"), so session nodes may start in any zone of
 # the region. A session stays in the zone its disk was created in.

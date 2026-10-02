@@ -23,6 +23,17 @@ resource "google_artifact_registry_repository_iam_member" "nodes_pull" {
   member     = google_service_account.nodes.member
 }
 
+# Image streaming: the node reads image blocks through the Container File
+# System API, which a custom node service account may only call with this
+# role. It lets the account use the project's enabled APIs and nothing more.
+resource "google_project_iam_member" "nodes_image_streaming" {
+  project = var.project_id
+  role    = "roles/serviceusage.serviceUsageConsumer"
+  member  = google_service_account.nodes.member
+
+  depends_on = [google_project_service.this]
+}
+
 # --- Image pushes from GitHub Actions ------------------------------------------------
 
 # The identity .github/workflows/images.yml pushes with. Its only permission

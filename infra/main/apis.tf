@@ -8,6 +8,8 @@ locals {
       "artifactregistry.googleapis.com",
       "compute.googleapis.com",
       "container.googleapis.com",
+      # Image streaming on the session pools.
+      "containerfilesystem.googleapis.com",
       "dns.googleapis.com",
       "logging.googleapis.com",
       "monitoring.googleapis.com",

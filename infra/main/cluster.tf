@@ -256,6 +256,13 @@ resource "google_container_node_pool" "sessions" {
     }
     image_type = "COS_CONTAINERD"
 
+    # Image streaming: a container starts on a mount of its image and reads
+    # blocks from Artifact Registry as it touches them, instead of waiting
+    # for the whole image to be pulled and unpacked onto a new node.
+    gcfs_config {
+      enabled = var.session_image_streaming
+    }
+
     disk_type    = "pd-balanced"
     disk_size_gb = var.session_disk_size_gb
 
@@ -283,7 +290,10 @@ resource "google_container_node_pool" "sessions" {
   }
 
   # GKE Sandbox needs a node pool without gVisor to exist first.
-  depends_on = [google_container_node_pool.system]
+  depends_on = [
+    google_container_node_pool.system,
+    google_project_iam_member.nodes_image_streaming,
+  ]
 }
 
 # --- Fallback session pools: other machine types, same shape --------------------------
@@ -328,6 +338,10 @@ resource "google_container_node_pool" "sessions_fallback" {
     }
     image_type = "COS_CONTAINERD"
 
+    gcfs_config {
+      enabled = var.session_image_streaming
+    }
+
     disk_type    = "pd-balanced"
     disk_size_gb = var.session_disk_size_gb
 
@@ -354,5 +368,8 @@ resource "google_container_node_pool" "sessions_fallback" {
     ignore_changes = [initial_node_count]
   }
 
-  depends_on = [google_container_node_pool.system]
+  depends_on = [
+    google_container_node_pool.system,
+    google_project_iam_member.nodes_image_streaming,
+  ]
 }
