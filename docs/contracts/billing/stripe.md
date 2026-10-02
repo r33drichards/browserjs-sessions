@@ -1,5 +1,27 @@
 # Stripe contract
 
+> **Changed 2026-10-02 by [`metronome.md`](metronome.md).** Stripe's part
+> is unchanged: every object, call, event and ensure function below
+> stands. What changes is where credit is kept:
+>
+> - "Create the Grant" means `Ledger.EnsureGrant`, which creates a
+>   Metronome credit whose `uniqueness_key` is the Grant key of the table
+>   below. "Revoke" archives it. There is no Grant resource.
+> - "Exists for this account" and "exists for another account" are the two
+>   outcomes of Metronome's 409 (`metronome.md`, "Credit (grants)").
+> - Credit is in the balance as soon as the call returns, not "at the
+>   operator's next tick"; the checkout return does not wait.
+> - Auto-recharge is decided in the backend's balance pass (every 5
+>   minutes), from the balance it has just read from Metronome, in place
+>   of `status.balanceMicros` in the sweep. The rest of it is unchanged.
+> - A refund finds its credit by the `payment_intent` custom field, in
+>   place of the label.
+> - The hourly reconcile still re-makes every paid-for credit: the keys
+>   are deterministic, and Metronome answers 409 for the ones it has.
+> - Metronome is not connected to Stripe. Metronome's invoicing, payment
+>   gating, recurring credits and auto-recharge join the "Not used,
+>   deliberately" list.
+
 Which Stripe objects exist, who makes them, which calls the backend makes,
 which events it handles and what each does. Sources for every Stripe fact
 are in section 1 of the design.

@@ -1,5 +1,24 @@
 # Metering contract
 
+> **Changed 2026-10-02 by [`metronome.md`](metronome.md).** The meter and
+> the ledger are Metronome's. Of this file:
+>
+> - **Still the contract**: "One balance, two charges" (the rates), "What
+>   is observed", the **Seconds** part of "The step" (the gap rule,
+>   `MAX_GAP`, `readySince`), "Which way errors fall", "Display". The
+>   observer computes seconds exactly so, and the vectors' `awakeSeconds`
+>   and `diskGBSeconds` are what its tests check.
+> - **Replaced by `metronome.md`**: "The tick" from step 3 on (nothing is
+>   written to an Account's status; events are sent to Metronome), the
+>   **Money**, **Debit** and **Totals** parts of the step (Metronome rates
+>   the usage and draws the credit down; the order is its priorities),
+>   "Periods" (the calendar month, in Metronome; no `UsagePeriod`).
+> - The vectors' money fields (`awakeMicros`, `diskMicros`,
+>   `balanceMicros`, `level`, `overdraftMicros`, `exhaustedAt`) remain what
+>   the **fake** Metronome of `testing.md` must answer, so that scenario
+>   tests have a ledger that behaves; they are no longer the operator's.
+> - Read "the operator" as "the observer" throughout.
+
 What is charged, how it is measured, and how it is taken from an account's
 credit. The billing operator implements this; `spike/meter_ref.py` is a
 reference implementation and `metering-vectors.json` the cases both must

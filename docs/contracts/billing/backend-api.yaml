@@ -254,6 +254,30 @@ paths:
           description: Bad signature, too old, or the wrong mode. No body.
         "500":
           description: Could not be handled now; Stripe retries.
+  /metronome/webhook:
+    post:
+      summary: Metronome's notifications. API host only. metronome.md says what each does.
+      parameters:
+        - name: Metronome-Webhook-Signature
+          in: header
+          required: true
+          schema: { type: string }
+        - name: X-Metronome-Date
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: Handled, or ignored.
+        "400":
+          description: Bad signature, or too old. No body.
+        "500":
+          description: Could not be handled now; Metronome retries.
 components:
   schemas:
     Error:

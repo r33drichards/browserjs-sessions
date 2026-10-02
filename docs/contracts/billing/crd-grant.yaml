@@ -1,3 +1,7 @@
+# SUPERSEDED 2026-10-02 by metronome.md: this resource is NOT deployed and
+# nothing reads or writes it. Credit is a Metronome credit (metronome.md, "Credit (grants)"); the keys below live on as its uniqueness_key.
+# Kept for the record of the first design only.
+#
 # An amount of credit, in micro-dollars, given to one account: the one-time
 # sign-up credit, a plan's credit for one billing period, a pack that was
 # bought (at a checkout or by auto-recharge), or an adjustment by an admin. Immutable but for "revoked". Its NAME is derived

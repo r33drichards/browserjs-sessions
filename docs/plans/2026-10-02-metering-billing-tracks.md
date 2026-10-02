@@ -1,5 +1,10 @@
 # Metering and billing: tracks
 
+> **Changed 2026-10-02**: Metronome is the meter and the ledger. What each
+> track below now builds, drops and keeps is section 6 of
+> [2026-10-02-metronome-integration.md](2026-10-02-metronome-integration.md),
+> which wins where this file disagrees.
+
 Seven tracks in five stages. Design:
 [2026-10-02-metering-billing-design.md](2026-10-02-metering-billing-design.md).
 Contracts: [../contracts/billing/](../contracts/billing/README.md).
