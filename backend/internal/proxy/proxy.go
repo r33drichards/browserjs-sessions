@@ -51,7 +51,7 @@ type Proxy struct {
 	// Idle writes, on each session, the use this replica makes of it: what
 	// the idle sweep and a billing drain decide from, whichever replica
 	// runs them.
-	Idle *idle.Tracker
+	Idle idle.Activity
 	// TicketKey signs the VNC tickets (TicketKey). Every replica must have
 	// the same one. If unset the Proxy makes its own, and its tickets are
 	// good at this replica only.
@@ -114,12 +114,7 @@ func (p *Proxy) init() {
 			p.now = time.Now
 		}
 		p.tickets = newTickets(p.TicketKey, p.now)
-		if p.Idle.Seen == nil {
-			p.Idle.Seen = p.seen
-		}
-		if p.Idle.Watched == nil {
-			p.Idle.Watched = p.flights.sessions
-		}
+		p.Idle.Observe(p.seen, p.flights.sessions)
 		p.quick = podTransport(uploadResponseTimeout)
 		p.patient = podTransport(mcpResponseTimeout)
 	})
@@ -186,6 +181,16 @@ func notAPage(next http.HandlerFunc) http.Handler {
 			http.Error(w, "this is an API endpoint, not a page", http.StatusForbidden)
 		}
 	})
+}
+
+// Route says whether r names a session and, if it does, the path within the
+// session: what the metrics class a request by.
+func (p *Proxy) Route(r *http.Request) (path string, session bool) {
+	m, urls := p.match(r)
+	if urls == nil {
+		return r.URL.Path, false
+	}
+	return m.Path, true
 }
 
 // match finds the template a request is for a session under, if any.

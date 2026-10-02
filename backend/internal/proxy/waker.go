@@ -11,6 +11,8 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
+	"github.com/r33drichards/computer-use/backend/internal/billing"
+	"github.com/r33drichards/computer-use/backend/internal/metrics"
 	"github.com/r33drichards/computer-use/backend/internal/sessions"
 )
 
@@ -183,9 +185,36 @@ func (w *Waker) EnsureAwake(ctx context.Context, id string) (sessions.Session, e
 	})
 }
 
+func wakeResult(err error) string {
+	_, refused := billing.AsRefusal(err)
+	switch {
+	case err == nil:
+		return "ok"
+	case refused:
+		return "refused"
+	case errors.Is(err, ErrStopped):
+		return "stopped"
+	case errors.Is(err, ErrFailed):
+		return "failed"
+	case errors.Is(err, ErrNotReady):
+		return "timeout"
+	}
+	return "error"
+}
+
 // await polls the session until it runs, waking it once if it is asleep.
 // ctx carries the timeout.
-func (w *Waker) await(ctx context.Context, id string) (sessions.Session, error) {
+func (w *Waker) await(ctx context.Context, id string) (_ sessions.Session, err error) {
+	// began is when the session was found asleep, if it was: a wake.
+	var began time.Time
+	defer func() {
+		if began.IsZero() {
+			return
+		}
+		result := wakeResult(err)
+		metrics.Wakes.WithLabelValues(result).Inc()
+		metrics.WakeDuration.WithLabelValues(result).Observe(w.clock().Sub(began).Seconds())
+	}()
 	poll := w.Poll
 	if poll <= 0 {
 		poll = time.Second
@@ -220,6 +249,7 @@ func (w *Waker) await(ctx context.Context, id string) (sessions.Session, error) 
 			}
 		case sessions.Asleep:
 			if !woken {
+				began = w.clock()
 				// Wake only undoes an idle sleep: if the user stopped the
 				// session after we looked, it stays stopped.
 				if w.Allow != nil {

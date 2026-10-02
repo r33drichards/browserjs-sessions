@@ -14,6 +14,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
+
+	"github.com/r33drichards/computer-use/backend/internal/metrics"
 )
 
 // GKE Pod Snapshots (podsnapshot.gke.io/v1): a checkpoint of a running gVisor
@@ -311,6 +313,23 @@ func (s *Store) Sleep(ctx context.Context, id, by string, stillWanted func(Sessi
 	if !sleepReason(by) {
 		return fmt.Errorf("sleep: unknown reason %q", by)
 	}
+	began := time.Now()
+	err := s.sleep(ctx, id, by, stillWanted)
+	result := "ok"
+	switch {
+	case errors.Is(err, ErrStateChanged), errors.Is(err, ErrNotFound):
+		result = "changed"
+	case err != nil:
+		result = "error"
+	}
+	metrics.Sleeps.WithLabelValues(by, result).Inc()
+	if err == nil {
+		metrics.SleepDuration.WithLabelValues(by).Observe(time.Since(began).Seconds())
+	}
+	return err
+}
+
+func (s *Store) sleep(ctx context.Context, id, by string, stillWanted func(Session) bool) error {
 	var snap *snapshot
 	if s.snap != nil {
 		obj, err := s.client.Get(ctx, id, metav1.GetOptions{})

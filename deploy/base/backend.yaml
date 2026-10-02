@@ -230,6 +230,11 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+            # /metrics (METRICS_ADDR, default :9090). Not in the Service:
+            # Pomerium does not route to it, and the NetworkPolicy opens it
+            # to the metrics collector only.
+            - name: metrics
+              containerPort: 9090
           readinessProbe:
             httpGet:
               path: /healthz

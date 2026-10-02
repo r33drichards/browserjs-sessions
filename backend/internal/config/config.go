@@ -14,9 +14,12 @@ import (
 )
 
 type Config struct {
-	Addr      string // listen address
-	Namespace string // namespace holding session Sandboxes
-	PublicURL string // the app's (UI and API) base URL, no trailing slash
+	Addr string // listen address
+	// MetricsAddr is where /metrics is served (METRICS_ADDR), on a port of
+	// its own that Pomerium does not route to. "off" for none.
+	MetricsAddr string
+	Namespace   string // namespace holding session Sandboxes
+	PublicURL   string // the app's (UI and API) base URL, no trailing slash
 
 	// SessionURLs is where sessions are reached: one host for all of them,
 	// each under its ID.
@@ -108,6 +111,7 @@ func FromEnv(get func(string) string) (Config, error) {
 	}
 	c := Config{
 		Addr:            or("ADDR", ":8080"),
+		MetricsAddr:     or("METRICS_ADDR", ":9090"),
 		Namespace:       or("NAMESPACE", "browserjs-sessions"),
 		PublicURL:       strings.TrimRight(get("PUBLIC_URL"), "/"),
 		PomeriumJWKSURL: get("POMERIUM_JWKS_URL"),

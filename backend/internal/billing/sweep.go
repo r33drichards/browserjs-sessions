@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/r33drichards/computer-use/backend/internal/metrics"
 	"github.com/r33drichards/computer-use/backend/internal/sessions"
 )
 
@@ -227,6 +228,13 @@ func (e *Enforcer) DeletePass(ctx context.Context) error {
 	return nil
 }
 
+func passResult(err error) string {
+	if err != nil {
+		return "error"
+	}
+	return "ok"
+}
+
 // Run sweeps every interval, and makes the deletion pass every
 // deleteInterval, until ctx is done.
 func (e *Enforcer) Run(ctx context.Context, inflight InFlight, interval, deleteInterval time.Duration) {
@@ -239,11 +247,15 @@ func (e *Enforcer) Run(ctx context.Context, inflight InFlight, interval, deleteI
 		case <-ctx.Done():
 			return
 		case <-sweep.C:
-			if err := e.Sweep(ctx, inflight); err != nil {
+			err := e.Sweep(ctx, inflight)
+			metrics.Passes.WithLabelValues("billing", passResult(err)).Inc()
+			if err != nil {
 				slog.Error("billing sweep failed", "err", err)
 			}
 		case <-deletion.C:
-			if err := e.DeletePass(ctx); err != nil {
+			err := e.DeletePass(ctx)
+			metrics.Passes.WithLabelValues("billing-delete", passResult(err)).Inc()
+			if err != nil {
 				slog.Error("billing deletion pass failed", "err", err)
 			}
 		}

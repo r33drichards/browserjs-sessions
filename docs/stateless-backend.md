@@ -75,6 +75,31 @@ things differ: the period starts when the session is created, resumed or
 woken, not at the first sweep that sees it running; and it survives a
 restart of the backend, which used to give every session a fresh period.
 
+### Idleness from telemetry instead
+
+The alternative considered: the backend only emits metrics, and a separate
+component queries the telemetry system for each session's last activity and
+sleeps the idle ones. The backend now emits those metrics
+([metrics.md](metrics.md)), and the source of "last active" is behind an
+interface (`idle.Activity`, `idle.Rule.Source`), so that implementation can
+be written. It is not the one in use, for these reasons.
+
+| | From the session object (in use) | From telemetry queries |
+|---|---|---|
+| Delay from a use to it being visible to the sweep | none for the first use in 30 s (written before the call is forwarded); otherwise the session is under 30 s from its last stamp | scrape interval (30 s) + ingestion (seconds to a minute or more in a managed service) + query |
+| The race "sleep vs. a call just taken" | closed: the suspend is conditional on the object the stamp is on | open: the suspend cannot be made conditional on a time series. A call inside the pipeline's delay is invisible, and the session is suspended under it |
+| When the path is down or late | the API server is down: nothing is written, and nothing can be suspended either. They fail together | a scrape gap, a collector restart, a NetworkPolicy mistake or a query error looks exactly like "no activity". Either every session sleeps (if absence means idle) or none ever does (if absence means unknown), and telling the two apart needs a second signal |
+| A replica dies | its heartbeat stops; the stamp it left stands | its series go stale; "stale" and "idle" must be told apart again |
+| What it costs | at most 2 API writes a minute per session in use; no new component | samples (cheap) plus a query per session or one per sweep; a new component with credentials to the monitoring API and to the cluster |
+| What has to be right | one annotation, one conditional write | scrape config, relabeling, retention of a per-session series, the query, its lookback window, clock agreement across three systems |
+| Observability | none by itself | dashboards and alerts for free |
+
+So the metrics are there for watching the system and for canary analysis,
+and the decision stays on the object. If the owner still prefers telemetry
+as the source, the place to change is one implementation of `LastActive`;
+the race in the second row would then be open, and the sweep would need a
+rule for missing data.
+
 ## Races, and how each is closed
 
 **The sweep decides to sleep a session while another replica takes a call.**

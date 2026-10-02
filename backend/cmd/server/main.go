@@ -33,6 +33,7 @@ import (
 	"github.com/r33drichards/computer-use/backend/internal/config"
 	"github.com/r33drichards/computer-use/backend/internal/idle"
 	"github.com/r33drichards/computer-use/backend/internal/leader"
+	"github.com/r33drichards/computer-use/backend/internal/metrics"
 	"github.com/r33drichards/computer-use/backend/internal/policy"
 	"github.com/r33drichards/computer-use/backend/internal/proxy"
 	"github.com/r33drichards/computer-use/backend/internal/sessions"
@@ -132,11 +133,17 @@ func run() error {
 	replica := newReplica()
 	host, _ := os.Hostname()
 	slog.Info("replica", "replica", replica, "host", host)
+	if err := serveMetrics(ctx, cfg.MetricsAddr); err != nil {
+		return err
+	}
 
 	// This replica's part in idleness: it writes, on each session it
 	// proxies to, when the session was used. The sweep is the leader's.
 	tracker := idle.New(store, replica, cfg.IdleAfter, time.Now)
 	go tracker.Run(ctx)
+	if err := metrics.Sessions(metrics.Registry, tracker.States); err != nil {
+		return err
+	}
 
 	// Metering and billing (BILLING): billing.go. Nil while it is off.
 	bill, err := newBilling(ctx, cfg, dyn, store)
@@ -153,7 +160,9 @@ func run() error {
 	// The periodic passes, on one replica at a time. Each keeps nothing
 	// between runs and reads what it decides from off the cluster.
 	go leader.Run(ctx, leases, cfg.Namespace, host+"_"+replica, leader.DefaultTiming, func(ctx context.Context) {
-		go idle.Run(ctx, store, idle.Rule{After: cfg.IdleAfter, Margin: idle.DefaultMargin}, time.Minute)
+		metrics.Leader.Set(1)
+		defer metrics.Leader.Set(0)
+		go idle.Run(ctx, store, idle.Rule{After: cfg.IdleAfter, Margin: idle.DefaultMargin, Source: tracker}, time.Minute)
 		bill.run(ctx, px)
 		if payments != nil {
 			go payments.Run(ctx)
@@ -175,7 +184,10 @@ func run() error {
 	handler = bill.withWebhooks(cfg, handler)
 
 	srv := &http.Server{
-		Handler:           handler,
+		Handler: metrics.Instrument(func(r *http.Request) (string, string) {
+			path, session := px.Route(r)
+			return metrics.Classify(session, r.Method, path)
+		}, handler),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		// No read or write timeout: MCP streams and uploads run long. The
@@ -193,6 +205,31 @@ func run() error {
 	defer cancel()
 	tracker.Flush(flush)
 	return err
+}
+
+// serveMetrics serves /metrics at addr until ctx is done: on a port of its
+// own, which nothing routes to from outside the cluster and the
+// NetworkPolicy opens to the collector only. "off" or "" serves nothing.
+func serveMetrics(ctx context.Context, addr string) error {
+	if addr == "" || addr == "off" {
+		return nil
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	srv := &http.Server{Handler: metrics.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	go func() {
+		<-ctx.Done()
+		_ = srv.Close()
+	}()
+	go func() {
+		if err := srv.Serve(ln); err != http.ErrServerClosed {
+			slog.Error("metrics server stopped", "err", err)
+		}
+	}()
+	slog.Info("metrics", "addr", addr)
+	return nil
 }
 
 // serve answers requests on ln until ctx is done, then shuts down: viewer

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/r33drichards/computer-use/backend/internal/metrics"
 	"github.com/r33drichards/computer-use/backend/internal/sessions"
 )
 
@@ -23,13 +24,26 @@ const staleMark = 10 * time.Minute
 type Rule struct {
 	After  time.Duration // the idle period (IDLE_AFTER)
 	Margin time.Duration // see DefaultMargin
+	// Source says when a session was last used: an Activity. Nil reads the
+	// annotation on the session, which is what Tracker writes.
+	Source interface {
+		LastActive(s sessions.Session) time.Time
+	}
+}
+
+func (r Rule) lastActive(s sessions.Session) time.Time {
+	if r.Source != nil {
+		return r.Source.LastActive(s)
+	}
+	return s.LastActive
 }
 
 // Idle reports whether s, at now, is running and has not been used for the
 // idle period. It is decided from s alone. A session nobody has said
 // anything about is not idle: its period has yet to start.
 func (r Rule) Idle(s sessions.Session, now time.Time) bool {
-	return s.State == sessions.Running && !s.LastActive.IsZero() && now.Sub(s.LastActive) >= r.After+r.Margin
+	last := r.lastActive(s)
+	return s.State == sessions.Running && !last.IsZero() && now.Sub(last) >= r.After+r.Margin
 }
 
 // Store is what the sweep needs of the session store (a *sessions.Store).
@@ -69,7 +83,7 @@ func Sweep(ctx context.Context, store Store, rule Rule, now func() time.Time) er
 			continue
 		}
 		id := s.ID
-		if s.LastActive.IsZero() {
+		if rule.lastActive(s).IsZero() {
 			if _, err := store.Mark(ctx, id, sessions.Activity{Active: at}); err != nil && !errors.Is(err, sessions.ErrNotFound) {
 				slog.Error("idle period not started", "session", id, "err", err)
 			}
@@ -105,6 +119,13 @@ func Sweep(ctx context.Context, store Store, rule Rule, now func() time.Time) er
 	return nil
 }
 
+func passResult(err error) string {
+	if err != nil {
+		return "error"
+	}
+	return "ok"
+}
+
 // Run sweeps every interval until ctx is done.
 func Run(ctx context.Context, store Store, rule Rule, interval time.Duration) {
 	tick := time.NewTicker(interval)
@@ -114,7 +135,9 @@ func Run(ctx context.Context, store Store, rule Rule, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			if err := Sweep(ctx, store, rule, time.Now); err != nil {
+			err := Sweep(ctx, store, rule, time.Now)
+			metrics.Passes.WithLabelValues("idle", passResult(err)).Inc()
+			if err != nil {
 				slog.Error("idle sweep failed", "err", err)
 			}
 		}

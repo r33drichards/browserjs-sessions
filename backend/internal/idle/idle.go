@@ -27,6 +27,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/r33drichards/computer-use/backend/internal/metrics"
 	"github.com/r33drichards/computer-use/backend/internal/sessions"
 )
 
@@ -35,6 +36,38 @@ const DefaultEvery = 30 * time.Second
 
 // How long one write of activity may take. A call waits for it (see Call).
 const markTimeout = 3 * time.Second
+
+// Activity is how the backend says a session is in use, and how it is asked
+// when one was last used. The proxy records through it and the sweep reads
+// through it, so where the answer is kept is one implementation's business.
+//
+// Tracker is the implementation: the answer is an annotation on the session.
+// Another could keep it elsewhere (a telemetry system that is queried, say);
+// docs/stateless-backend.md weighs that. Whatever it is, the sweep suspends
+// only on what LastActive says of the session as it was just read.
+type Activity interface {
+	// Call marks an authenticated call: the session is in use and has a
+	// call in flight until done is called.
+	Call(ctx context.Context, id string) (done func())
+	// Open marks a long-lived connection that keeps the session awake.
+	Open(ctx context.Context, id string) (done func())
+	// Flight marks work in flight that is not use of the session.
+	Flight(id string) (done func())
+	// Touch records one use of the session, now.
+	Touch(id string)
+	// Calls is the calls this replica has in flight to the session, and
+	// Replica the name it says so under.
+	Calls(id string) int
+	Replica() string
+	// Observe has seen told of sessions as the cluster has them, and
+	// watched asked for sessions to look at although nothing is recorded
+	// for them.
+	Observe(seen func(sessions.Session), watched func() []string)
+	// LastActive is when s was last used, zero if nothing says.
+	LastActive(s sessions.Session) time.Time
+}
+
+var _ Activity = (*Tracker)(nil)
 
 // Marker is what a Tracker needs of the session store (a *sessions.Store).
 type Marker interface {
@@ -95,6 +128,38 @@ func Every(after time.Duration) time.Duration {
 	return DefaultEvery
 }
 
+// Observe sets Seen and Watched, where they are not set.
+func (t *Tracker) Observe(seen func(sessions.Session), watched func() []string) {
+	if t.Seen == nil {
+		t.Seen = seen
+	}
+	if t.Watched == nil {
+		t.Watched = watched
+	}
+}
+
+// LastActive is when s was last used: what is written on it.
+func (t *Tracker) LastActive(s sessions.Session) time.Time { return s.LastActive }
+
+// States is what this replica has to say of each session it proxies to,
+// for the metrics: a session it has nothing more to say of is not in it.
+func (t *Tracker) States() []metrics.SessionState {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make([]metrics.SessionState, 0, len(t.s))
+	for id, e := range t.s {
+		if e.gone {
+			continue
+		}
+		last := e.wroteActive
+		if e.touched.After(last) {
+			last = e.touched
+		}
+		out = append(out, metrics.SessionState{ID: id, LastActive: last, Open: e.active, InFlight: e.flights})
+	}
+	return out
+}
+
 // Replica is the name this replica writes its in-flight marks under.
 func (t *Tracker) Replica() string { return t.replica }
 
@@ -134,6 +199,7 @@ func (t *Tracker) write(ctx context.Context, id string, a sessions.Activity) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), markTimeout)
 	defer cancel()
 	s, err := t.store.Mark(ctx, id, a)
+	metrics.ActivityWrites.WithLabelValues("mark", result(err)).Inc()
 	if err != nil {
 		t.failed(id, a, err)
 		return
@@ -141,6 +207,16 @@ func (t *Tracker) write(ctx context.Context, id string, a sessions.Activity) {
 	if t.Seen != nil {
 		t.Seen(s)
 	}
+}
+
+func result(err error) string {
+	switch {
+	case err == nil:
+		return "ok"
+	case errors.Is(err, sessions.ErrNotFound):
+		return "gone"
+	}
+	return "error"
 }
 
 func (t *Tracker) failed(id string, a sessions.Activity, err error) {
@@ -346,7 +422,9 @@ func (t *Tracker) Beat(ctx context.Context) {
 		wg.Go(func() {
 			ctx, cancel := context.WithTimeout(ctx, markTimeout)
 			defer cancel()
-			if err := t.store.MarkActiveSince(ctx, p.id, p.at); err != nil {
+			err := t.store.MarkActiveSince(ctx, p.id, p.at)
+			metrics.ActivityWrites.WithLabelValues("last-use", result(err)).Inc()
+			if err != nil {
 				t.failed(p.id, sessions.Activity{Active: p.at}, err)
 			}
 		})
@@ -355,7 +433,9 @@ func (t *Tracker) Beat(ctx context.Context) {
 		wg.Go(func() {
 			ctx, cancel := context.WithTimeout(ctx, markTimeout)
 			defer cancel()
-			if s, err := t.store.Get(ctx, id); err == nil && t.Seen != nil {
+			s, err := t.store.Get(ctx, id)
+			metrics.ActivityWrites.WithLabelValues("look", result(err)).Inc()
+			if err == nil && t.Seen != nil {
 				t.Seen(s)
 			}
 		})

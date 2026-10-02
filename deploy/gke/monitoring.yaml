@@ -1,0 +1,19 @@
+# The backend's /metrics, scraped by Google Cloud Managed Service for
+# Prometheus: its collectors run on every node (namespace gmp-system) and
+# send what they scrape to Cloud Monitoring. Nothing is self-hosted, and
+# nothing here runs on the system node beyond what GKE runs already.
+#
+# It needs managed collection on the cluster (docs/metrics.md). What is
+# collected is docs/metrics.md's list; no label names a user.
+apiVersion: monitoring.googleapis.com/v1
+kind: PodMonitoring
+metadata:
+  name: backend
+spec:
+  selector:
+    matchLabels:
+      app: backend
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s

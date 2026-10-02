@@ -21,6 +21,7 @@ import (
 	"github.com/r33drichards/computer-use/backend/internal/auth"
 	"github.com/r33drichards/computer-use/backend/internal/config"
 	"github.com/r33drichards/computer-use/backend/internal/idle"
+	"github.com/r33drichards/computer-use/backend/internal/metrics"
 	"github.com/r33drichards/computer-use/backend/internal/sessions"
 	"github.com/r33drichards/computer-use/backend/internal/sessions/sessionstest"
 )
@@ -467,5 +468,25 @@ func TestAPIResponsesForTheUI(t *testing.T) {
 	}
 	if rec := s.do("DELETE", appHost, p, alice, ""); rec.Code != http.StatusNoContent || rec.Body.Len() != 0 {
 		t.Errorf("delete: %d %q", rec.Code, rec.Body)
+	}
+}
+
+// The metrics are on a port of their own. Nothing of them is on the port
+// Pomerium routes to, on any host, and nothing they say names a user.
+func TestMetricsAreNotOnThePublicPort(t *testing.T) {
+	s := newServer(t)
+	created := s.session(alice)
+	s.do("POST", sessionsHost, "/"+created.ID+"/mcp", alice, `{}`)
+	for _, host := range []string{appHost, sessionsHost} {
+		if rec := s.do("GET", host, "/metrics", alice, ""); strings.Contains(rec.Body.String(), "browserjs_") {
+			t.Errorf("GET /metrics on %s serves the metrics: %d", host, rec.Code)
+		}
+	}
+	rec := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	for _, secret := range []string{alice, bob, root, "example.com", "@"} {
+		if strings.Contains(rec.Body.String(), secret) {
+			t.Errorf("the metrics contain %q", secret)
+		}
 	}
 }
