@@ -90,9 +90,9 @@ spec:
           # a replica never answers from a partial or empty state. And not
           # in its first seconds: the NetworkPolicy that lets session pods in
           # is programmed for a new pod's address a moment after the pod
-          # exists, and a connection sent before that is dropped without an
-          # answer, which mcp-js can only take for a denial
-          # (spec/opa-replacement). The old replica is still serving
+          # exists, and a connection sent before that would be dropped
+          # without an answer (a hazard the model in spec/opa-replacement
+          # finds; not seen on kind). The old replica is still serving
           # meanwhile (maxUnavailable: 0), so the wait costs nothing.
           readinessProbe:
             httpGet:

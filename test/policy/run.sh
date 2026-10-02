@@ -470,7 +470,11 @@ if [ "$(outcome "$got")" != ran ]; then
   sort -n "$work/timeline" | sed 's/^/      /'
 fi
 note "" && note "### OPA pods deleted and replaced, $replacements times, while calls are made" && note "" &&
-  note "With no replacement first: $quiet. Then, with the replacements:" && note "" &&
+  probed="$(grep -c 'probes so far' "$work/probe.log" || true)"
+slow="$(grep -c 'lookup took' "$work/probe.log" || true)"
+broken="$(grep -vc 'probes so far\|lookup took' "$work/probe.log" || true)"
+echo "      the prober: about ${probed}000 probes, $slow lookups over 0.5 s, $broken failed connections"
+note "With no replacement first: $quiet. Then, with the replacements:" && note "" &&
   note "$(jq -rs '"\(length) calls, outcomes: \(map(.outcome) | group_by(.) | map("\(.[0]) \(length)") | join(", ")); slowest \(map(.seconds) | max) s"' <<<"$got")"
 
 k scale deploy/opa --replicas=0 >/dev/null
