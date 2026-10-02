@@ -1127,7 +1127,7 @@ Create session
 | What an agent connected over MCP may ask this browser to do.             |
 | It does not restrict you at the screen. You can change it later.         |
 |                                                                          |
-| (•) No restrictions            the built-in policy                       |
+| (•) No restrictions            the unrestricted policy                   |
 | ( ) No scripting               everything except evaluate and setContent |
 | ( ) Copy from a session        [ research           v ]                  |
 | ( ) Write a policy             [ Edit policy ]   JSON · 14 lines · valid |
@@ -1474,7 +1474,7 @@ made that way are still judged by the policy, so it is not a way around.
   block, one wrong `ForceNew` and an edit to a policy destroys a disk.
 
 The cost is a moment between the two creates when the new session has the
-built-in policy. Nothing has the session's MCP URL before the apply returns,
+unrestricted policy. Nothing has the session's MCP URL before the apply returns,
 so nothing can use that moment; if that is not good enough, `POST /sessions`
 already takes a policy and the provider can grow an optional block later.
 
