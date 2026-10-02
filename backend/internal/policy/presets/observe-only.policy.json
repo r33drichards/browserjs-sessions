@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "description": "Look, do not touch: open https pages, wait, and take screenshots.",
+  "allow": {
+    "operations": ["screenshot", "url", "wait", "setViewport"],
+    "rules": [
+      { "operation": "navigate", "constraints": { "url": { "schemes": ["https"] } } }
+    ]
+  }
+}

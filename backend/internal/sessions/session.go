@@ -60,6 +60,9 @@ type Session struct {
 	Created time.Time `json:"created"`
 	PodIP   string    `json:"-"`
 	Node    string    `json:"-"` // the node its pod is scheduled to, if any
+	// PolicyCapable is whether the session's mcp-js asks OPA for decisions,
+	// and so whether the session can have a policy (see policy.go).
+	PolicyCapable bool `json:"-"`
 }
 
 type condition struct {
@@ -93,6 +96,8 @@ func FromSandbox(obj *unstructured.Unstructured) Session {
 		Name:    obj.GetAnnotations()[AnnName],
 		Owner:   obj.GetAnnotations()[AnnOwner],
 		Created: obj.GetCreationTimestamp().Time,
+
+		PolicyCapable: PolicyCapable(obj),
 	}
 	if adopted, err := time.Parse(time.RFC3339, obj.GetAnnotations()[AnnCreated]); err == nil {
 		s.Created = adopted

@@ -65,6 +65,11 @@ type Config struct {
 	// APISigningKey signs the access tokens API tokens are exchanged for.
 	// Empty: a key made at start, so access tokens end with the process.
 	APISigningKey []byte
+	// PolicyOperatorURL is the policy operator's base URL, "" for no session
+	// policies: the API is then what it was before them. OperatorAPIToken is
+	// what the backend calls the operator with.
+	PolicyOperatorURL string
+	OperatorAPIToken  string
 }
 
 // APITokens reports whether users can make API tokens and use them.
@@ -196,6 +201,15 @@ func FromEnv(get func(string) string) (Config, error) {
 			return Config{}, fmt.Errorf("API_SIGNING_KEY must be at least 32 bytes, in base64")
 		}
 		c.APISigningKey = key
+	}
+	if c.PolicyOperatorURL = strings.TrimRight(get("POLICY_OPERATOR_URL"), "/"); c.PolicyOperatorURL != "" {
+		operator, err := url.Parse(c.PolicyOperatorURL)
+		if err != nil || (operator.Scheme != "http" && operator.Scheme != "https") || operator.Host == "" {
+			return Config{}, fmt.Errorf("POLICY_OPERATOR_URL must be an absolute http(s) URL, got %q", c.PolicyOperatorURL)
+		}
+		if c.OperatorAPIToken = get("OPERATOR_API_TOKEN"); c.OperatorAPIToken == "" {
+			return Config{}, fmt.Errorf("OPERATOR_API_TOKEN is required with POLICY_OPERATOR_URL")
+		}
 	}
 	return c, nil
 }

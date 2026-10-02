@@ -274,3 +274,33 @@ func TestAPISigningKey(t *testing.T) {
 		}
 	}
 }
+
+// Session policies are off unless the operator is named, and then the token
+// to call it with is required.
+func TestFromEnvPolicyOperator(t *testing.T) {
+	c, err := FromEnv(env(valid()))
+	if err != nil || c.PolicyOperatorURL != "" || c.OperatorAPIToken != "" {
+		t.Fatalf("by default: %q, %q, %v", c.PolicyOperatorURL, c.OperatorAPIToken, err)
+	}
+	m := valid()
+	m["OPERATOR_API_TOKEN"] = "secret"
+	if c, err := FromEnv(env(m)); err != nil || c.PolicyOperatorURL != "" {
+		t.Errorf("a token alone turns nothing on: %q, %v", c.PolicyOperatorURL, err)
+	}
+	m["POLICY_OPERATOR_URL"] = "http://policy-operator.browserjs-sessions.svc:8080/"
+	c, err = FromEnv(env(m))
+	if err != nil || c.PolicyOperatorURL != "http://policy-operator.browserjs-sessions.svc:8080" || c.OperatorAPIToken != "secret" {
+		t.Errorf("configured: %q, %q, %v", c.PolicyOperatorURL, c.OperatorAPIToken, err)
+	}
+	delete(m, "OPERATOR_API_TOKEN")
+	if _, err := FromEnv(env(m)); err == nil || !strings.Contains(err.Error(), "OPERATOR_API_TOKEN") {
+		t.Errorf("without the token: %v", err)
+	}
+	m["OPERATOR_API_TOKEN"] = "secret"
+	for _, bad := range []string{"policy-operator:8080", "ftp://policy-operator", "http://"} {
+		m["POLICY_OPERATOR_URL"] = bad
+		if _, err := FromEnv(env(m)); err == nil || !strings.Contains(err.Error(), "POLICY_OPERATOR_URL") {
+			t.Errorf("POLICY_OPERATOR_URL=%q: %v", bad, err)
+		}
+	}
+}

@@ -28,6 +28,7 @@ import (
 	"github.com/r33drichards/browserjs-sessions/backend/internal/authz"
 	"github.com/r33drichards/browserjs-sessions/backend/internal/config"
 	"github.com/r33drichards/browserjs-sessions/backend/internal/idle"
+	"github.com/r33drichards/browserjs-sessions/backend/internal/policy"
 	"github.com/r33drichards/browserjs-sessions/backend/internal/proxy"
 	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
 	"github.com/r33drichards/browserjs-sessions/backend/internal/tokens"
@@ -88,6 +89,11 @@ func run() error {
 	if cfg.Snapshots {
 		store.EnableSnapshots(dyn, cfg.Namespace, sessions.SnapshotOptions{Timeout: cfg.SnapshotTimeout})
 		slog.Info("idle sessions sleep to Pod Snapshots", "timeout", cfg.SnapshotTimeout, "restoreTimeout", cfg.RestoreTimeout)
+	}
+	// Before the claims are recovered: a claim may carry a policy to make.
+	if cfg.PolicyOperatorURL != "" {
+		store.EnablePolicies(dyn, cfg.Namespace, policy.Unrestricted())
+		slog.Info("sessions have policies", "operator", cfg.PolicyOperatorURL)
 	}
 	if cfg.WarmPool != "" {
 		store.EnableWarmPool(cfg.WarmPool, cfg.WarmPoolWait)
@@ -172,7 +178,10 @@ func newHandler(cfg config.Config, verifier auth.Verifier, store *sessions.Store
 	}
 
 	apiMux := http.NewServeMux()
-	api.New(store, owners, cfg.SessionURLs, cfg.MaxSessionsPerUser).Register(apiMux)
+	sessionAPI := api.New(store, owners, cfg.SessionURLs, cfg.MaxSessionsPerUser)
+	// Nil, and so no policy routes, unless the store has policies enabled.
+	sessionAPI.EnablePolicies(policy.New(store, policy.NewOperator(cfg.PolicyOperatorURL, cfg.OperatorAPIToken)))
+	sessionAPI.Register(apiMux)
 	px.RegisterApp(apiMux)
 
 	app := http.NewServeMux()

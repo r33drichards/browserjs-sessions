@@ -79,15 +79,22 @@ volumeClaimTemplates:
 // can play the controller's part (set status) and inspect what was written.
 func New(t *testing.T) (*sessions.Store, dynamic.Interface) {
 	t.Helper()
+	return newStore(t, Blueprint)
+}
+
+func newStore(t *testing.T, blueprint string) (*sessions.Store, dynamic.Interface) {
+	t.Helper()
 	client := dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
 		map[schema.GroupVersionResource]string{
 			sessions.SandboxGVR:         "SandboxList",
 			sessions.PodSnapshotGVR:     "PodSnapshotList",
 			sessions.SnapshotTriggerGVR: "PodSnapshotManualTriggerList",
 			sessions.ClaimGVR:           "SandboxClaimList",
+			sessions.PolicyGVR:          "SessionPolicyList",
 		})
 	emulateAPIServer(client)
-	store, err := sessions.NewStore(contextAware{client}, Namespace, Blueprint, PublicURL, URLs())
+	emulatePolicies(client)
+	store, err := sessions.NewStore(contextAware{client}, Namespace, blueprint, PublicURL, URLs())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,6 +284,7 @@ func emulateAPIServer(client *dynfake.FakeDynamicClient) {
 					}
 				}
 			}
+			obj.SetUID(types.UID("uid-" + obj.GetName()))
 		case "update":
 			obj := action.(k8stesting.UpdateAction).GetObject().(*unstructured.Unstructured)
 			cur, err := tracker.Get(sessions.SandboxGVR, action.GetNamespace(), obj.GetName())
@@ -403,6 +411,11 @@ const WarmPoolName = "s"
 // becomes the Sandbox's controlling owner and names it in its status.
 func PlayClaimController(t *testing.T, client dynamic.Interface, warm ...string) {
 	t.Helper()
+	playClaimController(t, client, func() map[string]any { return map[string]any{} }, warm)
+}
+
+func playClaimController(t *testing.T, client dynamic.Interface, spec func() map[string]any, warm []string) {
+	t.Helper()
 	fake := client.(*dynfake.FakeDynamicClient)
 	tracker := fake.Tracker()
 	for _, name := range warm {
@@ -411,10 +424,11 @@ func PlayClaimController(t *testing.T, client dynamic.Interface, warm ...string)
 			"kind":       "Sandbox",
 			"metadata": map[string]any{
 				"name": name, "namespace": Namespace,
+				"uid":               "uid-" + name,
 				"creationTimestamp": "2026-10-01T00:00:00Z",
 				"labels":            map[string]any{"agents.x-k8s.io/warm-pool-sandbox": "pool"},
 			},
-			"spec": map[string]any{},
+			"spec": spec(),
 		}}
 		if err := tracker.Create(sessions.SandboxGVR, pooled, Namespace); err != nil {
 			t.Fatal(err)
@@ -434,8 +448,8 @@ func PlayClaimController(t *testing.T, client dynamic.Interface, warm ...string)
 			cold := &unstructured.Unstructured{Object: map[string]any{
 				"apiVersion": sessions.SandboxGVR.GroupVersion().String(),
 				"kind":       "Sandbox",
-				"metadata":   map[string]any{"name": name, "namespace": Namespace},
-				"spec":       map[string]any{},
+				"metadata":   map[string]any{"name": name, "namespace": Namespace, "uid": "uid-" + name},
+				"spec":       spec(),
 			}}
 			if err := tracker.Create(sessions.SandboxGVR, cold, Namespace); err != nil {
 				return true, nil, err
