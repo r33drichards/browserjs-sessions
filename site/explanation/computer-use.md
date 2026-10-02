@@ -1,7 +1,7 @@
 # Computer use on a Linux desktop
 
 "Computer use" means an AI agent operating a computer the way a person does:
-looking at a screen and acting on it. This page explains how browserjs
+looking at a screen and acting on it. This page explains how computeruse
 approaches that, and where it stops today.
 
 ## Why give the agent its own computer
