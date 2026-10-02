@@ -72,7 +72,8 @@ try {
   console.log(`     full screenshot: ${r.images[0].length} bytes; colour at the centre: ${r.results[2].hex}`);
 
   // Keyboard, into a real client: click the terminal, type, press Enter.
-  const text = 'Hello, desktop 123!';
+  // Every printable ASCII character: capitals and symbols need Shift.
+  const text = 'Hello, desktop 123! ~@#$%^&*()_+{}|:"<>? `-=[]\\;\',./ abcxyz ABCXYZ 0987654';
   r = await run('click, keyboard.type (text and keys), key combination', [
     op('mouse.click', { x: 640, y: 400 }),
     op('keyboard.type', { text }),

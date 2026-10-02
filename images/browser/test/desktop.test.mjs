@@ -19,6 +19,7 @@ import {
   createDesktop,
   encodePng,
   runOperations,
+  typingSteps,
   validate,
 } from '../browser/desktop.js';
 
@@ -257,6 +258,38 @@ test('operations become the nut.js calls of the same name, in order', async () =
   assert.deepEqual(screen, { width: 1280, height: 800 });
   // Everything pressed was released by the pipeline itself.
   assert.equal(released, undefined);
+});
+
+test('typed text: characters that need Shift are pressed as keys, the rest goes to nut.js as it is', async () => {
+  assert.deepEqual(typingSteps('Hi there'), [{ text: 'Hi there' }]);
+  assert.deepEqual(typingSteps('a!b'), [{ text: 'a' }, { shifted: 'Num1' }, { text: 'b' }]);
+  assert.deepEqual(typingSteps('x\r\n\ty'), [{ text: 'x' }, { key: 'Enter' }, { key: 'Tab' }, { text: 'y' }]);
+  // Every shifted symbol of a US layout has a key.
+  for (const ch of '~!@#$%^&*()_+{}|:"<>?') {
+    const [step] = typingSteps(ch);
+    assert.ok(KEYS.includes(step.shifted), ch);
+  }
+  // Names inherited from Object are not symbols.
+  assert.deepEqual(typingSteps('constructor'), [{ text: 'constructor' }]);
+
+  const nut = fakeNut();
+  const out = await runOperations(nut, { operations: [op('keyboard.type', { text: 'Hi!?\n' })] });
+  assert.deepEqual(nut.calls, [
+    ['type', 'Hi'],
+    ['pressKey', K('LeftShift'), K('Num1')],
+    ['releaseKey', K('LeftShift'), K('Num1')],
+    ['pressKey', K('LeftShift'), K('Slash')],
+    ['releaseKey', K('LeftShift'), K('Slash')],
+    ['type', K('Enter')],
+  ]);
+  assert.deepEqual(out.results[0].result, { typed: '5 chars' });
+  assert.equal(out.released, undefined);
+
+  // Shift is let go even when the key under it failed.
+  const failing = fakeNut({ failOn: 'releaseKey' });
+  const failed = await runOperations(failing, { operations: [op('keyboard.type', { text: '!' })] });
+  assert.equal(failed.results[0].success, false);
+  assert.deepEqual(failing.calls.map((c) => c[0]), ['pressKey', 'releaseKey', 'grab', 'releaseKey']);
 });
 
 test('the delays are the defaults here unless the call sets them', async () => {

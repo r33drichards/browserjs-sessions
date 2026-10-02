@@ -48,6 +48,42 @@ const MAX_KEYS = 8;
 export const DEFAULT_CONFIG = { keyboardDelayMs: 10, mouseDelayMs: 50, mouseSpeed: 2000 };
 const CONFIG_LIMITS = { keyboardDelayMs: [0, 1000], mouseDelayMs: [0, 1000], mouseSpeed: [100, 20000] };
 
+// keyboard.type { text }: nut.js types a string through libnut, which on X
+// presses the key a character is on without Shift for anything but capital
+// letters ("!" arrives as "1"). So the characters that need Shift on a US
+// layout, and the two that are keys rather than characters, are pressed here
+// as keys; the runs between them go to nut.js as strings.
+const SHIFTED = {
+  '~': 'Grave', '!': 'Num1', '@': 'Num2', '#': 'Num3', $: 'Num4', '%': 'Num5', '^': 'Num6', '&': 'Num7',
+  '*': 'Num8', '(': 'Num9', ')': 'Num0', _: 'Minus', '+': 'Equal', '{': 'LeftBracket', '}': 'RightBracket',
+  '|': 'Backslash', ':': 'Semicolon', '"': 'Quote', '<': 'Comma', '>': 'Period', '?': 'Slash',
+};
+const TAPPED = { '\n': 'Enter', '\t': 'Tab' };
+
+// The text as steps: { text } (a run nut.js types), { shifted: Key } or
+// { key: Key }.
+export function typingSteps(text) {
+  const steps = [];
+  let run = '';
+  const flush = () => {
+    if (run) steps.push({ text: run });
+    run = '';
+  };
+  for (const ch of text) {
+    if (Object.hasOwn(SHIFTED, ch)) {
+      flush();
+      steps.push({ shifted: SHIFTED[ch] });
+    } else if (Object.hasOwn(TAPPED, ch)) {
+      flush();
+      steps.push({ key: TAPPED[ch] });
+    } else if (ch !== '\r') {
+      run += ch;
+    }
+  }
+  flush();
+  return steps;
+}
+
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isInt = (v) => Number.isInteger(v);
 
@@ -269,7 +305,17 @@ export async function runOperations(nut, { operations, config = {} }, { size, pn
     },
     'keyboard.type': async (p) => {
       if (p.text !== undefined) {
-        await nut.keyboard.type(p.text);
+        for (const step of typingSteps(p.text)) {
+          if (step.text) await nut.keyboard.type(step.text);
+          else if (step.key) await nut.keyboard.type(nut.Key[step.key]);
+          else {
+            const combo = [nut.Key.LeftShift, nut.Key[step.shifted]];
+            heldKeys.add('LeftShift');
+            await nut.keyboard.pressKey(...combo);
+            await nut.keyboard.releaseKey(...combo);
+            heldKeys.delete('LeftShift');
+          }
+        }
         return { typed: p.text.length + ' chars' };
       }
       await nut.keyboard.type(...keysOf(p));
