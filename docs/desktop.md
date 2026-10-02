@@ -259,9 +259,12 @@ cannot reach:
   web pages out of port 8081 by their headers; `curl` sends whatever
   headers it likes. So a policy that restricts what an agent may do in a
   session can be walked around by an agent that is allowed
-  `desktop_execute`: it opens a terminal. A policy that must hold has to
-  deny `desktop_execute`, or the desktop has to go without a terminal for
-  that session; neither exists yet.
+  `desktop_execute`: it opens a terminal. A JSON policy (version 1) refuses
+  `desktop_execute` altogether, and holds. A Rego policy that allows
+  `desktop_execute` while restricting `browser_execute` (hosts, operations)
+  restricts nothing any more: allowing the desktop now means allowing a
+  shell. Policies bind the agent's calls, never the person at the live
+  view, who could always do by hand what a policy forbids the agent.
 - **mcp-js's own files stay out of reach.** `/data/memory` and `/data/mcp`
   are mounted in the other container only.
 - **It can break its own session:** kill Xvnc or the entrypoint (the
