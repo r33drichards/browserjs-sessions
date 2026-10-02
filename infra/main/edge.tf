@@ -151,6 +151,18 @@ resource "google_dns_record_set" "public" {
   rrdatas      = [local.edge_ip]
 }
 
+# The public site (site/) is on the served domain itself, with no host name
+# in front. Pomerium serves it on the same address as everything else.
+resource "google_dns_record_set" "site" {
+  count = var.create_dns_zone ? 1 : 0
+
+  managed_zone = local.zones[var.domain].name
+  name         = "${var.domain}."
+  type         = "A"
+  ttl          = var.dns_ttl
+  rrdatas      = [local.edge_ip]
+}
+
 # --- pomerium_nlb: cert-manager issues the certificate in the cluster ------------------
 
 # A wildcard certificate can only be proven by DNS-01: cert-manager writes a
