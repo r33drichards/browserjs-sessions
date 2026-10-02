@@ -1,0 +1,15 @@
+{
+  "operation": "mcp_call_tool",
+  "server": "browser",
+  "tool": "browser_execute",
+  "arguments": {
+    "operations": [
+      { "type": "navigate", "params": { "url": "https://example.com/login" } },
+      { "type": "type", "params": { "selector": "#user", "text": "ada" } },
+      { "type": "press", "params": { "key": "Enter" } },
+      { "type": "wait", "params": { "selector": "#home", "ms": 5000 } },
+      { "type": "screenshot", "params": {} }
+    ],
+    "tab": "default"
+  }
+}

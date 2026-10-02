@@ -1,9 +1,12 @@
 # Session policies: design
 
-Status: proposal, for review. No product code is written and nothing is
-deployed. Revision 3: the product owner's decisions so far are folded in
-(below). Open questions are in the last section, each with a recommended
-default.
+Status: **approved 2026-10-02** by the product owner. The decisions are
+recorded in section 10; nothing is left open. Phase 0 (contracts and the
+spikes that need no cluster) is done: the contracts are in
+[`docs/contracts/policy/`](../contracts/policy/README.md), the spike results
+in section 11, and the phase 1 tracks in
+[2026-10-02-session-policies-tracks.md](2026-10-02-session-policies-tracks.md).
+No product code is written and nothing is deployed.
 
 ## The request
 
@@ -17,9 +20,10 @@ default.
 > also need a Terraform provider for this repo to create both browser and
 > policy resources for these browsers.
 
-## Decisions already made
+## Decisions that shaped the design
 
-Settled by the product owner while this document was being written:
+Settled by the product owner while this document was being written (the
+full record is section 10):
 
 1. **Policies govern mcp-js only.** A person at the VNC view, and where
    Chromium navigates on its own, are out of scope ("the VNC is different and
@@ -480,6 +484,8 @@ status:
     - {type: Ready,    status: "True",  observedGeneration: 4}
 ```
 
+- **The manifest** is `deploy/base/crd-sessionpolicy.yaml`; where it and
+  the sketch above differ, the manifest is right.
 - **Group and version**: `browserjs.dev/v1alpha1` (the group the repo's
   annotations already use). Kind `SessionPolicy`, plural `sessionpolicies`,
   short name `spol`. Namespaced. `status` is a subresource: only the operator
@@ -540,7 +546,7 @@ the custom resource only records it.
 - A refused write answers `409 {"error": "this policy is managed
   externally", "managed_url": …}`, or `"…managed in the editor"`.
 - Switching back to `editor` in the UI is always possible. That is the
-  escape hatch; there is no "Edit anyway" (open question 2). Terraform sees
+  escape hatch; there is no "Edit anyway". Terraform sees
   the change as drift on its next plan.
 - An MCP client (the agent) can do none of this: the MCP route reaches only
   a session's `/mcp`, never the API.
@@ -663,11 +669,12 @@ whitespace, or a percent-encoded or non-ASCII host does not match and is
 denied. That is stricter than a parser, and has no parser to disagree with
 Chromium's.
 
-The second example compiles to (illustrative; golden tests in the
-implementation fix the exact text):
+The exact algorithm is `docs/contracts/policy/json-to-rego.md`. The second
+example is `examples/one-site.policy.json` there, and compiles to
+`examples/one-site.rego`:
 
 ```rego
-# Generated from the JSON policy of session s-abcde, generation 3. Edit the JSON, not this.
+# Generated from a browserjs JSON policy (version 1). Edit the JSON, not this file.
 package browserjs.policy
 
 import rego.v1
@@ -675,29 +682,36 @@ import rego.v1
 allow_tool_call if {
 	input.server == "browser"
 	input.tool == "browser_execute"
+	is_array(input.arguments.operations)
 	every op in input.arguments.operations {
 		operation_allowed(op)
 	}
 }
 
-operation_allowed(op) if op.type in {"click", "press", "select", "wait", "screenshot", "url", "setViewport"}
+allowed_operations := {"click", "press", "screenshot", "select", "setViewport", "url", "wait"}
 
 operation_allowed(op) if {
-	op.type == "navigate"
-	is_string(op.params.url)
-	regex.match(`^https://(example\.com|([a-z0-9-]+\.)+example\.com)(:[0-9]+)?([/?#].*)?$`, lower(op.params.url))
+	op.type in allowed_operations
 }
 
+# allow.rules[0]
+operation_allowed(op) if {
+	op.type == "navigate"
+	is_string(op.params["url"])
+	regex.match("^(?:https)://(?:(?:[a-z0-9-]+\\.)+example\\.com|example\\.com)(?::[0-9]+)?(?:[/?#].*)?$", lower(op.params["url"]))
+}
+
+# allow.rules[1]
 operation_allowed(op) if {
 	op.type == "type"
-	is_string(op.params.text)
-	count(op.params.text) <= 500
+	is_string(op.params["text"])
+	count(op.params["text"]) <= 500
 }
 ```
 
-The translator is a pure function with table-driven tests: for each example,
-the generated Rego (golden file) and inputs whose decisions are asserted by
-running `opa eval`. The UI shows the generated Rego read-only
+The translator is a pure function with table-driven tests: the contract has
+five examples, each with the Rego it must produce byte for byte and a list
+of inputs with the decision each must get (86 in all, run in spike 7). The UI shows the generated Rego read-only
 (`status.rego`) and offers "Convert to Rego", one way.
 
 ---
@@ -807,7 +821,7 @@ its own calls judged by a different policy.
   allows. Warm-pool IDs are five characters, so they can be guessed. That
   is a disclosure of another user's policy by probing, not a way to act in
   their session or change anyone's enforcement. It is accepted for v1 and
-  is one of the things C2 would remove (open question 6).
+  is one of the things C2 would remove.
 - **What it could not do**: read policy sources (`GET /v1/policies` and the
   rest of the API are refused by `system.authz`), write policies or data
   (refused, and the bundle owns those paths), reach the operator's bundle
@@ -829,6 +843,8 @@ allow if {
 	input.method == "POST"
 	count(input.path) == 6
 	array.slice(input.path, 0, 4) == ["v1", "data", "browserjs", "decision"]
+	# No ?explain, ?instrument, ?provenance, ?metrics: they describe the policy.
+	object.keys(input.params) == set()
 }
 
 # Kubelet probes.
@@ -839,11 +855,15 @@ allow if {
 
 # The operator, reading what a replica has loaded.
 allow if {
-	input.identity == data.system.operator_token   # from a Secret, mounted as data
+	input.identity == opa.runtime().env.OPERATOR_TOKEN
+	input.identity != ""
 	input.method == "GET"
-	array.slice(input.path, 0, 4) == ["v1", "data", "browserjs", "loaded"]
+	input.path == ["v1", "data", "browserjs", "loaded"]
 }
 ```
+
+The copy that is deployed is `docs/contracts/policy/system-authz.rego`.
+Spike 4 (section 11) ran it against sixteen kinds of request.
 
 **NetworkPolicy**, both ways:
 
@@ -902,10 +922,8 @@ It is where the platform can add conditions for everyone later without
 touching tenant code, and why a tenant rule that returns something other
 than `true` is a deny. One generic dispatcher for all sessions is not
 possible, because the session is only in the URL path, which Rego cannot
-see. (Session IDs contain a hyphen, so the packages use the bracketed form;
-that this is accepted in a package clause by the pinned OPA version is to be
-confirmed in the spike. The fallback is a generated identifier per session
-and a data document mapping IDs to it.)
+see. (Session IDs contain a hyphen, so the packages use the bracketed form,
+which OPA accepts in a package clause: spike 1.)
 
 Both go into **one bundle** with root `browserjs`, with a data document
 `browserjs.loaded` mapping each session ID to its policy hash, and a
@@ -927,9 +945,10 @@ bundle grew past tens of megabytes.
 **How long a change takes.** The watch event reaches the operator in well
 under a second; building and checking the bundle is a run of `opa build`;
 the replicas long-poll the operator, so they fetch as soon as the ETag
-changes (with plain polling, `min_delay_seconds: 1`, `max_delay_seconds:
-2`). Expected: one to three seconds from save to both replicas (UNVERIFIED;
-measured in the spike). The operator then reads `browserjs/loaded` from each
+changes. Measured in spike 3: 10 to 20 milliseconds from a published bundle
+to both replicas with long polling, and 0.2 to 1.8 seconds with the plain
+polling it falls back to (`min_delay_seconds: 1`, `max_delay_seconds: 2`).
+The operator then reads `browserjs/loaded` from each
 ready replica and sets `Loaded` when all report this generation's hash.
 Between a save and that moment a call may still be judged by the previous
 policy; the API's save waits for `Ready` (up to ten seconds) before
@@ -966,12 +985,14 @@ spread over nodes (`topologySpreadConstraints`), a PodDisruptionBudget with
 operator is away. The backend's readiness page shows it.
 
 **Latency**: one HTTP request inside the cluster and an evaluation of a
-small module per `browser_execute` call, expected at a few milliseconds
-(UNVERIFIED) against a browser operation that takes tens to hundreds.
+small module per `browser_execute` call. Over loopback that is 0.2 ms at
+the median and 0.7 ms at p99 (spike 3); in the cluster, add the network.
+A browser operation takes tens to hundreds of milliseconds.
 
 ### 4.6 The operator
 
-A kopf operator, `policy-operator`, in `operator/` (Python 3.12).
+A kopf operator, `policy-operator`, in `images/policy-operator/` (Python
+3.12), where `images.yml` already looks for images.
 
 **What it does**
 
@@ -1311,7 +1332,7 @@ plan (section 9).
   token: owner, name, scopes, expiry, and the hash. No operator reconciles
   it; it is storage with a schema, in keeping with "no state in the
   backend", and the backend's Role names that resource and nothing broader.
-  A Secret is the alternative (open question 10).
+  The schema is `deploy/base/crd-apitoken.yaml`.
 - **Route**: a host of its own, `api.<domain>`, to the backend with
   `allow_public_unauthenticated_access: true` and no identity headers. The
   backend already tells requests apart by host; on this host it accepts only
@@ -1398,6 +1419,13 @@ made that way are still judged by the policy, so it is not a way around.
 - **Not isolated**: CPU. An expensive policy slows the replicas for
   everyone (4.4). And decisions: any session pod can ask for another
   session's decisions by ID (4.3).
+- **Capabilities are not enforced by the OPA server** (spike 5): `opa run`
+  would load a module that calls `http.send`. They hold because the
+  operator is the only thing that builds a bundle, and OPA's API accepts no
+  policy from anyone, the operator included (spike 4).
+- **Query parameters on a decision request are refused** (spike 4):
+  `?explain=full` returned the evaluation trace, which shows another
+  tenant's rules.
 - **The bundle** contains every tenant's Rego. Only OPA can fetch it
   (NetworkPolicy), and it can additionally be signed and require a bearer
   token; both are small and are in the plan.
@@ -1560,107 +1588,225 @@ named `terraform-provider-browserjs` (1.5). Proposed:
 
 ## 9. Implementation plan
 
-Phase 0 is short and unblocks the rest; after it the tracks of phase 1 can be
-built by separate agents at the same time.
+**Phase 0 is done** in the pull request that approved this document: the
+contracts are in [`docs/contracts/policy/`](../contracts/policy/README.md)
+and the two CRD manifests in `deploy/base/`, and the spikes that need no
+cluster are in section 11.
 
-### Phase 0: contracts and spikes
+**Phase 1** is six tracks that can be built at the same time by separate
+agents, each against the contracts and none against another's code. What
+each owns, consumes, must not touch, and its definition of done:
+[2026-10-02-session-policies-tracks.md](2026-10-02-session-policies-tracks.md).
 
-1. Contracts, each a file in the repo: `docs/api/openapi.yaml` (section 6);
-   the CRD manifest (section 2.1); the JSON Schema (section 3); the
-   operator's HTTP contract (bundle, validate, evaluate); the bundle layout
-   (packages, the `loaded` document). Everything else is built against
-   these.
-2. Spike, in kind, with the real mcp-js image and an OPA: a remote
-   `mcp_tools` source with `policy_path` containing `$(SESSION_ID)`; the
-   answer for an undefined path; what the agent sees on a denial and on a
-   timeout; latency.
-3. Spike: package names with a hyphenated, bracketed segment in the pinned
-   OPA; `system.authz` with anonymous decision paths; bundle long polling;
-   time from a changed bundle to both replicas.
-4. Spike on staging: a session pod reaching the OPA Service through the new
-   NetworkPolicy rule under gVisor; a restore from a snapshot followed by a
-   decision.
+| Track | Scope |
+|---|---|
+| A. Operator | `images/policy-operator/`: translator, tenant checks, bundle builder and server, kopf handlers, status, validate and evaluate |
+| B. OPA and deploy | the CRDs in kustomize, OPA, the operator's manifests and RBAC, NetworkPolicy, the pod template env, overlays, image build and pinning |
+| C. Backend | the `SessionPolicy` client, mode rules, the handlers of `backend-api.yaml`, create-with-policy |
+| D. UI | create page, details tabs, policy edit page with Monaco, managed-as-code state |
+| E. API tokens | `APIToken`, the token page's API, the `api.` host, the bearer authenticator |
+| F. Terraform provider | `terraform-provider-browserjs/` |
 
-### Phase 1: policies on browser operations (tracks in parallel)
-
-| Track | Scope | Depends on |
-|---|---|---|
-| A. Operator | `operator/`: translator, AST checks and rewrite, bundle builder and server, handlers, status, validate and evaluate endpoints; unit, handler and KMock tests; image in `images.yml` | contracts |
-| B. OPA and deploy | CRD, OPA Deployment, Service, PDB, `system.authz`, capabilities file, operator manifests and RBAC, NetworkPolicy, pod template env in blueprint and warm template with `deploy_test.go`, local and GKE overlays; kind integration tests with A | contracts; A's image for integration |
-| C. Backend | `SessionPolicy` client (create with a session, adopt, claim recovery, get, update, reset); mode rules of 2.3; the handlers of 6.1; session state waits for `Ready`; Role | contracts (a fake operator and the CRD in envtest or kind) |
-| D. UI | `/sessions/create`; details page with tabs; policy edit page with Monaco, schema and server diagnostics, Rego grammar, test; managed-as-code state; unsaved-changes modals | OpenAPI (mock server) |
-| E. API tokens | `APIToken` resource, token page, the `api.` host route in Pomerium's config, bearer authenticator, `ALLOWED_EMAILS`, rate limit | OpenAPI |
-| F. Terraform provider | section 8, against a fake from the OpenAPI document, then acceptance tests against kind | OpenAPI; E for acceptance tests |
-
-Done when: a user can create a session with a policy on the new page and see
-an agent's call denied; edit the policy and have the next call judged by it
-with nothing restarted; put a session to sleep, change its policy, and find
-it enforced at the first call after waking; kill an OPA pod and see no
-session affected, kill both and see calls denied; switch a policy to
-managed-as-code, see the UI lock with the link, and apply the example of
-8.2.
-
-### Phase 2
+**Phase 2**
 
 - `fetch`, WebSocket and module imports as policy sections.
 - Recent decisions per session, from OPA's decision log, and denials that
   explain themselves to the agent (a `pre` hook that returns a `reason`).
 - A validating admission webhook from the operator; bundle signing.
-- Provider release pipeline and the registry mirror repo.
+- Provider release pipeline, the registry mirror repo, the registries.
 - The sidecar variant (C2), if shared fate or tenant isolation asks for it.
 
 ---
 
-## 10. Open questions
+## 10. Decisions
 
-Each with the default this document assumes. What the product owner has
-already decided is at the top of the document and is not repeated.
+Approved by the product owner on 2026-10-02. Nothing is left open; this is
+the record.
 
-1. **JSON compiled to Rego, not cua-driver's two engines.** cua-driver's
-   simple format is YAML evaluated natively. The request describes JSON
-   translated to Rego. *Default: JSON, compiled to Rego, shown read-only.*
-   Accept YAML as well (the same schema)? *Default: no.*
-2. **How hard is the managed-as-code lock?** Tailscale lets an admin "Edit
-   anyway". *Default: a hard lock; "Manage here instead" is the escape
-   hatch.* And is the exclusion two-way, so that tokens cannot save a policy
-   that is in `editor` mode unless they take it over in the same request?
-   *Default: yes, as "mutually exclusive" reads.*
-3. **Mode scope.** *Default: per session's policy*, which matches
-   Tailscale's one switch for one policy file. The alternative is one switch
-   for a user's whole account.
-4. **Reuse.** *Default: by copy in the UI and by Terraform; no shared
-   policies and no account default.* Is a remembered preset for new sessions
-   wanted after all?
-5. **What v1 governs within mcp-js.** *Default: upstream tool calls, that
-   is `browser_execute` operations. `fetch` and module imports in phase 2.*
-6. **What sharing one OPA gives up.** A session pod can ask for another
-   session's decisions by ID, and a deliberately expensive policy slows
-   decisions for everyone. *Default: accept both for v1, since users are an
-   allow-list; the sidecar variant is the answer if that changes.*
-7. **Every session has a `SessionPolicy`, and none means deny.** The
-   alternative is "none means unrestricted", with the operator generating
-   an allow for every owned session. *Default: as stated; it is what makes
-   an ownerless pod fail closed without the operator reading Sandboxes.*
-8. **A saved policy that does not compile.** *Default: the API refuses it
-   before saving. If one arrives anyway (kubectl, a race), the previous good
-   policy stays in force and the resource shows the errors.*
-9. **How a save answers.** *Default: it waits up to ten seconds for both
-   replicas to load it, so "saved" means "in force"; `202` if they have not.*
-10. **API tokens as a custom resource too** (`APIToken`, holding only a
-    hash), following "state in CRDs", or a Secret? *Default: a custom
-    resource.* A separate `api.` host, or a path on the app's host?
-    *Default: separate host.* Mirror Pomerium's allow-list into the backend
-    so tokens of removed users stop at once? *Default: yes.* Lifetime?
-    *Default: 90 days, at most a year.*
-11. **Sessions that predate the feature** cannot be given a policy.
-    *Default: mark them, ask the user to recreate; no migration.*
-12. **Terraform shape.** *Default: `browserjs_session` and a separate
-    `browserjs_session_policy` whose existence is the managed-as-code mode.*
-    Distribution: *in-repo source with `dev_overrides` and a network mirror
-    first; registries when someone outside needs it.*
-13. **Editor.** Monaco at about 850 KB gzipped on the edit page and the
-    create page's split panel only, or CodeMirror 6 at about 120 KB with
-    weaker Rego support? *Default: Monaco, bundled (no CDN), lazy-loaded,
-    with a Rego grammar written here.*
-14. **API group.** `browserjs.dev` (the repo's annotations) or
-    `browserjs.com` (the product's domain)? *Default: `browserjs.dev`.*
+| Question | Decision |
+|---|---|
+| What policies govern | mcp-js only. In v1, browser actions: the operations of `browser_execute`. `fetch` and module imports in phase 2. The VNC view and Chromium's own navigation are out of scope |
+| Enforcement | one shared multi-tenant OPA Deployment that mcp-js asks; its trade-offs (decisions of another session can be probed by ID; CPU is shared between tenants) are accepted for v1 |
+| State | `SessionPolicy` custom resources, reconciled by a kopf operator; none in the backend |
+| Policy kinds | `json` compiles to Rego; `rego` is used as written, after the tenant checks. JSON only, no YAML |
+| Every session has a `SessionPolicy`; none means deny | yes |
+| A policy that does not compile | refused by the API before saving; if one arrives anyway the previous good policy stays in force and `status` shows the errors |
+| How a save answers | waits up to 10 seconds for every replica, then 200; otherwise 202 |
+| Managed-as-code lock | hard: no "Edit anyway". The mode is switched back to the editor in the browser. A token cannot write an editor-mode policy unless the same request takes it over |
+| Mode scope | per session's policy |
+| Reuse | by copy in the UI, or by Terraform. No shared and no default policy |
+| Sessions that predate the feature | marked `unsupported`; recreate |
+| API tokens | backend-issued, on an `api.` host; `APIToken` custom resources holding a hash; 90 days by default, a year at most; the backend mirrors Pomerium's allow-list |
+| Terraform | `browserjs_session` and a separate `browserjs_session_policy`; built in this repo and installed locally (`dev_overrides`) first, registries later |
+| Editor | Monaco, bundled (no CDN), lazy-loaded, with a Rego grammar written here |
+| API group | `browserjs.dev` |
+| Browser MCP loopback hole | fixed in PR #30 |
+
+---
+
+## 11. Phase 0 spikes
+
+Run locally on 2026-10-02 with OPA 1.9.0 (`Rego Version: v1`,
+darwin/arm64), no cluster. The scripts are in
+[`docs/contracts/policy/spike/`](../contracts/policy/spike/).
+
+Getting OPA: `nix shell nixpkgs#open-policy-agent` did not work. On this
+machine the package is built from source and its test phase fails
+(`v1/server/compile_handler_test.go: undefined: fixture`), on nixos-25.05
+(1.6.0) as well. It builds with the tests skipped:
+
+```
+nix build --impure --expr '(builtins.getFlake "nixpkgs").legacyPackages.${builtins.currentSystem}.open-policy-agent.overrideAttrs (_: { doCheck = false; })' -o opa-result
+```
+
+Track A's dev shell and CI should take the binary from the pinned OPA
+image or a release download instead.
+
+### Spike 1: session IDs in package names and paths
+
+Modules with `package browserjs.tenant["s-ab2cd"]`,
+`package browserjs.decision["s-ab2cd"].mcp_tools`, and the same for
+`s-abcdefghij`.
+
+| Command | Result |
+|---|---|
+| `opa check <dir>` | accepted |
+| `opa check --capabilities capabilities.json <dir>` | accepted |
+| `opa eval -d <dir> -i in_ok.json 'data.browserjs.decision["s-ab2cd"].mcp_tools'` | `{"allow":true}` |
+| the same with an `evaluate` operation | `{"allow":false}` |
+| `POST /v1/data/browserjs/decision/s-ab2cd/mcp_tools` on a server | `{"result":{"allow":true}}` |
+| `opa fmt` on the tenant module | keeps `package browserjs.tenant["s-ab2cd"]` |
+
+**The bracketed, hyphenated form works; the fallback (generated
+identifiers) is not needed.** `opa parse --format json` gives the package
+path as terms (`data`, `browserjs`, `tenant`, `s-ab2cd`), which is what the
+rewrite and the checks read.
+
+### Spike 2: an undefined decision
+
+Two `opa run --server` processes with `system-authz.rego` and
+`opa-config.yaml` (addresses changed to loopback), and `bundle-stub.py`.
+
+| Situation | Answer to the decision POST |
+|---|---|
+| before any bundle is active | `200 {}` |
+| a session that is not in the bundle (`s-zzzzz`) | `200 {}` |
+| a session in the bundle, allowed call | `200 {"result":{"allow":true}}` |
+| a session in the bundle, denied call | `200 {"result":{"allow":false}}` |
+
+`{}` has no `result`, which mcp-js reads as deny (`opa.rs`: `.result
+.and_then(|r| r.allow).unwrap_or(false)`). **A missing tenant is denied**,
+as designed.
+
+### Spike 3: bundle polling, activation, health
+
+| Situation | Result |
+|---|---|
+| bundle server answers 503, OPA just started | `/health` 200, `/health?bundles` **500** |
+| after the first bundle is active | `/health?bundles` 200 |
+| a bundle that does not parse is published | OPA logs "Bundle load failed", keeps serving the previous bundle, `/health?bundles` stays 200 |
+| the bundle server is stopped | decisions continue from the loaded bundle; `/health?bundles` stays 200 |
+
+Time from publishing a new bundle to **both** replicas reporting its hash
+(`GET /v1/data/browserjs/loaded`), six runs each:
+
+| Polling | Seconds, per replica |
+|---|---|
+| `min_delay_seconds: 1`, `max_delay_seconds: 2` | 0.19 to 1.84 |
+| the same plus `long_polling_timeout_seconds: 30`, stub answering `Content-Type: application/gzip` | 0.61 to 1.80: **long polling was not used** |
+| the same, stub answering `Content-Type: application/vnd.openpolicyagent.bundles` | first activation 0.57 and 0.90; afterwards **0.010 to 0.019** |
+
+**Changes to the design**: the bundle endpoint must answer with
+`Content-Type: application/vnd.openpolicyagent.bundles`, or OPA silently
+falls back to its polling delays (now in `operator-api.yaml`). With that,
+a change is active on both replicas in tens of milliseconds, and the
+"one to three seconds" of section 4.4 is the fallback, not the norm.
+
+Also measured: a decision over loopback, a new connection each time, 500
+requests: p50 0.22 ms, p95 0.39 ms, p99 0.67 ms. Each idle `opa run
+--server` process: 33 to 36 MiB resident. In the cluster, add the network.
+
+### Spike 4: `system.authz`
+
+`--authentication=token --authorization=basic`, the policy in
+`system-authz.rego`, the operator's token in the environment variable
+`OPERATOR_TOKEN`.
+
+| Request | Status |
+|---|---|
+| `POST /v1/data/browserjs/decision/s-ab2cd/mcp_tools` | 200 |
+| the same with `?explain=full` | **401** (after the change below) |
+| `GET` on a decision path | 401 |
+| `POST /v1/data/browserjs/tenant/s-ab2cd` | 401 |
+| `POST /v1/data/browserjs/decision/s-ab2cd` (five segments) | 401 |
+| `POST /v1/data` | 401 |
+| `GET /v1/policies` | 401 |
+| `PUT /v1/policies/x` | 401 |
+| `PUT /v1/data/browserjs/loaded` | 401 |
+| `POST /v1/query` | 401 |
+| `POST /` | 401 |
+| `GET /metrics` | 401 |
+| `GET /v1/data/browserjs/loaded`, no token or a wrong one | 401 |
+| `GET /v1/data/browserjs/loaded`, the operator's token | 200 |
+| `PUT /v1/policies/x`, the operator's token | 401 |
+| `GET /health`, `GET /health?bundles` | 200 |
+
+**Change to the design**: the first version of the policy allowed any
+anonymous POST on a decision path, and `?explain=full` on such a request
+returned the evaluation trace, which shows the tenant's rules. That would
+have let any session pod read the logic of another session's policy. The
+policy now refuses decision requests that carry any query parameter. The
+token is read with `opa.runtime().env.OPERATOR_TOKEN` rather than from a
+data document.
+
+### Spike 5: the capabilities allow-list
+
+`capabilities.json`: 112 of OPA 1.9.0's 201 built-ins.
+`opa check --capabilities capabilities.json` on a module that uses each of
+the following fails with `rego_type_error: undefined function …`:
+`http.send`, `net.lookup_ip_addr`, `opa.runtime`, `numbers.range`, `print`
+(reported as `internal.print`), `rego.metadata.rule`, `trace`,
+`crypto.sha256`, `walk`. All five example policies pass under it.
+`opa check --format json` gives each error as `{message, code, location:
+{file, row, col}}`, which is the shape `status.errors` and the API use.
+
+**Finding**: `opa run` has no capabilities option, so the OPA server would
+load a module that calls `http.send`. The restriction is enforced where
+bundles are built (the operator, `opa build --capabilities`) and by OPA's
+API accepting no policies from anyone (spike 4). Section 7.3 says so.
+
+### Spike 6: the tenant checks
+
+`tenant-guard.py`, a sketch of checks 1 to 3 of `rego-contract.md` on the
+AST from `opa parse --format json`:
+
+| Module | Verdict |
+|---|---|
+| a rule calling a helper in its own package | accepted |
+| `data.browserjs.tenant["s-other"].allow_tool_call` | refused: reference to data |
+| `d := data; d.browserjs` | refused |
+| `import data.browserjs.tenant as t` | refused |
+| `helper with input as {…}` | refused: with |
+| `helper with data.x as 1` | refused |
+| `package browserjs.decision["s-other"].mcp_tools` | refused: package |
+| `package system.authz` | refused: package |
+| `data` inside a comprehension | refused |
+| a rule head `data.x := 1` | refused |
+| `input["data"] == 1` (a string, not the document) | accepted |
+
+### Spike 7: the examples
+
+`run-cases.py` over the five examples: **86 of 86 cases pass**, each
+evaluated through a tenant package and the decision module under the
+capabilities file. The cases include the URL confusions of section 7.5
+(userinfo, backslash, whitespace, line break, percent-encoded and
+non-ASCII hosts, trailing dot, suffix and prefix tricks), all denied.
+
+### Not done here, because they need a cluster
+
+They are the first steps of track B, and are listed in the tracks
+document: the real mcp-js image asking a real OPA with `policy_path` built
+from `$(SESSION_ID)`; what an agent sees on a denial and on a timeout; a
+gVisor session pod reaching the OPA Service through the new NetworkPolicy
+rule; a restore from a snapshot followed by a decision; the CRDs accepted
+by an API server (their CEL rules have only been read, not run).

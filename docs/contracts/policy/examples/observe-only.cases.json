@@ -1,0 +1,251 @@
+[
+  {
+    "name": "empty pipeline",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": []
+      }
+    },
+    "allow": true
+  },
+  {
+    "name": "null arguments",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": null
+    },
+    "allow": false
+  },
+  {
+    "name": "operations is not an array",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": "x"
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "another server",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "other",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "click",
+            "params": {
+              "selector": "a"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "another tool",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "other_tool",
+      "arguments": {
+        "operations": [
+          {
+            "type": "click",
+            "params": {
+              "selector": "a"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "operation without a type",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "params": {}
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "unknown operation type",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "download",
+            "params": {}
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "https page, wait, screenshot",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {
+              "url": "https://news.example.net/today?x=1"
+            }
+          },
+          {
+            "type": "wait",
+            "params": {
+              "ms": 500
+            }
+          },
+          {
+            "type": "screenshot",
+            "params": {
+              "fullPage": true
+            }
+          }
+        ]
+      }
+    },
+    "allow": true
+  },
+  {
+    "name": "http is refused",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {
+              "url": "http://news.example.net/"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "navigate without a url",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {}
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "click",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "click",
+            "params": {
+              "selector": "a"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "type",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "type",
+            "params": {
+              "selector": "#q",
+              "text": "hi"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "javascript: url",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {
+              "url": "javascript:alert(1)"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "file: url",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {
+              "url": "file:///etc/passwd"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  }
+]

@@ -1,0 +1,593 @@
+[
+  {
+    "name": "empty pipeline",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": []
+      }
+    },
+    "allow": true
+  },
+  {
+    "name": "null arguments",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": null
+    },
+    "allow": false
+  },
+  {
+    "name": "operations is not an array",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": "x"
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "another server",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "other",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "click",
+            "params": {
+              "selector": "a"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "another tool",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "other_tool",
+      "arguments": {
+        "operations": [
+          {
+            "type": "click",
+            "params": {
+              "selector": "a"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "operation without a type",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "params": {}
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "unknown operation type",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "download",
+            "params": {}
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "the site",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {
+              "url": "https://example.com/"
+            }
+          }
+        ]
+      }
+    },
+    "allow": true
+  },
+  {
+    "name": "the site, no path",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {
+              "url": "https://example.com"
+            }
+          }
+        ]
+      }
+    },
+    "allow": true
+  },
+  {
+    "name": "a subdomain, port, query",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {
+              "url": "https://app.eu.example.com:8443/a?b=c#d"
+            }
+          }
+        ]
+      }
+    },
+    "allow": true
+  },
+  {
+    "name": "upper case is folded",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {
+              "url": "HTTPS://EXAMPLE.COM/Path"
+            }
+          }
+        ]
+      }
+    },
+    "allow": true
+  },
+  {
+    "name": "another site",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {
+              "url": "https://evil.test/"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "http",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {
+              "url": "http://example.com/"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "suffix trick",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {
+              "url": "https://example.com.evil.test/"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "prefix trick",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {
+              "url": "https://notexample.com/"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "userinfo trick",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {
+              "url": "https://example.com@evil.test/"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "userinfo with password",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {
+              "url": "https://example.com:443@evil.test/"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "backslash trick",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {
+              "url": "https://example.com\\@evil.test/"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "backslash as path separator",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {
+              "url": "https://evil.test\\.example.com/"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "whitespace inside the host",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {
+              "url": "https://exa\tmple.com/"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "leading whitespace",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {
+              "url": " https://example.com/"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "newline then another url",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {
+              "url": "https://example.com/\nhttps://evil.test/"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "percent-encoded host",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {
+              "url": "https://example%2ecom/"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "non-ASCII host",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {
+              "url": "https://exаmple.com/"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "trailing dot",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {
+              "url": "https://example.com./"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "url is not a string",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {
+              "url": [
+                "https://example.com/"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "short text",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "type",
+            "params": {
+              "selector": "#q",
+              "text": "hello"
+            }
+          }
+        ]
+      }
+    },
+    "allow": true
+  },
+  {
+    "name": "text of 500",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "type",
+            "params": {
+              "selector": "#q",
+              "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            }
+          }
+        ]
+      }
+    },
+    "allow": true
+  },
+  {
+    "name": "text of 501",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "type",
+            "params": {
+              "selector": "#q",
+              "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "type without text",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "type",
+            "params": {
+              "selector": "#q"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "evaluate",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "evaluate",
+            "params": {
+              "script": "1"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "allowed then not allowed",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {
+              "url": "https://example.com/"
+            }
+          },
+          {
+            "type": "navigate",
+            "params": {
+              "url": "https://evil.test/"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  }
+]

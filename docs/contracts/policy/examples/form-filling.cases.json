@@ -1,0 +1,395 @@
+[
+  {
+    "name": "empty pipeline",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": []
+      }
+    },
+    "allow": true
+  },
+  {
+    "name": "null arguments",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": null
+    },
+    "allow": false
+  },
+  {
+    "name": "operations is not an array",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": "x"
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "another server",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "other",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "click",
+            "params": {
+              "selector": "a"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "another tool",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "other_tool",
+      "arguments": {
+        "operations": [
+          {
+            "type": "click",
+            "params": {
+              "selector": "a"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "operation without a type",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "params": {}
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "unknown operation type",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "download",
+            "params": {}
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "a form",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {
+              "url": "https://forms.example.org/apply"
+            }
+          },
+          {
+            "type": "setViewport",
+            "params": {
+              "width": 1280,
+              "height": 800
+            }
+          },
+          {
+            "type": "type",
+            "params": {
+              "selector": "#name",
+              "text": "Ada Lovelace"
+            }
+          },
+          {
+            "type": "press",
+            "params": {
+              "key": "Tab"
+            }
+          },
+          {
+            "type": "select",
+            "params": {
+              "selector": "#c",
+              "values": [
+                "uk"
+              ]
+            }
+          },
+          {
+            "type": "press",
+            "params": {
+              "key": "Enter"
+            }
+          }
+        ]
+      }
+    },
+    "allow": true
+  },
+  {
+    "name": "http is allowed when schemes is not given",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {
+              "url": "http://hr.intranet.example.org/"
+            }
+          }
+        ]
+      }
+    },
+    "allow": true
+  },
+  {
+    "name": "the bare intranet domain is not a subdomain of itself",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {
+              "url": "https://intranet.example.org/"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "ftp",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "navigate",
+            "params": {
+              "url": "ftp://forms.example.org/"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "non-printable text",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "type",
+            "params": {
+              "selector": "#n",
+              "text": "a\u0007b"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "text with a newline",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "type",
+            "params": {
+              "selector": "#n",
+              "text": "a\nb"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "non-ASCII text",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "type",
+            "params": {
+              "selector": "#n",
+              "text": "café"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "text of 201",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "type",
+            "params": {
+              "selector": "#n",
+              "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "a key that is not listed",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "press",
+            "params": {
+              "key": "Control+A"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "viewport too wide",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "setViewport",
+            "params": {
+              "width": 3000,
+              "height": 800
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "viewport without height",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "setViewport",
+            "params": {
+              "width": 1280
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "viewport width as a string",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "setViewport",
+            "params": {
+              "width": "1280",
+              "height": 800
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "evaluate is denied even though nothing allows it",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "evaluate",
+            "params": {
+              "script": "1"
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  }
+]

@@ -1,0 +1,329 @@
+openapi: 3.1.0
+info:
+  title: browserjs backend API, session policy additions
+  version: "1"
+  description: |
+    A fragment: only what the session-policies work adds or changes. The
+    existing endpoints (`/me`, `/sessions`, `/sessions/{id}`) keep their
+    behaviour except where a schema below adds fields.
+
+    **Two ways in, one set of handlers.**
+
+    | Base URL | Credential | Used by |
+    |---|---|---|
+    | `https://app.<domain>/api` | Pomerium's signed assertion (browser cookie) | the UI |
+    | `https://api.<domain>/v1` | `Authorization: Bearer bjs_<id>_<secret>` | Terraform, scripts |
+
+    Paths below are relative to either base. On the API host nothing else
+    is served, cookies are ignored, and a missing, malformed, expired,
+    revoked or unknown token is `401 {"error": "invalid token"}`.
+
+    **Who may write a policy** depends on the policy's management mode and
+    on the credential:
+
+    | | cookie | token |
+    |---|---|---|
+    | mode `editor` | may write | 409, unless the request sets `management.mode` to `iac` |
+    | mode `iac` | 409 | may write |
+
+    Either credential may change the mode. A token needs the scope
+    `policies:write` to write a policy or its mode, `policies:read` to read
+    one, and `sessions:write` / `sessions:read` for sessions. A token never
+    has admin rights. The `/tokens` endpoints accept the cookie only.
+
+    **Not found and not yours** are both 404, as for sessions today.
+
+    **Errors** are `{"error": "<sentence>"}`; a policy that does not
+    validate adds `errors` (and `warnings`), and a mode refusal adds
+    `managed_url` when the policy is managed as code.
+paths:
+  /sessions:
+    post:
+      summary: Create a session, optionally with a policy.
+      description: |
+        Without `policy`, the session gets the unrestricted policy
+        (`examples/unrestricted.policy.json`). The policy is validated
+        before anything is created; an invalid one is 422 and creates
+        nothing. The answer does not wait for the policy to be loaded: the
+        session's `state` is `starting` until it is.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: {type: string, description: As today. Optional.}
+                policy: {$ref: "#/components/schemas/PolicyInput"}
+      responses:
+        "201": {description: Created., content: {application/json: {schema: {$ref: "#/components/schemas/Session"}}}}
+        "409": {description: Session limit reached (as today)., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "422": {description: The policy does not validate., content: {application/json: {schema: {$ref: "#/components/schemas/PolicyError"}}}}
+    get:
+      summary: List sessions (as today). Each carries `policy`.
+      responses:
+        "200": {description: The sessions., content: {application/json: {schema: {type: array, items: {$ref: "#/components/schemas/Session"}}}}}
+  /sessions/{id}:
+    parameters: [{$ref: "#/components/parameters/id"}]
+    get:
+      summary: One session (as today), with `policy`.
+      responses:
+        "200": {description: The session., content: {application/json: {schema: {$ref: "#/components/schemas/Session"}}}}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /sessions/{id}/policy:
+    parameters: [{$ref: "#/components/parameters/id"}]
+    get:
+      summary: The session's policy, with its source.
+      responses:
+        "200":
+          description: The policy. `ETag` is the version, quoted.
+          headers: {ETag: {schema: {type: string}}}
+          content: {application/json: {schema: {$ref: "#/components/schemas/Policy"}}}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {description: The session predates policies (`state` would be `unsupported`); it has no policy object., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    put:
+      summary: Replace the policy.
+      description: |
+        Validates (through the operator); on success updates the
+        `SessionPolicy` and waits up to 10 seconds for it to be `Ready` at
+        the new version. `If-Match: "<version>"` makes the write
+        conditional. A request that changes nothing is 200 and does not
+        raise the version.
+      parameters:
+        - {name: If-Match, in: header, schema: {type: string}}
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/PolicyInput"}}}
+      responses:
+        "200": {description: Saved and in force on every OPA replica., content: {application/json: {schema: {$ref: "#/components/schemas/Policy"}}}}
+        "202": {description: Saved; not yet loaded everywhere (`state` is `loading`). Poll GET., content: {application/json: {schema: {$ref: "#/components/schemas/Policy"}}}}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {description: This credential may not write in the policy's mode; or the session predates policies., content: {application/json: {schema: {$ref: "#/components/schemas/ModeError"}}}}
+        "412": {description: "`If-Match` is not the current version.", content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "422": {description: The policy does not validate. Nothing was saved., content: {application/json: {schema: {$ref: "#/components/schemas/PolicyError"}}}}
+        "503": {description: The operator could not be reached to validate. Nothing was saved., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+    delete:
+      summary: Reset to the unrestricted policy, in `editor` mode.
+      description: The same rules and answers as PUT. The policy object is kept; a session with none would be denied everything.
+      responses:
+        "200": {description: Reset and in force., content: {application/json: {schema: {$ref: "#/components/schemas/Policy"}}}}
+        "202": {description: Reset; not yet loaded everywhere., content: {application/json: {schema: {$ref: "#/components/schemas/Policy"}}}}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {description: As PUT., content: {application/json: {schema: {$ref: "#/components/schemas/ModeError"}}}}
+  /sessions/{id}/policy/management:
+    parameters: [{$ref: "#/components/parameters/id"}]
+    put:
+      summary: Change who manages the policy. Allowed with either credential, in either mode.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/Management"}}}
+      responses:
+        "200": {description: Changed., content: {application/json: {schema: {$ref: "#/components/schemas/Policy"}}}}
+        "400": {description: "`managed_url` is missing or not https while `mode` is `iac`.", content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /policies/validate:
+    post:
+      summary: Check a policy without saving it. For the editor's diagnostics and Terraform's plan.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/PolicySource"}}}
+      responses:
+        "200": {description: The verdict; an invalid policy is a 200 with `ok` false., content: {application/json: {schema: {$ref: "#/components/schemas/Validation"}}}}
+        "503": {description: The operator could not be reached., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /policies/evaluate:
+    post:
+      summary: Evaluate a policy against a sample call. For the editor's Test.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - {$ref: "#/components/schemas/PolicySource"}
+                - {type: object, required: [input], properties: {input: {description: An mcp_tools input document.}}}
+      responses:
+        "200":
+          description: The outcome.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: {type: boolean}
+                  allow: {type: boolean}
+                  errors: {type: array, items: {$ref: "#/components/schemas/Diagnostic"}}
+  /policy-schema.json:
+    get:
+      summary: The JSON Schema of the JSON policy format.
+      responses:
+        "200": {description: The schema., content: {application/schema+json: {schema: {type: object}}}}
+  /policy-presets:
+    get:
+      summary: The ready-made policies the create page offers.
+      description: The contract's examples, served by the backend from files built into its image.
+      responses:
+        "200":
+          description: The presets, `unrestricted` first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [id, title, description, kind, source]
+                  properties:
+                    id: {type: string, examples: [no-scripting]}
+                    title: {type: string}
+                    description: {type: string}
+                    kind: {type: string, enum: [json, rego]}
+                    source: {type: string}
+  /tokens:
+    get:
+      summary: The caller's API tokens. Cookie only.
+      responses:
+        "200": {description: The tokens, newest first; never the secrets., content: {application/json: {schema: {type: array, items: {$ref: "#/components/schemas/Token"}}}}}
+    post:
+      summary: Create an API token. Cookie only. The secret is in this answer and nowhere else, ever.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, scopes]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 64}
+                scopes: {type: array, minItems: 1, items: {$ref: "#/components/schemas/Scope"}}
+                expires_in_days: {type: integer, minimum: 1, maximum: 365, default: 90}
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: "#/components/schemas/Token"}
+                  - {type: object, required: [token], properties: {token: {type: string, description: "`bjs_<id>_<secret>`"}}}
+        "409": {description: The caller already has 20 tokens., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  /tokens/{token_id}:
+    delete:
+      summary: Revoke a token. Cookie only.
+      parameters: [{name: token_id, in: path, required: true, schema: {type: string}}]
+      responses:
+        "204": {description: Revoked, or there was none.}
+components:
+  parameters:
+    id: {name: id, in: path, required: true, schema: {type: string, pattern: "^s-([a-z2-7]{10}|[a-z0-9]{5})$"}}
+  responses:
+    NotFound: {description: No such session, or not the caller's., content: {application/json: {schema: {$ref: "#/components/schemas/Error"}}}}
+  schemas:
+    Session:
+      type: object
+      description: The existing session object, plus `policy`.
+      properties:
+        id: {type: string}
+        name: {type: string}
+        owner: {type: string}
+        state: {type: string, description: As today. A new session stays `starting` until its policy is `ready`.}
+        mcp_url: {type: string}
+        policy: {$ref: "#/components/schemas/PolicySummary"}
+    PolicySummary:
+      type: object
+      required: [state]
+      properties:
+        kind: {type: string, enum: [json, rego]}
+        version: {type: integer, description: The SessionPolicy's metadata.generation.}
+        hash: {type: string, description: Of the policy in force.}
+        state: {$ref: "#/components/schemas/PolicyState"}
+        management: {$ref: "#/components/schemas/Management"}
+    Policy:
+      allOf:
+        - {$ref: "#/components/schemas/PolicySummary"}
+        - type: object
+          properties:
+            source: {type: string}
+            rego: {type: string, description: "The module in force (status.rego); for kind json the generated one."}
+            errors: {type: array, items: {$ref: "#/components/schemas/Diagnostic"}}
+            warnings: {type: array, items: {$ref: "#/components/schemas/Diagnostic"}}
+            loaded:
+              type: object
+              properties: {replicas: {type: integer}, total: {type: integer}}
+            updated: {type: string, format: date-time, description: status.lastAppliedTime.}
+            updated_by: {type: string, description: '"ui" or "token:<token name>", from the annotation browserjs.dev/updated-by.'}
+    PolicyState:
+      type: string
+      enum: [ready, loading, invalid, unsupported]
+      description: |
+        Derived from the SessionPolicy's status, for the generation `version`:
+
+        | state | when |
+        |---|---|
+        | `ready` | condition Ready is True and its observedGeneration is the current generation |
+        | `invalid` | condition Compiled is False for the current generation (`errors` says why; the previous policy, if any, is still in force) |
+        | `loading` | anything else: not yet observed, or compiled and not yet on every replica |
+        | `unsupported` | the session predates policies; there is no SessionPolicy and none can be made |
+    PolicySource:
+      type: object
+      required: [kind, source]
+      properties:
+        kind: {type: string, enum: [json, rego]}
+        source: {type: string, minLength: 1, maxLength: 65536}
+    PolicyInput:
+      allOf:
+        - {$ref: "#/components/schemas/PolicySource"}
+        - type: object
+          properties:
+            management: {$ref: "#/components/schemas/Management"}
+    Management:
+      type: object
+      required: [mode]
+      properties:
+        mode: {type: string, enum: [editor, iac]}
+        managed_url: {type: string, format: uri, description: "Required, https, when mode is iac."}
+    Validation:
+      type: object
+      required: [ok, errors, warnings]
+      properties:
+        ok: {type: boolean}
+        rego: {type: string}
+        hash: {type: string}
+        errors: {type: array, items: {$ref: "#/components/schemas/Diagnostic"}}
+        warnings: {type: array, items: {$ref: "#/components/schemas/Diagnostic"}}
+    Diagnostic:
+      type: object
+      required: [code, message]
+      description: As in operator-api.yaml. `row` and `col` are 1-based positions in the source.
+      properties:
+        row: {type: integer}
+        col: {type: integer}
+        code: {type: string}
+        message: {type: string}
+    PolicyError:
+      type: object
+      required: [error, errors]
+      properties:
+        error: {type: string}
+        errors: {type: array, items: {$ref: "#/components/schemas/Diagnostic"}}
+        warnings: {type: array, items: {$ref: "#/components/schemas/Diagnostic"}}
+    ModeError:
+      type: object
+      required: [error]
+      properties:
+        error: {type: string, examples: ["this policy is managed externally", "this policy is managed in the editor"]}
+        managed_url: {type: string}
+    Scope: {type: string, enum: ["sessions:read", "sessions:write", "policies:read", "policies:write"]}
+    Token:
+      type: object
+      required: [id, name, scopes, created, expires]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        scopes: {type: array, items: {$ref: "#/components/schemas/Scope"}}
+        created: {type: string, format: date-time}
+        expires: {type: string, format: date-time}
+        last_used: {type: string, format: date-time}
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: {type: string}
