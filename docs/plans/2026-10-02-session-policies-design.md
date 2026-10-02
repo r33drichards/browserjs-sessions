@@ -1,9 +1,9 @@
 # Session policies: design
 
 Status: proposal, for review. No product code is written and nothing is
-deployed. Revision 2: folds in the product owner's decisions on the first
-draft (below). Open questions are in the last section, each with a
-recommended default.
+deployed. Revision 3: the product owner's decisions so far are folded in
+(below). Open questions are in the last section, each with a recommended
+default.
 
 ## The request
 
@@ -19,64 +19,68 @@ recommended default.
 
 ## Decisions already made
 
-These came back from the product owner on the first draft and are settled:
+Settled by the product owner while this document was being written:
 
 1. **Policies govern mcp-js only.** A person at the VNC view, and where
    Chromium navigates on its own, are out of scope ("the VNC is different and
-   that's okay"). No URL allow-lists in Chromium, no NetworkPolicy work.
-2. **Applying a policy restarts mcp-js.** The policy is saved somewhere
-   durable; applying it restarts that session's mcp-js. No hot reload. A
-   policy can be set when the session is created, which for a session adopted
-   from the warm pool means save and restart right after adoption. Fail
-   closed if the policy cannot be loaded.
-3. **Session creation becomes a full page** (Cloudscape's single page
-   create), and a policy is a **sub-resource of a session**, following
-   Cloudscape's sub-resource patterns.
-4. The data model, the editor-or-IaC switch and the Terraform resources
-   follow from "a policy belongs to one session".
+   that's okay").
+2. **Enforcement is OPA-native and shared.** mcp-js asks an OPA server for
+   each decision, over the data API it already speaks. That server is **one
+   multi-tenant OPA Deployment**, not a sidecar in every pod. A policy change
+   takes effect without restarting anything.
+3. **State lives in a custom resource, reconciled by an operator.** "Don't
+   save state in the backend, but create a CRD for it and use an operator
+   with kopf." The backend is a thin client of that resource.
+4. **A policy is a sub-resource of one session**, set at creation or later.
+   Session creation becomes Cloudscape's single page create; the policy
+   follows Cloudscape's sub-resource patterns.
+5. The browser MCP server's loopback hole (section 7.2) is **fixed** in
+   PR #30, merged.
 
 ## Summary of the proposal
 
-- A session has **at most one policy**, of kind `json` (a small declarative
-  format) or `rego` (raw OPA). JSON is compiled to Rego by the backend when
-  it is saved, so mcp-js loads one thing. A session with no policy runs the
-  built-in one, which is today's behaviour.
-- The policy is **stored on the session's Sandbox** (annotations), so it
-  lives and dies with the session and the backend stays stateless.
-- **Applying**: the backend sends the compiled policy, signed, to a small
-  supervisor that replaces `start.sh` as PID 1 of the mcp-js container. The
-  supervisor writes it to the session disk and restarts the `mcp-v8` process
-  with it. The same step runs after warm adoption, and the copy on the disk
-  is what a cold wake or a snapshot restore starts from.
-- **A gate in the backend's proxy** forwards MCP traffic only while the pod
-  reports the policy the Sandbox says it should have. That is what makes a
-  policy changed while the session slept, a failed load, or a pod that never
-  got its policy all fail closed.
+```
+ UI / Terraform ──▶ backend ──▶ SessionPolicy (custom resource, one per session)
+                                      │ watch
+                                      ▼
+                               policy operator (kopf)
+                     validate · JSON→Rego · namespace · build bundle
+                                      │ bundle (polled)
+                                      ▼
+ session pod: mcp-js ──POST /v1/data/browserjs/decision/<session>/mcp_tools──▶ OPA ×2
+```
+
+- **`SessionPolicy`**, a namespaced custom resource named after its session
+  and owned by the session's Sandbox, holds the policy: kind `json` or
+  `rego`, the source, and the management mode. Its `status` carries
+  validation errors with line and column, and whether OPA has loaded it.
+- **The operator** (Python, kopf) turns every `SessionPolicy` into Rego under
+  that session's own package, checks it with the same `opa` binary the
+  servers run, and publishes one bundle that the OPA replicas poll. It is
+  also the one place policies are validated: the backend's "validate"
+  endpoint for the editor calls it.
+- **OPA**: two replicas on the system pool. Each session's mcp-js is
+  configured, from the pod's own name, to ask for
+  `browserjs/decision/<session id>/mcp_tools`. Nothing is pushed into a pod,
+  so warm-adopted and snapshot-restored pods need nothing done to them. No
+  policy loaded for a session means deny.
+- **Backend**: creates, reads, updates and deletes `SessionPolicy` objects on
+  behalf of the signed-in owner (or their API token), and enforces who may
+  write in which management mode. It keeps no policy state.
 - **Management mode is per session's policy**: `editor` (Monaco in the UI) or
-  `iac` (read-only in the UI, with a link to where it is managed; only API
-  tokens write).
-- **API tokens** issued by the backend, on a separate host that Pomerium
-  passes through and the backend verifies itself, are how Terraform signs in.
-- A **Terraform/OpenTofu provider** `browserjs` with `browserjs_session` and
-  `browserjs_session_policy`.
+  `iac` (read-only in the UI, with a link; only API tokens write).
+- **Terraform/OpenTofu provider** `browserjs`: `browserjs_session` and
+  `browserjs_session_policy`, signing in with backend-issued API tokens.
 - **UI**: `/sessions/create` as a single page create with a Policy section;
-  the session page becomes a details page with tabs, one of them Policy;
-  editing the policy is a page edit with Monaco.
+  the session page becomes a details page with tabs; editing the policy is a
+  page edit with Monaco.
 - Version 1 governs **the upstream MCP tool calls mcp-js makes**, which in a
   session means the operations of `browser_execute` and their parameters.
-  mcp-js's other capabilities (`fetch`, module imports) are a later phase.
 
-Two findings are worth reading first:
-
-1. cua-driver's simple format is **YAML, not JSON, and it is not translated
-   to Rego**: it is a second engine evaluated natively, next to a Rego engine
-   (section 1.1). This design does what the request describes (JSON compiled
-   to Rego) rather than what cua-driver does.
-2. A policy on `browser_execute` can be **walked around from inside the pod**
-   today, because the browser MCP server on `127.0.0.1:8081` accepts any
-   caller, including a page in the Chromium it drives (section 7.2). This is
-   about an agent evading the mcp-js policy, not about governing the browser,
-   so it is inside the scope decided above. It needs a small fix.
+One finding to read first: cua-driver's simple format is **YAML, not JSON,
+and it is not translated to Rego**; it is a second engine evaluated natively
+next to a Rego engine (section 1.1). This design does what the request
+describes (JSON compiled to Rego) rather than what cua-driver does.
 
 ---
 
@@ -224,7 +228,7 @@ Sources: `server/src/engine/opa.rs`, `server/src/engine/hooks.rs`,
   `mcp_tools.rego` allows exactly `browser` / `browser_execute`;
   `filesystem.rego` allows only `/data/memory`. No `fetch`, `subprocess` or
   `modules` source, so those capabilities do not exist in a session.
-- **What lives where**: heap persistence is off (`MCP_V8_HEAP_STORE=none`).
+- **What lives where** (relevant to option A in 4.1): heap persistence is off (`MCP_V8_HEAP_STORE=none`).
   Artifacts, upload grants and the MCP session database
   (`MCP_V8_SESSION_DB_PATH=/data/mcp/sessions`) are on the session disk.
 - **How the container starts**: `start.sh` is PID 1, waits for the browser
@@ -238,6 +242,22 @@ The `mcp_tools` input carries the whole `browser_execute` call, so a policy
 can read `arguments.operations[]` (`navigate`, `evaluate`, `click`, `type`, …
 from `images/browser/browser/server.js`). That is the lever version 1 uses.
 It constrains what the agent asks for through mcp-js, which is the scope.
+
+**What exactly mcp-js sends to a remote source** (`OpaClient::evaluate`,
+`opa.rs`):
+
+- `POST {url}/v1/data/{policy_path}`, with a trailing `/` trimmed from
+  `url`. `url` may therefore carry a path prefix; a query string would be
+  broken by the concatenation. `policy_path` is configurable per source and
+  defaults to `mcp/tools` for `mcp_tools`.
+- Body `{"input": <the category's input document>}`. No headers beyond the
+  HTTP client's own; there is no setting for a token or a header.
+- The answer is read as `result.allow`. A missing `result` (OPA's answer for
+  an undefined document) or a missing `allow` is **false**. A non-2xx status,
+  a body that does not parse, or no answer in 5 seconds is an error, and "is
+  treated as a policy error, not a permit".
+- The input does not say which session is asking. The only thing that can
+  differ per session is the URL, and so the path.
 
 ### 1.4 An editor in the React app
 
@@ -360,48 +380,141 @@ when the UI is built.
   request names the VS Code editor, so this design embeds Monaco in a
   Cloudscape container and borrows the code editor's layout (editor above, a
   status bar with error and warning counts, a problems pane).
+### 1.7 OPA as a shared service, kopf, and kube-mgmt
+
+OPA (openpolicyagent.org/docs, read through a summarising fetch):
+
+- **Bundles.** OPA polls a bundle service (`min_delay_seconds` /
+  `max_delay_seconds`, or long polling with
+  `long_polling_timeout_seconds`), sends `If-None-Match` with the last
+  `Etag`, and the service answers 304 when nothing changed. A bundle declares
+  the `roots` it owns. "If activation fails, OPA maintains its previous
+  active bundle and reports errors via the Status API." With `persist`, "OPA
+  will attempt to read the bundle from disk on startup".
+- **Health.** `/health?bundles` "returns 200 if all configured bundles are
+  activated; returns 500 otherwise".
+- **Undefined.** "The server returns 200 if the path refers to an undefined
+  document. In this case, the response will not contain a `result`
+  property", which mcp-js reads as deny.
+- **Authorization of the API itself.** `--authentication=token
+  --authorization=basic` and a `system.authz` policy whose input has
+  `identity`, `method`, `path` (as an array), `headers`, `params`, `body`.
+  It has no client address.
+- **No server-side query timeout** is documented.
+- **Capabilities**: the set of built-in functions a policy may use is a file
+  given to `opa check` / `opa build` (and to the Go compiler); a policy that
+  uses anything else does not compile.
+
+kopf (docs.kopf.dev):
+
+- Deployment: one replica, `strategy.type: Recreate`. "If two or more
+  operators run in the cluster for the same objects, they will collide".
+- Peering: operators see each other through `KopfPeering` objects and the
+  lower priority pauses; `--standalone` turns that off.
+- RBAC it wants beyond the operator's own resources: list and watch on
+  `customresourcedefinitions` (cluster), and `events` create.
+- Testing: `kopf.testing.KopfRunner` "runs an arbitrary operator in the
+  background" but "against the currently authenticated cluster"; KMock
+  simulates the API without one.
+
+kube-mgmt (github.com/open-policy-agent/kube-mgmt), considered as prior art:
+a sidecar beside OPA that loads policies from ConfigMaps labelled
+`openpolicyagent.org/policy=rego` and writes the outcome to an annotation,
+`openpolicyagent.org/kube-mgmt-status`. It is not used here because the
+product owner chose a CRD and a kopf operator, and because it would not do
+the three things this design needs between the stored policy and OPA:
+compiling JSON to Rego, rewriting each policy into its session's namespace,
+and refusing built-ins. A ConfigMap is also untyped, has no `status`, and
+would need the backend to hold `configmaps` rights in a namespace that also
+contains Pomerium's configuration.
 
 ---
 
 ## 2. Data model
 
-### 2.1 A session's policy
+### 2.1 `SessionPolicy`
 
 A policy is a sub-resource of a session: it belongs to exactly one session,
-is created, read and deleted through that session, and goes when the session
-goes. A session has zero or one.
+is reached through that session in the API and UI, and goes when the session
+goes. **Every session has one**, created by the backend with the session. A
+session whose owner chose nothing gets the unrestricted policy
+(`{"version": 1, "allow": {"operations": ["*"]}}`), which is what a session
+does today. There is deliberately no "no policy means allow": no policy
+means deny (section 4.5), so a pod with no owner has nothing to be allowed
+by.
 
-| Field | Meaning |
-|---|---|
-| `kind` | `json` or `rego` |
-| `source` | what the author wrote, at most 64 KiB |
-| `rego` | what mcp-js loads: `source` for `rego`, the compiled module for `json` (derived, read-only) |
-| `version` | counts saves for this session, starting at 1; never goes down |
-| `sha256` | of `rego`; what the pod reports back as applied |
-| `management` | `{mode: "editor" \| "iac", managed_url}` (section 2.3) |
-| `updated`, `updated_by` | when, and `ui` or the token's name |
-| `status` | `applied`, `pending` (saved; the session is not running), `failed` (with the pod's message), or `unsupported` (section 4.6) |
+```yaml
+apiVersion: browserjs.dev/v1alpha1
+kind: SessionPolicy
+metadata:
+  name: s-abcde                    # the session's ID; one policy per session
+  namespace: browserjs-sessions    # beside the Sandbox, so it can be owned by it
+  ownerReferences:                 # deleting the session garbage-collects the policy
+    - apiVersion: agents.x-k8s.io/v1beta1
+      kind: Sandbox
+      name: s-abcde
+      uid: …
+  annotations:
+    browserjs.dev/updated-by: ui   # or "token:ci"
+spec:
+  sessionRef:
+    name: s-abcde
+  kind: json                       # json | rego
+  source: |
+    {"version": 1, "allow": {"operations": ["*"]}, "deny": {"operations": ["evaluate"]}}
+  management:
+    mode: editor                   # editor | iac
+    managedURL: ""                 # required, https, when mode is iac
+status:
+  observedGeneration: 4
+  hash: sha256:9f2c…               # of the Rego that was built for this generation
+  rego: |                          # the generated module, for kind json (shown read-only in the UI)
+    …
+  errors:                          # empty when it compiles
+    - {row: 4, col: 21, code: rego_parse_error, message: "…"}
+  loaded: {replicas: 2, total: 2, revision: "1837"}
+  lastAppliedTime: "2026-10-02T12:01:07Z"
+  conditions:
+    - {type: Compiled, status: "True",  reason: Compiled, observedGeneration: 4}
+    - {type: Loaded,   status: "True",  reason: AllReplicas, message: "2/2 replicas", observedGeneration: 4}
+    - {type: Ready,    status: "True",  observedGeneration: 4}
+```
 
-No policy means the **built-in policy**: any `browser_execute` operation,
-which is exactly what a session does today. Nothing changes for a user who
-never opens the Policy tab.
+- **Group and version**: `browserjs.dev/v1alpha1` (the group the repo's
+  annotations already use). Kind `SessionPolicy`, plural `sessionpolicies`,
+  short name `spol`. Namespaced. `status` is a subresource: only the operator
+  writes it, and a `spec` change bumps `metadata.generation`, which is the
+  policy's version and the `If-Match` value in the API.
+- **Validation in the schema** (OpenAPI and CEL, so `kubectl` cannot make an
+  impossible object either):
+  - `spec.source`: required, `maxLength: 65536`;
+  - `spec.kind`: enum;
+  - `self.metadata.name == self.spec.sessionRef.name`;
+  - `self.spec.management.mode != 'iac' || self.spec.management.managedURL.startsWith('https://')`;
+  - `spec.sessionRef` is immutable (`self == oldSelf`).
+- **Printer columns**: Session, Kind, Mode, Ready, Loaded (`2/2`), Age.
+- **Conditions**: `Compiled` (False with the first error as message; the
+  full list is in `status.errors`), `Loaded` (every ready OPA replica serves
+  this generation's hash), `Ready` (both). Each carries
+  `observedGeneration`, so a reader can tell "ready, for the version before
+  your edit" from "ready".
+- **A policy that does not compile** stays stored (it is what the author
+  wrote) with `Compiled=False`. What is enforced for that session is section
+  4.5's business: the last good one keeps being served until it is replaced,
+  and a session that never had a good one is denied.
+- **Finalizer**: kopf's own, so the operator sees the delete and takes the
+  session out of the bundle before the object disappears.
 
 ### 2.2 Reuse across sessions
 
 There are no shared policy objects and no account-wide default. Reuse is:
 
 - **By copy, in the UI.** The Policy section of the create page, and the
-  policy edit page, offer "Copy from another session", which fills the editor
-  with that session's source. The copy is independent from then on.
+  policy edit page, offer "Copy from a session", which fills the editor with
+  that session's source. The copy is independent from then on.
 - **By Terraform.** One `file()` or local value referenced by several
   `browserjs_session_policy` resources, or a `for_each`. This is the answer
-  for anyone who wants one policy kept the same across sessions: that is
-  what IaC is for.
-
-A shared "policy library" was the first draft's model. It is dropped: it
-makes the policy a resource of its own with a lifecycle of its own, which is
-what "sub-resource" rules out, and "who else is using this policy" is a
-question the simple model never has to answer.
+  for anyone who wants one policy kept the same across sessions.
 
 ### 2.3 Management mode
 
@@ -411,17 +524,14 @@ policy file; per session's policy is the same thing here. It also lets one
 user keep a Terraform-managed session beside a scratch session edited by
 hand, which a per-account switch would forbid.
 
-```json
-{ "mode": "editor" | "iac", "managed_url": "https://github.com/me/infra/blob/main/browserjs/research.tf" }
-```
-
-`managed_url` is required in `iac` mode and must be `https`.
+The backend enforces it, because it is about which credential is writing;
+the custom resource only records it.
 
 | | `editor`, UI (cookie) | `editor`, API token | `iac`, UI (cookie) | `iac`, API token |
 |---|---|---|---|---|
 | Read the policy, validate, test | yes | yes | yes | yes |
-| Save or delete the policy | yes | **no (409)** | **no (409)** | yes |
-| Change `mode` and `managed_url` | yes | yes | yes | yes |
+| Save or reset the policy | yes | **no (409)** | **no (409)** | yes |
+| Change `mode` and `managedURL` | yes | yes | yes | yes |
 | Rename, stop, resume, delete the session | yes | yes | yes | yes |
 
 - A token's save may carry `management` in the same request, so "take this
@@ -434,43 +544,22 @@ hand, which a per-account switch would forbid.
   the change as drift on its next plan.
 - An MCP client (the agent) can do none of this: the MCP route reaches only
   a session's `/mcp`, never the API.
+- Someone with `kubectl` and rights on the resource can write past the
+  switch. That is a cluster administrator, and is accepted.
 
-### 2.4 Where it is stored
+### 2.4 Where state is, and is not
 
-**Recommended: on the session's Sandbox, as annotations**, beside the owner
-and name it already carries: `browserjs.dev/policy-source`, `-kind`,
-`-version`, `-mode`, `-managed-url`, `-updated-by`. The compiled Rego is not
-stored; it is derived from the source when applying.
-
-- Its lifecycle is the session's: deleted with it, no orphans, nothing to
-  sweep.
-- No new RBAC: the backend already updates Sandboxes, and only Sandboxes.
-- Setting it at creation is the same write that makes the session: for a cold
-  session the create; for a warm one the compare-and-swap in `adopt()` that
-  writes the owner. The `SandboxClaim` carries it too, as it carries the
-  owner, so `RecoverClaims` can finish an adoption after a crash without
-  losing the policy.
-- `resourceVersion` is not a usable ETag (the Sandbox changes for other
-  reasons), so `If-Match` uses the policy `version`.
-
-Costs and what to check in the phase 0 spike: annotations total at most
-256 KiB an object, which the 64 KiB limit respects; every list of sessions
-now carries the policy sources (five sessions a user: at most 320 KiB a
-poll; the list handler can ask for metadata it needs only if that hurts);
-and it must be confirmed that neither the Sandbox controller nor the claim
-controller copies Sandbox annotations onto the pod (UNVERIFIED).
-
-Alternatives:
-
-| Alternative | Cost |
+| State | Where |
 |---|---|
-| A ConfigMap per session | needs `configmaps` RBAC, and RBAC cannot select by label: in the sessions namespace that would let the backend rewrite Pomerium's config, so it means a second namespace, where an `ownerReference` to the Sandbox cannot reach; the backend deletes it itself and sweeps orphans |
-| A CRD (`sessionpolicies.browserjs.dev`) | typed, owner-referenced, clean RBAC; a cluster-scoped object to install and version. The better home if policies grow history or status |
-| A database | history and audit for free; the backend's first stateful dependency |
+| The policy, its mode and link | `SessionPolicy.spec` |
+| Whether it compiled, the errors, the generated Rego, whether OPA has it | `SessionPolicy.status`, written by the operator |
+| What OPA enforces | OPA's memory, rebuilt from the bundle; the bundle is rebuilt from the custom resources |
+| API tokens (section 6.2) | `APIToken` custom resources holding a hash |
+| In the backend | nothing |
 
-The copy **in the pod** (section 4) is on the session disk, written by the
-supervisor. It is a cache of what the Sandbox says, never the source of
-truth.
+The backend's Role gains verbs on `sessionpolicies` (get, list, create,
+update, patch, delete) and on `apitokens`, and nothing else. It never writes
+`status`.
 
 ---
 
@@ -552,34 +641,33 @@ warning.
 
 ### 3.3 Translation to Rego
 
-The backend compiles JSON to one Rego module on save. The contract for any
-policy, generated or written by hand:
+What an author writes, in either kind, ends as one Rego module with this
+contract:
 
-- package `browserjs.policy`;
+- package `browserjs.policy` (the operator rewrites it to the session's own
+  package, section 4.4);
 - `allow_tool_call` decides an upstream MCP tool call; undefined or false
   denies. (`allow_fetch` and `allow_module` are reserved for phase 2.)
 - `input` is mcp-js's `mcp_tools` document (section 1.3), unchanged.
 
-The policy is evaluated **in the pod by regorus**, as the second source of
-the `mcp_tools` chain, after the platform's own file (section 4.2). Two
-consequences:
+The translation from JSON is done by the **operator**, in Python, and nowhere
+else: the backend's validate endpoint calls the operator (section 4.4), so
+the editor, the API, Terraform's plan and the reconcile all run the same
+code against the same `opa` binary.
 
-- The translator emits a deliberately small subset of Rego (`in`, `every`,
-  comparisons, `count`, `lower`, `is_string`, `is_number`, `regex.match`,
-  `startswith`, `endswith`), and phase 0 confirms each against the mcp-js
-  image. Whether regorus as built into mcp-js has every one is UNVERIFIED.
-- There is no URL parser. A `hosts` or `schemes` constraint compiles to one
-  anchored regular expression over the lower-cased URL that only matches
-  `scheme://host[:port]` followed by `/`, `?`, `#` or the end, with the host
-  drawn from `[a-z0-9.-]`. A URL with userinfo, a backslash, whitespace, a
-  percent-encoded or non-ASCII host does not match and is denied. That is
-  stricter than a parser and has no parser to disagree with Chromium's.
+There is no URL parser in Rego. A `hosts` or `schemes` constraint compiles
+to one anchored regular expression over the lower-cased URL that only
+matches `scheme://host[:port]` followed by `/`, `?`, `#` or the end, with
+the host drawn from `[a-z0-9.-]`. A URL with userinfo, a backslash,
+whitespace, or a percent-encoded or non-ASCII host does not match and is
+denied. That is stricter than a parser, and has no parser to disagree with
+Chromium's.
 
 The second example compiles to (illustrative; golden tests in the
 implementation fix the exact text):
 
 ```rego
-# Generated from the JSON policy of session s-abcde, v3. Edit the JSON, not this.
+# Generated from the JSON policy of session s-abcde, generation 3. Edit the JSON, not this.
 package browserjs.policy
 
 import rego.v1
@@ -608,239 +696,398 @@ operation_allowed(op) if {
 ```
 
 The translator is a pure function with table-driven tests: for each example,
-the generated Rego (golden file) and inputs whose decisions are asserted,
-run twice, once with the Go OPA library and once through the real mcp-js
-image, so the JSON semantics, OPA and regorus cannot drift apart unnoticed.
-The UI shows the generated Rego read-only and offers "Convert to Rego", one
-way.
-
-Validation before a save:
-
-1. `json`: schema check, then compile to Rego.
-2. Parse and compile with the Go OPA library, for errors with row and column.
-3. The package must be `browserjs.policy`, and `allow_tool_call` must exist.
-4. Evaluate a fixed set of sample inputs with a deadline.
-
-That is the fast feedback. The check that counts is the pod loading it
-(section 4.3): OPA and regorus are two implementations, and a policy OPA
-accepts may be one regorus refuses.
+the generated Rego (golden file) and inputs whose decisions are asserted by
+running `opa eval`. The UI shows the generated Rego read-only
+(`status.rego`) and offers "Convert to Rego", one way.
 
 ---
 
-## 4. Applying a policy
+## 4. Enforcement
 
-### 4.1 What has to be true
+### 4.1 The options, side by side
 
-- The pod is usually **already running** when it gets an owner (warm pool),
-  and its pod spec and env cannot be changed then.
-- The backend cannot exec into a pod (no such RBAC, and the browser image
-  has no shell tools), and a pod can reach only the internet: not the
-  backend, not the API server.
-- Kubernetes has no "restart this one container" request.
-- After a **cold wake** the container starts from nothing; after a
-  **snapshot restore** the processes resume with the memory they had.
-- Anything listening inside the pod is reachable from Chromium over
-  loopback, so from a page, so from the agent.
+Per-session policy has to reach a pod that is usually already running when
+it gets an owner (warm pool), and has to be right after a sleep and a
+restore from a Pod Snapshot, where processes resume with the memory they
+had. A session pod requests 0.2 CPU and 1280 Mi, and memory decides that
+nine fit a node (12097 Mi for sessions; `deploy/gke/warmpool.yaml`).
 
-### 4.2 Mechanism: a supervisor in the mcp-js container
+| | A. Save, then restart mcp-js | B. Backend is the decision point | C1. **One shared OPA** (chosen) | C2. OPA sidecar per pod |
+|---|---|---|---|---|
+| How a change applies | backend pushes a file into the pod and a supervisor restarts `mcp-v8` | next call; the backend evaluates | next call after the replicas poll the bundle (seconds) | next call after the sidecar polls its bundle |
+| Restart, and what it loses | yes: `run_js` in flight, client connections | none | none | none |
+| Latency per governed call | none (in-process regorus) | one in-cluster round trip | one in-cluster round trip | loopback |
+| Fails closed when | the pod's policy is not the stored one: needs a gate in the proxy | backend unreachable or slow: mcp-js denies | OPA unreachable, slow, or has nothing for the session: mcp-js denies | sidecar down or not yet loaded: mcp-js denies |
+| Shared fate | none | backend down: no decisions (but no MCP either, it is the proxy) | OPA down: every governed call in every session is denied | none |
+| Cost per pod | a supervisor process, about 10 Mi | none | none | about 50m CPU and 64 to 128 Mi (UNVERIFIED): 1344 Mi a session still packs nine a node, with 1 Mi to spare; 1408 Mi packs eight |
+| Cost elsewhere | none | owners' Rego runs in the backend process | two OPA replicas on the system pool, about 100m and 256 Mi each | a bundle endpoint every pod polls |
+| Warm-adopted pod | must be pushed to and restarted right after adoption | nothing to do | nothing to do | starts polling when it has an owner; denied until loaded |
+| Snapshot-restored pod | holds the policy it had; must be compared and re-pushed at every wake | nothing to do | nothing to do | the sidecar resumes with an old bundle until its next poll |
+| How a pod is tied to its own session | bundle signed by the backend for that session ID | source address checked against the Sandbox | the path in the pod's own configuration; the pod never fetches a policy, only asks for decisions | the pod fetches a bundle by name; any pod could ask for another's source unless a per-pod secret exists, and a warm pod has none |
+| Engine that validates / enforces | OPA / regorus (two dialects) | OPA / OPA | OPA / OPA | OPA / OPA |
+| Effort | supervisor, signing, gate, restart handling: the most moving parts | smallest: one handler, one NetworkPolicy rule | operator, bundle service, OPA Deployment, per-tenant namespacing | C1's operator plus a third container in two pod templates and per-pod bundles |
 
-`start.sh` is already PID 1 of the container, starts `mcp-v8` as a child and
-forwards signals. It is replaced by a small static Go binary,
-`mcp-supervisor`, built in this repo and added to the mcp-js image, which
-does what `start.sh` does and three things more.
+**Chosen: C1**, by the product owner. It has no restart, keeps the backend
+out of the request path and the owners' Rego out of the backend process,
+costs the session nodes nothing, and needs nothing done to a warm or
+restored pod.
+
+**C2 is the documented alternative**, for when shared fate or tenant
+isolation matters more than nodes: the same operator, the same custom
+resource, per-session bundles in place of one, and a sidecar in the pod
+template. Moving from C1 to C2 changes where OPA runs and one URL.
+
+**Rejected**: A, because it interrupts running work to change a rule, needs
+a gate to stay correct across sleep and restore, and enforces with a
+different engine from the one that validates. B, because it puts every
+decision and every owner's Rego in the single backend process; the product
+owner prefers OPA's own machinery to a decision endpoint written here.
+
+### 4.2 The request path
 
 ```
-backend ──PUT /policy (signed bundle)──▶ pod :8082  mcp-supervisor (PID 1)
-        ◀── 200 {version, sha256} ─────             │ writes /data/mcp/policy/
-        ──GET /policy ─────────────────▶            │ stops and starts
-                                                    ▼
-                                                 mcp-v8 :8080  (policy chain built at start)
+MCP client ─ Pomerium ─ backend ─ pod: mcp-js ─ run_js ─ mcp.callTool("browser", "browser_execute", …)
+                                        │
+                                        │ 1. file:///etc/mcp/mcp_tools.rego         (platform layer, in-process)
+                                        │ 2. POST http://opa:8181/v1/data/browserjs/decision/s-abcde/mcp_tools
+                                        ▼                                {"input": {…}} → {"result": {"allow": true}}
+                                    OPA (2 replicas, system pool)
 ```
 
-1. **It holds the policy.** `/data/mcp/policy/current/` on the session disk
-   has `policy.rego` and `bundle.json` (session ID, version, sha256, the
-   signature). The disk is mounted at that path only in the mcp-js
-   container, and `run_js` cannot write there: the filesystem policy allows
-   `/data/memory` only, and that policy is the platform's, not the owner's.
-2. **It builds mcp-v8's configuration.** `MCP_V8_POLICIES_JSON` is no longer
-   fixed in the image; the supervisor sets it for the child:
+**Pod template** (blueprint and warm-pool template). `MCP_V8_POLICIES_JSON`
+moves from the image's `ENV` to the pod's env so that it can name the
+session. The warm template already sets `SESSION_ID` from the pod's name,
+and a warm pod keeps its name through adoption; the cold blueprint has
+`{{ .ID }}`:
 
-   ```json
-   {
-     "mcp_tools":  { "mode": "all", "policies": [
-       { "url": "file:///etc/mcp/mcp_tools.rego" },
-       { "url": "file:///data/mcp/policy/current/policy.rego",
-         "rule": "data.browserjs.policy.allow_tool_call" } ] },
-     "filesystem": { "policies": [ { "url": "file:///etc/mcp/filesystem.rego" } ] }
-   }
-   ```
+```json
+{
+  "mcp_tools":  { "mode": "all", "policies": [
+    { "url": "file:///etc/mcp/mcp_tools.rego" },
+    { "url": "http://opa.browserjs-sessions.svc:8181",
+      "policy_path": "browserjs/decision/$(SESSION_ID)/mcp_tools" } ] },
+  "filesystem": { "policies": [ { "url": "file:///etc/mcp/filesystem.rego" } ] }
+}
+```
 
-   The first source is the platform's layer (only `browser` /
-   `browser_execute`), and the mode is `all`: the owner's policy can only
-   narrow it, as cua-driver's managed layer works. With no policy on the
-   disk the second source is left out, which is the built-in policy.
-3. **It applies a new one.** `PUT /policy` on port 8082 with a bundle. The
-   supervisor verifies it (below), writes it to `next/`, stops `mcp-v8`
-   (TERM, a few seconds, then KILL), starts it with the new configuration
-   and waits for it to answer on `127.0.0.1:8080`. If it comes up, `next/`
-   becomes `current/` and the answer is `200`. If it does not (regorus
-   refused the file), the supervisor restarts `mcp-v8` with the previous
-   `current/`, and answers `422` with the tail of `mcp-v8`'s stderr.
-   `DELETE /policy` (signed the same way) returns to the built-in policy.
-4. **It reports.** `GET /policy` answers `{version, sha256, state}` for what
-   the running `mcp-v8` was started with. No authentication; it reveals a
-   hash.
+The local file stays first: it is the platform's layer (only `browser` /
+`browser_execute`), costs nothing, and the owner's policy can only narrow
+it, as cua-driver's managed layer works. `filesystem` is unchanged and not
+owner-configurable.
 
-**Restarting the process, not the container.** The decision says "restarts
-the mcp-js container". The supervisor restarts `mcp-v8` inside the container,
-which has the same effect on mcp-js (it reads its policies again from
-nothing) and avoids what a container exit brings: the kubelet's restart
-back-off (ten seconds, doubling, for a container that exits repeatedly), a
-restart count that looks like crashing, and the pod going unready. If a true
-container restart is wanted, the supervisor exiting after writing `next/` is
-a one-line change and the rest of the design stands (open question 8).
+### 4.3 How the session is identified (the crux)
 
-**The bundle is signed.** The port is reachable from the backend
-(NetworkPolicy: one more ingress port, 8082, from `app: backend`) but also
-from anything in the pod over loopback, and a page that could `PUT` a policy
-would be the agent writing its own rules. So:
+mcp-js sends nothing that names the session (section 1.3): no header can be
+configured, and the input is the category's document. The one thing that
+differs per pod is the **path**, so the session ID goes there, taken from
+the pod's own name. Considered and not used:
 
-- the backend signs `(session ID, version, sha256, rego)` with an Ed25519
-  key from a Secret; the pod template carries the public key in env, which
-  is the same for every pod and so fine for warm ones;
-- the supervisor requires the session ID to be its own (`SESSION_ID`, which
-  the warm template already sets from the pod's name), so another session's
-  bundle is refused;
-- it requires the version to be higher than the one on its disk, so an old,
-  weaker policy of the same session cannot be replayed;
-- key rotation: the env carries a list of keys; a Sandbox's env is fixed at
-  creation, so the backend keeps signing with a key a session trusts for as
-  long as that session exists.
-
-Alternatives considered for the trigger:
-
-| Mechanism | Why not |
+| Way | Why not |
 |---|---|
-| `start.sh` watching a version file | something still has to write the file into the pod; that is the supervisor's endpoint with extra steps |
-| A liveness probe keyed on the policy version | probes are part of the pod spec, fixed for a warm pod; and it is a container restart with back-off |
-| A ConfigMap volume | a pod template cannot name a per-pod ConfigMap, and warm pods exist before their session |
-| mcp-js fetching from the backend at start | session pods cannot reach the backend, by design |
-| A shutdown endpoint in mcp-js | a change to mcp-js itself, and still needs the policy delivered |
+| A per-session secret in the URL | a warm pod is running before it has a session; its env cannot be changed afterwards, and the secret would have to exist for every pod in the pool |
+| A header or token | mcp-js has no setting for one |
+| Source address, mapped by something that knows pod IPs | OPA's authorization input has no client address; it would take a proxy in front of OPA, which is option B again |
 
-### 4.3 The flows
+**The trust argument.** What matters is that a restricted agent cannot get
+its own calls judged by a different policy.
 
-**Save and apply, session running** (the UI's Save, a token's `PUT`):
+- Which path a session's mcp-js asks is fixed in the pod spec, written by
+  the Sandbox controller from a template; neither the owner nor the agent
+  sets it. The agent's code runs inside `run_js`: it cannot change mcp-js's
+  configuration, and in v1 it has no `fetch`, no subprocess, and a
+  filesystem of `/data/memory` only. Whether `run_js` can read the process
+  environment is UNVERIFIED, and does not matter: the session ID is in the
+  session's hostname already.
+- The decision for a call is made by mcp-js asking its own path. Nothing an
+  agent sends to OPA changes that; OPA's API is read-only to it (below).
+- **What an agent could do**: session pods can reach OPA's port (the
+  NetworkPolicy allows the pod, and Chromium is in the pod), so a page, or
+  an agent allowed `evaluate`, could `POST` to another session's decision
+  path and learn, one yes or no at a time, what that session's policy
+  allows. Warm-pool IDs are five characters, so they can be guessed. That
+  is a disclosure of another user's policy by probing, not a way to act in
+  their session or change anyone's enforcement. It is accepted for v1 and
+  is one of the things C2 would remove (open question 6).
+- **What it could not do**: read policy sources (`GET /v1/policies` and the
+  rest of the API are refused by `system.authz`), write policies or data
+  (refused, and the bundle owns those paths), reach the operator's bundle
+  endpoint (NetworkPolicy), or reach another session's pod.
 
-1. Validate (section 3.3). Refuse on errors.
-2. Write the source to the Sandbox with `version` n+1. This is the durable
-   save.
-3. Compile, sign, `PUT` to the pod. Hold new MCP requests for this session
-   while it runs (as the waker already holds requests for a waking session).
-4. `200`: done, `status: applied`. `422`: the pod is running the previous
-   policy again; the backend writes the previous source back to the Sandbox
-   as version n+2, applies that, and answers the caller `422` with the pod's
-   message. A save either takes effect or changes nothing.
+**OPA's own API is locked down** with `--authentication=token
+--authorization=basic` and a `system.authz` policy mounted from a
+ConfigMap:
 
-**Session not running** (stopped or asleep): steps 1 and 2 only;
-`status: pending`. Saving does not wake a session.
+```rego
+package system.authz
 
-**Create with a policy.** Cold: the Sandbox is created with the policy
-annotations; the pod starts with no policy on its disk; the gate (below)
-applies it before the first request. Warm: `adopt()` writes the annotations
-with the owner, then the backend applies at once, so the restart happens
-during creation and not on the user's first call. `POST /sessions` answers
-when the Sandbox is written, as today; the session shows `starting` until the
-policy is applied.
+import rego.v1
 
-**The gate.** The proxy already resolves a session to a running pod before
-forwarding (`Waker`). It gains one condition: the pod's `GET /policy` must
-report the `version` and `sha256` the Sandbox calls for. The answer is
-remembered with the pod's address for as long as the waker remembers the
-session (two seconds today), and forgotten on a save. If they differ, the
-backend applies and then forwards; if applying fails, it answers `503` with
-"this session's policy could not be loaded" and forwards nothing. The gate
-covers the MCP route and the upload route.
+default allow := false
 
-This one rule covers every way the pod and the Sandbox can disagree:
+# A session asking for a decision. No identity: mcp-js cannot send one.
+allow if {
+	input.method == "POST"
+	count(input.path) == 6
+	array.slice(input.path, 0, 4) == ["v1", "data", "browserjs", "decision"]
+}
 
-| Situation | What the pod has | What happens |
+# Kubelet probes.
+allow if {
+	input.method == "GET"
+	input.path == ["health"]
+}
+
+# The operator, reading what a replica has loaded.
+allow if {
+	input.identity == data.system.operator_token   # from a Secret, mounted as data
+	input.method == "GET"
+	array.slice(input.path, 0, 4) == ["v1", "data", "browserjs", "loaded"]
+}
+```
+
+**NetworkPolicy**, both ways:
+
+| From | To | Port |
 |---|---|---|
-| Cold start, or cold wake | `current/` from the disk; the supervisor verifies its signature before starting `mcp-v8` | matches: forward. No policy on disk but one on the Sandbox (new session): apply first |
-| Restore from a snapshot | the `mcp-v8` that was running, with the policy it had | matches unless the policy was saved while asleep: then apply first |
-| Policy saved while asleep or stopped | the old one | apply at the next wake, before the first request |
-| Warm adoption | none | apply during creation |
-| Backend died between save and apply | the old one | apply at the next request |
-| The disk copy is corrupt or its signature is bad | the supervisor does not start `mcp-v8`; state `failed` | apply again from the Sandbox |
+| session pods (egress, added) | OPA pods | 8181 |
+| OPA (ingress) | from session pods and the operator only | 8181 |
+| OPA (egress) | the operator | 8080 (bundles) |
+| operator (ingress) | from OPA (bundles) and the backend (validate) | 8080 |
+| operator (egress) | the API server; OPA pods | 443; 8181 |
+| backend (egress, unrestricted today) | the operator | 8080 |
 
-### 4.4 Failing closed
+The session pods' rule is additive to "the internet, but not the cluster":
+one more destination, selected by pod label, one port.
 
-- `mcp-v8` is never started with a policy the supervisor could not verify,
-  and never falls back to the built-in policy when one is expected. The
-  built-in policy is used only when the Sandbox has no policy.
-- The backend forwards nothing to a pod whose applied policy is not the
-  Sandbox's.
-- A policy that the pod refuses at a wake (it validated in the backend but
-  regorus rejects it, or an image upgrade changed what loads) leaves the
-  session unusable over MCP, `status: failed` with the message, until the
-  owner saves one that loads or deletes the policy. The browser and the VNC
-  view keep working; they are not mcp-js.
-- A pod with no supervisor (section 4.6) cannot be given a policy at all.
+### 4.4 Multi-tenancy: how policies become Rego in OPA
 
-### 4.5 What a restart costs
+For each `SessionPolicy` the operator builds two modules.
 
-Measured values are for the phase 0 spike; the list is from the code.
+**The tenant module**, from the owner's source (compiled from JSON first if
+needed). The operator parses it to an AST with `opa parse --format json` and
+refuses it unless:
 
-- **Lost**: every `run_js` in flight (its V8 isolate dies with the process),
-  and the open connections of MCP clients.
-- **Kept**: artifacts, upload grants and the MCP session database, all on
-  the session disk; `/data/memory`; and everything in the browser, which is
-  another container: tabs, logins, the page the agent was on.
-- **Not lost because it never existed**: JS heap state between calls (heap
-  persistence is off).
-- **Connected MCP clients**: a call in flight fails (the backend answers
-  `502` when the pod drops the connection); the event stream of a client
-  that keeps one open closes and the client reconnects. Calls that arrive
-  during the restart are held by the backend and forwarded when `mcp-v8` is
-  up, so a client that was idle notices nothing. Whether a client's
-  `Mcp-Session-Id` is still accepted after the restart, given the session
-  database is on disk, is UNVERIFIED; if it is not, the client gets `404`
-  and initialises again, which the MCP specification requires clients to
-  handle.
-- **To be kind to running work**, the backend knows how many calls a session
-  has in flight (the idle tracker). The UI's confirmation says "2 calls are
-  running and will be interrupted"; the API takes `?wait=30s` to wait for
-  them to finish first.
-- **Time**: `mcp-v8` start plus the supervisor's wait; the browser MCP is
-  already up, so not the 120 s wait of a cold start. Expected a few seconds
-  (UNVERIFIED).
+- its package is exactly `browserjs.policy`;
+- it has no reference to `data` at all, anywhere (rules in the same package
+  are called by their own names, so nothing legitimate needs `data`), and no
+  `with`; imports are limited to `rego.v1`, `future.keywords.*` and `input`;
+- it compiles under the **capabilities file**, which is an allow-list of
+  built-ins, not a deny-list: comparison, arithmetic, strings, regex,
+  aggregates, sets, objects, type checks, JSON and base64 codecs, `time`
+  reads. Not on it: `http.send`, `net.*`, `opa.runtime`, `rego.*`
+  metadata, `trace`, `print`, anything that reads the environment, and the
+  generators that turn a small input into a large collection
+  (`numbers.range`, `numbers.range_step`);
+- its source is within the size limit (64 KiB, also in the CRD schema).
 
-### 4.6 Sessions that exist before this ships
+It then replaces the package clause, by its position in the AST, with the
+session's own: `package browserjs.tenant["s-abcde"]`. Because the module
+cannot name `data`, it cannot read another tenant's rules or the platform's,
+whatever package it sits in.
 
-A Sandbox's pod template is fixed when it is created, and a snapshot restores
-the old processes. Sessions created before the rollout have `start.sh`, no
-supervisor and no port 8082. Their policy `status` is `unsupported`, saving a
-policy to one is refused, and the UI says "created before policies; recreate
-the session to give it one". The gate treats them as the built-in policy,
-which is what they enforce. The warm pool replaces its waiting pods on a
-template change (`updateStrategy: Recreate`), so new sessions are covered
-from the deploy on.
+**The decision module**, generated, platform-owned, the "dispatcher" at the
+path mcp-js asks:
 
-### 4.7 Not covered
+```rego
+package browserjs.decision["s-abcde"].mcp_tools
+
+import rego.v1
+
+default allow := false
+
+allow if data.browserjs.tenant["s-abcde"].allow_tool_call == true
+```
+
+It is where the platform can add conditions for everyone later without
+touching tenant code, and why a tenant rule that returns something other
+than `true` is a deny. One generic dispatcher for all sessions is not
+possible, because the session is only in the URL path, which Rego cannot
+see. (Session IDs contain a hyphen, so the packages use the bracketed form;
+that this is accepted in a package clause by the pinned OPA version is to be
+confirmed in the spike. The fallback is a generated identifier per session
+and a data document mapping IDs to it.)
+
+Both go into **one bundle** with root `browserjs`, with a data document
+`browserjs.loaded` mapping each session ID to its policy hash, and a
+manifest `revision`.
+
+**Why one bundle, polled, and not pushes or per-session bundles.**
+
+| | One bundle, polled (chosen) | REST pushes to every replica | Per-session bundles through discovery |
+|---|---|---|---|
+| New or restarted replica | pulls the whole state itself; not ready until it has (`/health?bundles`) | the operator must notice it and replay everything; until then it serves nothing, or worse, something partial | pulls, one request per session |
+| Consistency between replicas | same bundle, same `revision`; each is whole or previous | each `PUT` can fail separately; replicas differ until retried | same per bundle |
+| A tenant's bad policy | cannot enter: the operator builds the bundle with `opa build` and leaves a tenant out if it does not compile alone; a bundle that fails anyway is not activated and the previous stays | fails that one `PUT` | fails that one bundle |
+| Growth | one download of everything on any change. a thousand sessions at a few KiB each is a few MiB before compression; fine to thousands of sessions | one small request per change | one small download per change, but as many polls as sessions, per replica |
+| Operator down | replicas keep the last bundle; changes wait | same | same |
+
+Per-session bundles are what C2 uses, and what C1 would move to if the one
+bundle grew past tens of megabytes.
+
+**How long a change takes.** The watch event reaches the operator in well
+under a second; building and checking the bundle is a run of `opa build`;
+the replicas long-poll the operator, so they fetch as soon as the ETag
+changes (with plain polling, `min_delay_seconds: 1`, `max_delay_seconds:
+2`). Expected: one to three seconds from save to both replicas (UNVERIFIED;
+measured in the spike). The operator then reads `browserjs/loaded` from each
+ready replica and sets `Loaded` when all report this generation's hash.
+Between a save and that moment a call may still be judged by the previous
+policy; the API's save waits for `Ready` (up to ten seconds) before
+answering, so "saved" in the UI means "in force".
+
+**Limits.** 64 KiB a policy. No recursion exists in Rego, and the
+allow-list removes the built-ins that manufacture work, so evaluation cost
+is bounded by the size of the input (an MCP request is at most 1 MiB at
+Pomerium). OPA has no server-side query timeout; mcp-js gives up after
+5 seconds, and whether OPA stops evaluating when the client goes away is
+UNVERIFIED. The replicas have CPU limits. A user who sets out to write an
+expensive policy can slow decisions for others: users are an allow-list,
+this is accepted for v1, and it is the other thing C2 would remove.
+
+### 4.5 Failing closed
+
+| Situation | What OPA answers | Result |
+|---|---|---|
+| OPA unreachable, erroring, or slower than 5 s | nothing usable | mcp-js denies |
+| Warm pod with no owner | no `SessionPolicy`, so no decision module: undefined, no `result` | deny (and nothing can call it anyway) |
+| Session just created, bundle not yet polled | undefined | deny for a second or two; the session shows `starting` until `Ready` |
+| Session whose `SessionPolicy` was deleted by hand | undefined | deny; the backend recreates nothing on its own |
+| Policy saved but it does not compile | the previous good one, if there was one; else undefined | previous policy, or deny; `Compiled=False` with the errors |
+| Pod restored from a snapshot | whatever is current for its ID | correct, with nothing done to the pod |
+| A replica that has just started | not ready until the bundle is active, so not behind the Service | no partial answers |
+| Operator down | replicas keep the last bundle | enforcement continues; changes wait |
+| Both replicas down | nothing | every `browser_execute` in every session is denied until one returns |
+
+The last row is the price of sharing. It is kept small by: two replicas
+spread over nodes (`topologySpreadConstraints`), a PodDisruptionBudget with
+`minAvailable: 1`, readiness on `/health?bundles`, liveness on `/health`, a
+`RollingUpdate` with `maxUnavailable: 0`, and `persist: true` on an
+`emptyDir` so a restarted container can serve its last bundle while the
+operator is away. The backend's readiness page shows it.
+
+**Latency**: one HTTP request inside the cluster and an evaluation of a
+small module per `browser_execute` call, expected at a few milliseconds
+(UNVERIFIED) against a browser operation that takes tens to hundreds.
+
+### 4.6 The operator
+
+A kopf operator, `policy-operator`, in `operator/` (Python 3.12).
+
+**What it does**
+
+| Handler | Work |
+|---|---|
+| `on.create`, `on.update` (field `spec`), `on.resume` of `SessionPolicy` | compile (JSON to Rego), check, namespace (4.4); keep the result in memory keyed by session; rebuild and publish the bundle; write `status` (`Compiled`, `errors`, `rego`, `hash`, `observedGeneration`) |
+| `on.delete` (kopf's finalizer) | remove the session from the bundle, publish |
+| a timer per resource, and a watch on OPA's EndpointSlice | ask each ready replica what it has loaded; write `Loaded`, `Ready`, `loaded.replicas`, `lastAppliedTime` |
+| HTTP, port 8080 | `GET /bundles/browserjs.tar.gz` (ETag, long polling) for OPA; `POST /validate` and `POST /evaluate` for the backend |
+
+- **One implementation of "is this policy valid".** `POST /validate` runs
+  the same function the reconcile runs and returns the same `errors` and
+  `rego` that would land in `status`, without storing anything. The backend
+  calls it for the editor's diagnostics, the API's validate, and
+  Terraform's plan. `POST /evaluate` runs `opa eval` on a source and a
+  sample input for the editor's Test. The backend has no Rego code and does
+  not import OPA.
+- **The same OPA.** The operator image contains the `opa` binary at the
+  version the Deployment runs, pinned together, and the capabilities file.
+  There is one engine in the whole design.
+- **Idempotent, and stateless across restarts.** Everything in memory is
+  derived from the custom resources. On start, kopf's `on.resume` runs for
+  every existing object and the index is rebuilt. Until that first pass is
+  complete the bundle endpoint answers `503`, so a restarting operator
+  never publishes a bundle with sessions missing; the replicas keep what
+  they have.
+- **One active operator.** One replica, `strategy: Recreate`, `--standalone`,
+  `--namespace browserjs-sessions`. That is what kopf's documentation
+  recommends, and it is enough: the operator being away delays changes and
+  never weakens enforcement. kopf's peering (`KopfPeering`) is the route to
+  a standby if that is ever wanted.
+- **Admission webhook, later.** kopf can also serve a validating webhook,
+  which would refuse an invalid `SessionPolicy` at `kubectl apply` time.
+  It needs a certificate and a webhook configuration; the validate endpoint
+  covers the product's own paths without it.
+
+**RBAC** (ServiceAccount `policy-operator`):
+
+| Scope | Rule |
+|---|---|
+| Role, sessions namespace | `sessionpolicies`: get, list, watch, patch; `sessionpolicies/status`: patch |
+| | `events`: create |
+| | `endpointslices` (`discovery.k8s.io`): get, list, watch (to find OPA's replicas) |
+| ClusterRole | `customresourcedefinitions`: list, watch (kopf requires it) |
+
+It cannot read Secrets, Sandboxes, or anything of Pomerium's.
+
+**Packaging and deployment**
+
+- Image `policy-operator`: a Dockerfile on a `python` base pinned by digest,
+  dependencies from a lock file with hashes, the `opa` binary copied from
+  the pinned OPA image. Built by `images.yml` and pinned in the kustomize
+  `images:` block by `hack/pin-images.sh`, like the other two. A Nix
+  dev shell entry for running its tests locally.
+- `deploy/base`: the CRD, the operator's ServiceAccount, Role, ClusterRole
+  and bindings, its Deployment and Service; the OPA Deployment, Service,
+  PodDisruptionBudget, `system.authz` ConfigMap, the operator-token Secret
+  (in `secrets.example.yaml`); the NetworkPolicy rules of 4.3; the backend
+  Role's new verbs.
+- `deploy/gke`: node selector and tolerations for the system pool on both
+  Deployments, the images by digest, and the env change in `blueprint.yaml`
+  and `warmpool.yaml` (with `deploy_test.go` keeping the two in step).
+- `deploy/local`: the same on kind, one OPA replica.
+
+**Testing**
+
+| Level | What | Needs |
+|---|---|---|
+| Unit | the translator (golden Rego, decisions through `opa eval`), the AST checks and package rewrite (a corpus of hostile modules: `data` references, `with`, forbidden built-ins, wrong package), bundle building, the status computation. All plain functions that take a spec and return a result | Python and the `opa` binary |
+| Handler | the kopf handlers called directly with fake `spec`, `status`, `patch` objects; the HTTP endpoints with aiohttp's test client | nothing else |
+| API simulation | create, update, delete, operator restart with existing objects, against KMock | no cluster |
+| Integration | `kopf.testing.KopfRunner` with a real OPA, on kind: a policy is enforced, an edit applies, a bad policy keeps the previous one, a new OPA pod loads everything, a deleted session's policy leaves the bundle | kind (in CI) |
+| End to end | through the backend and a session pod: a denied operation is denied; a warm-adopted session gets its policy; a session restored from a snapshot is judged by the current policy | kind; staging for snapshots |
+
+### 4.7 Creating a session with a policy
+
+1. Cold session: the backend creates the Sandbox, then the `SessionPolicy`
+   named after it, owned by it. Warm session: the claim binds a Sandbox;
+   the backend creates the `SessionPolicy` for that Sandbox's name, then
+   writes the owner onto the Sandbox as today. Until the owner is written
+   nobody can use the session, so there is no moment when it is usable and
+   unrestricted.
+2. The claim carries the intended policy in an annotation, as it carries the
+   owner, so `RecoverClaims` can finish after a crash without replacing a
+   restrictive policy with the default.
+3. The session's state stays `starting` until its policy is `Ready`. A
+   policy that does not compile fails the creation: the backend validates
+   first, and deletes what it made if the operator still says no.
+4. A `SessionPolicy` is never created for a session that predates the
+   feature (below).
+
+### 4.8 Sessions that exist before this ships
+
+A Sandbox's pod template is fixed when it is created, and a snapshot
+restores the old process. Sessions created before the rollout have the
+image's static configuration and never ask OPA. The API reports their policy
+as `unsupported`, saving one is refused, and the UI says "created before
+policies; recreate the session to give it one". The warm pool replaces its
+waiting pods on a template change (`updateStrategy: Recreate`), so new
+sessions are covered from the deploy on.
+
+### 4.9 Not covered
 
 - Where the browser goes, and the person at the VNC view: out of scope by
   decision 1.
 - `fetch`, WebSocket and module imports from `run_js`: off today, off in v1.
-  Phase 2 can add `allow_fetch` and `allow_module` the same way (the
-  supervisor adds a chain when the policy defines the rule), with a platform
-  file in front that denies loopback and private hosts. Prerequisite:
-  section 7.2.
+  Phase 2 adds `allow_fetch` and `allow_module` the same way (a second
+  decision module and one more remote source in the template), with a
+  platform file in front that denies loopback, private and cluster
+  addresses, the OPA Service among them.
 - Subprocess, the filesystem outside `/data/memory`, `run_js_file`: the
   platform's, not offered to owners.
 - The top-level MCP tools (`run_js` itself, artifacts): not an mcp-js policy
   category.
-- A record of decisions. mcp-js evaluates in the pod and does not report
-  each decision; a denial is an error inside `run_js`. The first draft's
-  "recent decisions" panel is gone with the first draft's design.
+- A list of recent decisions in the UI. OPA can log every decision; turning
+  that into a per-session view (and masking what agents typed) is phase 2.
 
 ---
 
@@ -905,12 +1152,15 @@ Create session
 - "Managed as code" asks for the link (required, `https`) and creates the
   session with no restrictions and `mode: iac`; the policy then arrives by
   token. The helper text says the session is unrestricted until it does.
+- Behind every choice is the same thing: a `SessionPolicy` for the new
+  session. "No restrictions" is the unrestricted JSON policy, not the
+  absence of one.
 - Create with the panel open and unconfirmed changes in it, or Cancel with
   anything entered, raises the Leave page modal.
 - On success: the session's details page with a flashbar, "Session
-  brave-otter created", and the state `starting` while the policy is applied.
-  A policy the pod refuses fails the creation and returns to the form with
-  the error on the Policy section.
+  brave-otter created", and the state `starting` until the policy is loaded
+  (a second or two). A policy that does not compile fails the creation and
+  returns to the form with the errors on the Policy section.
 
 ### 5.2 Session details (`/sessions/:id`)
 
@@ -920,13 +1170,13 @@ browserjs sessions > brave-otter
 brave-otter                        [ Stop ] [ Rename ] [ Delete ]
 +-- Summary ---------------------------------------------------------------+
 | State  running      MCP URL  https://s-abcde.sessions…/mcp  [copy]       |
-| Created  2 h ago    Policy   JSON, v3, applied                           |
+| Created  2 h ago    Policy   JSON, v3, in force                          |
 +--------------------------------------------------------------------------+
 [ Browser ] [ Policy ]
 
-Policy                                 [ Copy from session ] [ Remove ] [ Edit ]
+Policy                                  [ Copy from session ] [ Reset ] [ Edit ]
 +--------------------------------------------------------------------------+
-| Kind  JSON     Version  3     Status  applied     sha256  9f2c…          |
+| Kind  JSON     Version  3     Status  in force (2/2)   sha256  9f2c…     |
 | Managed in  this editor                                    [ Change ]    |
 | Last saved  2 h ago, in the UI                                           |
 +-- policy.json (read-only) ------------+-- Generated Rego ----------------+
@@ -937,10 +1187,13 @@ Policy                                 [ Copy from session ] [ Remove ] [ Edit ]
 ```
 
 - The Browser tab is today's page (the VNC pane). The Policy tab shows the
-  policy read-only, or an empty state, "No restrictions: an agent may use
-  every browser operation", with "Add policy".
-- Status `pending` reads "saved; applies when the session next starts";
-  `failed` is an error alert with the pod's message and "Edit".
+  policy read-only. The unrestricted policy is shown as what it is, with a
+  line above it: "No restrictions: an agent may use every browser
+  operation". "Reset" returns to it.
+- Everything on the tab is read from the `SessionPolicy`: the status line
+  from its conditions (`in force (2/2)`; `loading…` while `Loaded` is not
+  yet true for this version; an error alert with the messages and "Edit"
+  when `Compiled` is false), the generated Rego from `status.rego`.
 - "Change" (managed in) opens a small modal with the two modes and the link
   field: a two-field setting, which is what a modal is for.
 
@@ -967,23 +1220,22 @@ Edit policy
 | { "server": "browser", "tool": "browser_execute", "arguments": …         |
 | Result  DENY                                                             |
 +--------------------------------------------------------------------------+
-                                           [ Cancel ]  [ Save and apply ]
+                                                    [ Cancel ]  [ Save ]
 ```
 
 - The format switch on a new policy picks the kind. On an existing JSON
   policy, Rego shows the generated module with "Convert to Rego (cannot be
   undone)". In Rego there is one pane.
-- JSON problems come from the schema in the browser as you type; Rego
-  problems from the server's `validate`, debounced.
-- Test runs in the backend with OPA and says so: "the session's own engine
-  has the last word when you save".
-- **Save and apply** on a running session confirms first: "Saving restarts
-  this session's MCP server. Calls that are running (2) are interrupted. The
-  browser is not affected." Then it returns to the Policy tab with a
-  flashbar: "Policy applied (v4)", or stays on the page with the pod's error
-  if the session refused it. On a stopped or sleeping session there is no
-  confirmation and the flashbar reads "Policy saved; it applies when the
-  session starts."
+- JSON problems come from the schema in the browser as you type; all other
+  problems from the server's `validate`, debounced, which is the operator's
+  own check, so what the editor shows is what a save would get.
+- Test runs the policy against a sample call with the same OPA and the same
+  restrictions as the real thing.
+- **Save** needs no confirmation: nothing restarts and no running call is
+  interrupted. It returns to the Policy tab with a flashbar, "Policy saved
+  and in force (v4)", or, if the replicas have not all loaded it within ten
+  seconds, "Policy saved; loading". Errors keep the user on the page with
+  the markers in the editor. The session need not be running.
 - A save answered `412`: "This policy changed since you opened it", with
   Reload.
 - Cancel or leaving with changes: the Leave page modal.
@@ -999,10 +1251,10 @@ On the Policy tab:
 |     Changes made here would be overwritten.        [ Manage here instead ]|
 +--------------------------------------------------------------------------+
 Policy                                                    [ View source ]
-| Kind  Rego   Version  7   Status  applied   Last saved  by token "ci"    |
+| Kind  Rego   Version  7   Status  in force   Last saved  by token "ci"   |
 ```
 
-- Edit, Remove and Copy from session are absent. The source and generated
+- Edit, Reset and Copy from session are absent. The source and generated
   Rego stay visible, read-only. "View source" opens the edit page's layout
   with Monaco read-only, a "Read-only: managed as code" strip in place of
   the buttons, and Test still working (it saves nothing).
@@ -1021,23 +1273,26 @@ Policy                                                    [ View source ]
 
 The same handlers serve the UI (cookie, on the app's host under `/api`) and
 tokens (on the API host under `/v1`); the table in 2.3 says who may write.
+Each is a thin translation to the custom resource, after the owner check the
+backend already does for sessions.
 
-| Method and path | Purpose |
-|---|---|
-| `POST /sessions` | accepts `policy: {kind, source}` and `policy_management: {mode, managed_url}` |
-| `GET /sessions`, `GET /sessions/{id}` | add `policy: {kind, version, sha256, status, management}`, without the source |
-| `GET /sessions/{id}/policy` | the whole policy, with `source` and `rego`; `404` when there is none |
-| `PUT /sessions/{id}/policy` | `{kind, source, management?}`; saves and applies (section 4.3). `If-Match: <version>` optional; `?wait=30s` optional. `200` applied, `202` saved and pending, `409` wrong mode, `412` version, `422` invalid or refused by the session, with `errors[]` |
-| `DELETE /sessions/{id}/policy` | back to the built-in policy and `editor` mode; applies like a save |
-| `PUT /sessions/{id}/policy/management` | `{mode, managed_url}` |
-| `POST /policies/validate` | `{kind, source}` → `{ok, rego?, errors[], warnings[]}`; saves nothing |
-| `POST /policies/evaluate` | `{kind, source, input}` → `{allow}`; saves nothing |
-| `GET /policy-schema.json` | the JSON Schema of the JSON format |
-| `GET /tokens`, `POST /tokens`, `DELETE /tokens/{id}` | cookie only; the token is shown once, on creation |
+| Method and path | Purpose | On the cluster |
+|---|---|---|
+| `POST /sessions` | accepts `policy: {kind, source}` and `policy_management: {mode, managed_url}` | creates the Sandbox and its `SessionPolicy` (4.7) |
+| `GET /sessions`, `GET /sessions/{id}` | add `policy: {kind, version, hash, status, management}`, without the source | one list of `sessionpolicies` by owner label |
+| `GET /sessions/{id}/policy` | the whole policy: `source`, `rego`, `errors`, `status` (`ready`, `pending`, `invalid`, `unsupported`), `loaded` | get |
+| `PUT /sessions/{id}/policy` | `{kind, source, management?}`. Validates through the operator first; then updates `spec` and waits up to 10 s for `Ready` at the new generation. `If-Match: <version>` optional. `200` in force, `202` saved and not yet loaded, `409` wrong mode, `412` version, `422` invalid, with `errors[]` | update |
+| `DELETE /sessions/{id}/policy` | resets to the unrestricted policy and `editor` mode | update (the object stays; no policy would mean deny) |
+| `PUT /sessions/{id}/policy/management` | `{mode, managed_url}` | patch |
+| `POST /policies/validate` | `{kind, source}` → `{ok, rego?, errors[], warnings[]}`; saves nothing | operator `POST /validate` |
+| `POST /policies/evaluate` | `{kind, source, input}` → `{allow}`; saves nothing | operator `POST /evaluate` |
+| `GET /policy-schema.json` | the JSON Schema of the JSON format | served from the operator's copy |
+| `GET /tokens`, `POST /tokens`, `DELETE /tokens/{id}` | cookie only; the token is shown once, on creation | `apitokens` |
 
-Errors keep the existing shape, `{"error": "…"}`, plus `errors[]` with `row`,
-`col`, `code`, `message` for validation. An OpenAPI document for all of it is
-the first deliverable of the plan (section 9).
+`version` is the resource's `metadata.generation`. Errors keep the existing
+shape, `{"error": "…"}`, plus `errors[]` with `row`, `col`, `code`,
+`message`. An OpenAPI document for all of it is the first deliverable of the
+plan (section 9).
 
 ### 6.2 API tokens
 
@@ -1052,10 +1307,11 @@ the first deliverable of the plan (section 9).
   cannot create or revoke tokens.
 - **Expiry is mandatory**: 90 days by default, at most a year. The UI shows
   last use, to the hour.
-- **Storage**: tokens are the one thing that does not belong to a session.
-  A single Secret, `api-tokens`, in the sessions namespace, one key a token
-  (owner, name, scopes, expiry, hash), with a Role naming that one Secret
-  (`resourceNames`), so the backend gains access to nothing else.
+- **Storage**: an `APIToken` custom resource (`browserjs.dev/v1alpha1`) per
+  token: owner, name, scopes, expiry, and the hash. No operator reconciles
+  it; it is storage with a schema, in keeping with "no state in the
+  backend", and the backend's Role names that resource and nothing broader.
+  A Secret is the alternative (open question 10).
 - **Route**: a host of its own, `api.<domain>`, to the backend with
   `allow_public_unauthenticated_access: true` and no identity headers. The
   backend already tells requests apart by host; on this host it accepts only
@@ -1102,93 +1358,81 @@ through anything the session offers:
   token page says so;
 - `run_js` has no `fetch` in v1, so code in the session cannot call the API
   host even with a token;
-- the policy on the disk is out of `run_js`'s reach (the filesystem policy),
-  and the supervisor takes a new one only when it is signed by the backend
-  for this session with a higher version (section 4.2).
+- which policy judges a session is fixed by the pod's configuration, and
+  OPA's API gives a session pod nothing but decisions (4.3);
+- the session pods have no Kubernetes credentials
+  (`automountServiceAccountToken: false`), so the custom resources are out
+  of their reach.
 
 And some things stay outside the owner's control whatever they write:
 
 - the platform layer: only the `browser` server and `browser_execute`,
-  filesystem only under `/data/memory`, no subprocess; later, no loopback or
-  private addresses for `fetch`. The owner's policy is intersected with it
-  and can only narrow;
+  filesystem only under `/data/memory`, no subprocess. The owner's policy is
+  intersected with it and can only narrow;
+- the decision module and the capabilities allow-list (4.4);
 - isolation between sessions and users (NetworkPolicy, a host per session,
   gVisor): not expressible in a policy;
-- the signing key, and who may sign in.
+- who may sign in.
 
-### 7.2 A way around the policy: callers of the browser MCP server
+### 7.2 The way around the policy, closed in PR #30
 
-`images/browser/browser/server.js` listens on `:8081` and serves any caller.
-From outside, only the backend reaches the pod, and only on its allowed
-ports. Inside, everything shares loopback, including Chromium. An agent
-allowed `navigate` and `evaluate` can open `http://127.0.0.1:8081/healthz`
-and, from that origin, `fetch("/mcp", …)` a `browser_execute` call that
-mcp-js, and so the policy, never sees. A hostile page might try the same
-without the agent (whether Chromium's local-network protections stop it is
-UNVERIFIED). This comes from reading the code; it has not been tried.
+The browser MCP server on `:8081` used to serve any caller, and Chromium
+shares the pod's loopback: an agent allowed `navigate` and `evaluate` could
+open a page on that origin and call `browser_execute` directly, past mcp-js
+and so past any policy. PR #30 (merged) makes the server refuse requests
+that carry `Origin` or `Sec-Fetch-*` headers, a non-JSON content type or a
+non-loopback `Host`. This design depends on that fix and treats it as done.
+mcp-js's own port, `:8080`, is also on loopback and checks no token; calls
+made that way are still judged by the policy, so it is not a way around.
 
-Today it does not matter, because the policy allows everything. With owner
-policies it does: "everything except `screenshot`" means nothing if
-`evaluate` is allowed. It is not about governing the browser; it is the
-agent leaving mcp-js's jurisdiction. Fix, in the browser image:
+### 7.3 Tenants sharing one OPA
 
-- the browser MCP server refuses any request carrying an `Origin` or
-  `Sec-Fetch-Site` header (a browser always sends one on such a request;
-  mcp-js does not), and listens on `127.0.0.1` rather than `::`;
-- better, a secret that the supervisor generates at start, passes to
-  `mcp-v8` for the upstream and that the server requires. Whether
-  `MCP_V8_MCP_CONFIG` can carry request headers is UNVERIFIED, and the two
-  containers would need a shared `emptyDir` for it;
-- until it is fixed, the validator warns on a policy that allows `evaluate`
-  together with unconstrained `navigate` while denying something else.
+- **Isolation of code**: a tenant module cannot name `data`, so it cannot
+  read another tenant's rules; it lives in its own package, so it cannot
+  redefine anyone's; the bundle is built by the operator, so nothing a
+  tenant writes chooses its package. The corpus of hostile modules in the
+  operator's tests (4.6) is the evidence for this and should be reviewed as
+  security-critical code.
+- **Isolation of effect**: no network or environment built-ins exist for
+  tenant code. A tenant's rules run only when its own session asks.
+- **Not isolated**: CPU. An expensive policy slows the replicas for
+  everyone (4.4). And decisions: any session pod can ask for another
+  session's decisions by ID (4.3).
+- **The bundle** contains every tenant's Rego. Only OPA can fetch it
+  (NetworkPolicy), and it can additionally be signed and require a bearer
+  token; both are small and are in the plan.
+- **OPA's token** for the operator is a Secret; the session pods cannot read
+  Secrets and cannot use the API paths it opens anyway.
 
-The supervisor's own port has the same exposure and is why bundles are
-signed.
+### 7.4 The operator and the custom resource
 
-### 7.3 The supervisor
-
-- It is new code running as PID 1 in every session. It is small (an HTTP
-  server with three routes, a signature check, a child process) and has no
-  secrets: only a public key.
-- `PUT` and `DELETE` are useless without the backend's signature;
-  `GET /policy` reveals a version and a hash. Request bodies are bounded.
-- A lost signing key lets whoever has it, and can reach a pod's port 8082,
-  replace policies: only the backend can reach it from outside, so in
-  practice a page inside the same pod. Rotating is a template change plus
-  the key list of 4.2.
-- Replay: another session's bundle fails the session ID check; an older one
-  fails the version check; the version on disk is on the session disk and
-  survives restarts and restores.
-
-### 7.4 The owner's Rego
-
-It runs in the owner's own pod, in regorus, inside a container with a CPU
-and memory limit. A policy that loops or allocates hurts that session's
-mcp-js and nothing else, which is a better place for it than the shared
-backend where the first draft put it.
-
-The backend still parses, compiles and test-evaluates what users type
-(`validate`, `evaluate`). There: OPA capabilities without `http.send`,
-`net.lookup_ip_addr` and `opa.runtime`; a one-second deadline; 64 KiB of
-source; a bound on input size. Users are an allow-list, not the public.
-Regular expressions are RE2-style, linear time, in both engines (UNVERIFIED
-for regorus's regex builtin).
+- The operator holds no credentials of value: rights on `sessionpolicies`
+  and read on OPA's endpoints. Compromising it lets an attacker publish any
+  bundle, which is every session's policy; it is small, has two inbound
+  callers (OPA, the backend), and runs untrusted text only through
+  `opa parse`, `opa build` and `opa eval` as subprocesses with a timeout
+  and a size bound.
+- The validate and evaluate endpoints run user text on demand. They are
+  reachable only from the backend, are bounded the same way, and
+  `evaluate` uses the same capabilities, so a Test cannot reach the network
+  either.
+- The backend can now write `sessionpolicies`. It could already create and
+  delete every session, so this adds no power over users it did not have.
+- Anyone with rights on the resource in the cluster can read and change
+  every policy. Today that is the cluster's administrators.
 
 ### 7.5 Other points
 
 - **URLs in policies** are matched by an anchored expression that refuses
   anything unusual (section 3.3), rather than parsed. Unit tests carry the
   known confusions (userinfo, backslashes, whitespace, IDNs, trailing dots).
-- **`managed_url` is shown as a link.** `https` only, rendered as text with
-  `rel="noopener noreferrer"`; it is the user's own setting shown to
-  themselves and to admins.
+- **`managedURL` is shown as a link.** `https` only (enforced in the CRD),
+  rendered as text with `rel="noopener noreferrer"`.
+- **Decisions travel in clear text** inside the cluster, as the backend's
+  traffic to the pods already does.
 - **Admins** can read every session's policy, as they can already see every
-  session. Whether they can edit them follows whatever they can do to
-  sessions today.
-- **Two engines.** The backend validates with OPA and the pod enforces with
-  regorus. The design never trusts the first for enforcement: a save is
-  confirmed by the pod, and the gate compares hashes of what was loaded.
-- **Fail closed** everywhere (4.4).
+  session.
+- **Fail closed** everywhere (4.5).
 
 ---
 
@@ -1218,7 +1462,7 @@ for regorus's regex builtin).
 
 - **The resource is the mode.** Creating `browserjs_session_policy` saves
   the policy with `mode: iac` and the `managed_url` in one call; destroying
-  it removes the policy and returns the session to `editor`. "Managed as
+  it resets the session to the unrestricted policy and to `editor`. "Managed as
   code" is then exactly "there is a Terraform resource for it", with no
   third resource for the switch. Tailscale needs two
   (`tailscale_acl` and `tailscale_tailnet_settings`) and does not tie them
@@ -1288,9 +1532,10 @@ output "mcp_url" {
 }
 ```
 
-An apply that changes a policy restarts that session's mcp-js; the resource's
-documentation says so, and `status` shows `pending` for a session that was
-not running.
+An apply that changes a policy restarts nothing. The resource waits for the
+policy to be in force before it reports success, and fails the apply with
+the compile errors, line and column, when it is not valid (which the plan
+will usually have caught already).
 
 ### 8.3 Where it lives, and how it is installed
 
@@ -1320,51 +1565,56 @@ built by separate agents at the same time.
 
 ### Phase 0: contracts and spikes
 
-1. `docs/api/openapi.yaml` for section 6, the JSON Schema of section 3, and
-   the supervisor's contract: the bundle format, what is signed, the three
-   routes and their answers. Everything else is built against these.
-2. Spike, in kind, with the real mcp-js image: stop and start `mcp-v8` under
-   a parent process with a second `mcp_tools` source and a custom `rule`;
-   how long it takes; what a bad Rego file does at start; what a connected
-   MCP client sees, and whether its session ID survives.
-3. Spike: each Rego construct the translator emits, loaded by that image.
-4. Spike: a 64 KiB annotation on a Sandbox, cold and through a
-   `SandboxClaim`; that it stays off the pod; a snapshot, a policy change,
-   a restore.
+1. Contracts, each a file in the repo: `docs/api/openapi.yaml` (section 6);
+   the CRD manifest (section 2.1); the JSON Schema (section 3); the
+   operator's HTTP contract (bundle, validate, evaluate); the bundle layout
+   (packages, the `loaded` document). Everything else is built against
+   these.
+2. Spike, in kind, with the real mcp-js image and an OPA: a remote
+   `mcp_tools` source with `policy_path` containing `$(SESSION_ID)`; the
+   answer for an undefined path; what the agent sees on a denial and on a
+   timeout; latency.
+3. Spike: package names with a hyphenated, bracketed segment in the pinned
+   OPA; `system.authz` with anonymous decision paths; bundle long polling;
+   time from a changed bundle to both replicas.
+4. Spike on staging: a session pod reaching the OPA Service through the new
+   NetworkPolicy rule under gVisor; a restore from a snapshot followed by a
+   decision.
 
 ### Phase 1: policies on browser operations (tracks in parallel)
 
 | Track | Scope | Depends on |
 |---|---|---|
-| A. Policy core (backend) | policy on the Sandbox (create, adopt, claim recovery); JSON-to-Rego translator with golden tests; validate and evaluate; the handlers of 6.1; mode rules of 2.3 | phase 0 contracts |
-| B. Supervisor and image | `mcp-supervisor` (start, verify, apply, report), replacing `start.sh`; its tests; mcp-js image; pod templates (public key, port) and `deploy_test.go`; NetworkPolicy port | supervisor contract |
-| C. Apply and gate (backend) | signing; apply after save and after adoption; the gate in the waker; holding requests during a restart; rollback on `422`; e2e in kind: a denied operation is denied, a save applies, a change while asleep applies at wake, a bad policy fails closed | A's storage, B's contract (a fake supervisor first) |
-| D. UI | `/sessions/create`; details page with tabs; policy edit page with Monaco, schema and server diagnostics, Rego grammar, test; managed-as-code state; unsaved-changes modals | phase 0 contracts (mock server) |
-| E. API tokens | token storage and page, the `api.` host route in Pomerium's config, bearer authenticator, `ALLOWED_EMAILS`, rate limit | phase 0 contracts |
-| F. Terraform provider | section 8, against a fake from the OpenAPI document, then acceptance tests against kind | phase 0 contracts; E for acceptance tests |
-| G. Browser MCP caller check | section 7.2, in the browser image, with a test that a page cannot call `/mcp` | nothing |
+| A. Operator | `operator/`: translator, AST checks and rewrite, bundle builder and server, handlers, status, validate and evaluate endpoints; unit, handler and KMock tests; image in `images.yml` | contracts |
+| B. OPA and deploy | CRD, OPA Deployment, Service, PDB, `system.authz`, capabilities file, operator manifests and RBAC, NetworkPolicy, pod template env in blueprint and warm template with `deploy_test.go`, local and GKE overlays; kind integration tests with A | contracts; A's image for integration |
+| C. Backend | `SessionPolicy` client (create with a session, adopt, claim recovery, get, update, reset); mode rules of 2.3; the handlers of 6.1; session state waits for `Ready`; Role | contracts (a fake operator and the CRD in envtest or kind) |
+| D. UI | `/sessions/create`; details page with tabs; policy edit page with Monaco, schema and server diagnostics, Rego grammar, test; managed-as-code state; unsaved-changes modals | OpenAPI (mock server) |
+| E. API tokens | `APIToken` resource, token page, the `api.` host route in Pomerium's config, bearer authenticator, `ALLOWED_EMAILS`, rate limit | OpenAPI |
+| F. Terraform provider | section 8, against a fake from the OpenAPI document, then acceptance tests against kind | OpenAPI; E for acceptance tests |
 
-Done when: a user can create a session with a policy on the new page, see an
-agent's call denied, edit the policy and have it apply with a restart; put a
-session to sleep, change its policy, and find it enforced at the first call
-after waking; switch a policy to managed-as-code, see the UI lock with the
-link, and apply the example of 8.2.
+Done when: a user can create a session with a policy on the new page and see
+an agent's call denied; edit the policy and have the next call judged by it
+with nothing restarted; put a session to sleep, change its policy, and find
+it enforced at the first call after waking; kill an OPA pod and see no
+session affected, kill both and see calls denied; switch a policy to
+managed-as-code, see the UI lock with the link, and apply the example of
+8.2.
 
 ### Phase 2
 
-- `fetch`, WebSocket and module imports as policy sections, behind the
-  platform layer, after track G.
-- Denials that explain themselves to the agent (a `pre` hook that returns a
-  `reason`), and a decision log if mcp-js grows one.
+- `fetch`, WebSocket and module imports as policy sections.
+- Recent decisions per session, from OPA's decision log, and denials that
+  explain themselves to the agent (a `pre` hook that returns a `reason`).
+- A validating admission webhook from the operator; bundle signing.
 - Provider release pipeline and the registry mirror repo.
-- A CRD for policies, if history or richer status is wanted.
+- The sidecar variant (C2), if shared fate or tenant isolation asks for it.
 
 ---
 
 ## 10. Open questions
 
-Each with the default this document assumes. Questions the product owner has
-already answered are at the top of the document and are not repeated.
+Each with the default this document assumes. What the product owner has
+already decided is at the top of the document and is not repeated.
 
 1. **JSON compiled to Rego, not cua-driver's two engines.** cua-driver's
    simple format is YAML evaluated natively. The request describes JSON
@@ -1379,34 +1629,38 @@ already answered are at the top of the document and are not repeated.
    Tailscale's one switch for one policy file. The alternative is one switch
    for a user's whole account.
 4. **Reuse.** *Default: by copy in the UI and by Terraform; no shared
-   policies and no account default.* Is a default for new sessions wanted
-   after all (it would be a preset remembered per user, copied at creation)?
+   policies and no account default.* Is a remembered preset for new sessions
+   wanted after all?
 5. **What v1 governs within mcp-js.** *Default: upstream tool calls, that
    is `browser_execute` operations. `fetch` and module imports in phase 2.*
-6. **Close the way around (7.2) in the browser image?** It touches the
-   browser container, though only to keep the agent inside mcp-js. *Default:
-   yes, as track G, in phase 1.*
-7. **Storage.** *Default: annotations on the Sandbox, 64 KiB a policy.*
-   A CRD is the alternative if the spike finds annotations unsuitable.
-8. **Process or container restart.** *Default: the supervisor restarts
-   `mcp-v8` inside the container (no back-off, no restart count).* A true
-   container restart is a one-line variant.
-9. **A save the session refuses.** *Default: the save fails as a whole and
-   the previous policy stays, for a running session; for a policy saved
-   while asleep and refused at wake, MCP stays closed until it is fixed.*
-10. **Interrupting running calls.** *Default: confirm in the UI, interrupt
-    at once; the API can wait with `?wait=`.*
-11. **API host and the allow-list.** A separate `api.` host, or a path on the
-    app's host? *Default: separate host.* Mirror Pomerium's allow-list into
-    the backend so tokens of removed users stop at once? *Default: yes.*
-    Token lifetime? *Default: 90 days, at most a year.*
-12. **Sessions that predate the feature** cannot be given a policy.
+6. **What sharing one OPA gives up.** A session pod can ask for another
+   session's decisions by ID, and a deliberately expensive policy slows
+   decisions for everyone. *Default: accept both for v1, since users are an
+   allow-list; the sidecar variant is the answer if that changes.*
+7. **Every session has a `SessionPolicy`, and none means deny.** The
+   alternative is "none means unrestricted", with the operator generating
+   an allow for every owned session. *Default: as stated; it is what makes
+   an ownerless pod fail closed without the operator reading Sandboxes.*
+8. **A saved policy that does not compile.** *Default: the API refuses it
+   before saving. If one arrives anyway (kubectl, a race), the previous good
+   policy stays in force and the resource shows the errors.*
+9. **How a save answers.** *Default: it waits up to ten seconds for both
+   replicas to load it, so "saved" means "in force"; `202` if they have not.*
+10. **API tokens as a custom resource too** (`APIToken`, holding only a
+    hash), following "state in CRDs", or a Secret? *Default: a custom
+    resource.* A separate `api.` host, or a path on the app's host?
+    *Default: separate host.* Mirror Pomerium's allow-list into the backend
+    so tokens of removed users stop at once? *Default: yes.* Lifetime?
+    *Default: 90 days, at most a year.*
+11. **Sessions that predate the feature** cannot be given a policy.
     *Default: mark them, ask the user to recreate; no migration.*
-13. **Terraform shape.** *Default: `browserjs_session` and a separate
+12. **Terraform shape.** *Default: `browserjs_session` and a separate
     `browserjs_session_policy` whose existence is the managed-as-code mode.*
     Distribution: *in-repo source with `dev_overrides` and a network mirror
     first; registries when someone outside needs it.*
-14. **Editor.** Monaco at about 850 KB gzipped on the edit page and the
+13. **Editor.** Monaco at about 850 KB gzipped on the edit page and the
     create page's split panel only, or CodeMirror 6 at about 120 KB with
     weaker Rego support? *Default: Monaco, bundled (no CDN), lazy-loaded,
     with a Rego grammar written here.*
+14. **API group.** `browserjs.dev` (the repo's annotations) or
+    `browserjs.com` (the product's domain)? *Default: `browserjs.dev`.*
