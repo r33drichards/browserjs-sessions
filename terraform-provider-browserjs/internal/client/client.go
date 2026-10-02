@@ -14,7 +14,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/r33drichards/browserjs-sessions/sdk/go/computeruse"
+	"github.com/r33drichards/computer-use/sdk/go/computeruse"
 )
 
 // Policy states, as PolicyState in the API.
