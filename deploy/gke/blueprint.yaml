@@ -44,7 +44,7 @@ podTemplate:
       # the system call filter), and the policies do not ask for one.
     containers:
       - name: browser
-        image: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/browser@sha256:1ef33b1462e960b2488076605ab635a1051168fcc33451d843952c3904aa5bbb
+        image: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/browser@sha256:63145f8083996b55793f6d7b91a819e72ac70c4f8925689a4ec70e4cdad47367
         env:
           - name: SESSION_MODE
             value: "1"
@@ -100,7 +100,7 @@ podTemplate:
           - name: shm
             mountPath: /dev/shm
       - name: mcp-js
-        image: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/mcp-js@sha256:30d6ab6ecf0065cf5fb96e15c84d2a47a220c2f34e9faff217681b35bd8c8886
+        image: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/mcp-js@sha256:de903a1b46c19e9130292317b75487f524a78cb3cd373597cde203f8d6be9e9e
         env:
           # One-time upload URLs are made from this (mcp-js appends
           # /api/artifact-uploads/<token>), so they come back under the
