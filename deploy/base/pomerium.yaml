@@ -1,0 +1,110 @@
+# Pomerium Core, all services in one process, configured from a file.
+#
+# One replica: the databroker keeps sessions, MCP client registrations and
+# MCP refresh tokens in files on its volume, and file storage is
+# single-instance. More replicas need the Postgres backend.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: pomerium
+  labels:
+    app: pomerium
+spec:
+  replicas: 1
+  serviceName: pomerium
+  selector:
+    matchLabels:
+      app: pomerium
+  template:
+    metadata:
+      labels:
+        app: pomerium
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: pomerium
+          image: pomerium/pomerium:v0.33.3
+          args: ["--config", "/etc/pomerium/config.yaml"]
+          # SHARED_SECRET, COOKIE_SECRET, SIGNING_KEY, IDP_CLIENT_SECRET
+          envFrom:
+            - secretRef:
+                name: pomerium
+          ports:
+            - name: https
+              containerPort: 8443
+            - name: health
+              containerPort: 28080
+          startupProbe:
+            httpGet:
+              path: /startupz
+              port: health
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/pomerium
+              readOnly: true
+            - name: tls
+              mountPath: /tls
+              readOnly: true
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: pomerium-config
+        - name: tls
+          secret:
+            secretName: pomerium-tls
+        - name: tmp
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pomerium
+spec:
+  selector:
+    app: pomerium
+  ports:
+    - name: https
+      port: 443
+      targetPort: https

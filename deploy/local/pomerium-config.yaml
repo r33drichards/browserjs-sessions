@@ -1,0 +1,74 @@
+# Pomerium's configuration for the local cluster. Secrets (SHARED_SECRET,
+# COOKIE_SECRET, SIGNING_KEY, IDP_CLIENT_SECRET) come from the environment.
+address: :8443
+health_check_addr: 0.0.0.0:28080
+certificate_file: /tls/tls.crt
+certificate_key_file: /tls/tls.key
+
+authenticate_service_url: https://authenticate.localtest.me
+
+# Users sign in with Dex, which offers Google, GitHub and the test users.
+# localhost:5556 is Dex for the browser; a sidecar makes it so for Pomerium.
+idp_provider: oidc
+idp_provider_url: http://localhost:5556/dex
+idp_client_id: pomerium
+
+# Sessions, MCP client registrations and MCP refresh tokens: lose these and
+# every user and every MCP client has to sign in again.
+databroker_storage_type: file
+databroker_storage_connection_string: file:///data/databroker
+
+# MCP clients that identify themselves by a metadata document under these
+# domains may sign users in (Claude's apps and Claude Code).
+mcp_allowed_client_id_domains:
+  - claude.ai
+
+# The whole of a request must arrive within this: an upload is up to 16 MiB.
+timeout_read: 5m
+
+routes:
+  # Session hosts. The backend tells the sessions apart by Host, so every
+  # route keeps the caller's.
+
+  # mcp-js's one-time upload URL: the token in the path is the credential,
+  # checked by the session's pod.
+  - name: session-upload
+    from: https://*.sessions.localtest.me
+    prefix: /api/artifact-uploads/
+    to: http://backend
+    allow_public_unauthenticated_access: true
+    preserve_host_header: true
+    timeout: 5m
+
+  # The session's screen, a websocket: the ticket in the query is the
+  # credential, checked by the backend.
+  - name: session-vnc
+    from: https://*.sessions.localtest.me
+    path: /vnc
+    to: http://backend
+    allow_public_unauthenticated_access: true
+    allow_websockets: true
+    preserve_host_header: true
+
+  # The session's MCP endpoint. Pomerium signs the MCP client's user in and
+  # says who it is; the backend decides whether the session is theirs.
+  - name: session-mcp
+    from: https://*.sessions.localtest.me
+    prefix: /mcp
+    to: http://backend
+    mcp:
+      server:
+        max_request_bytes: 1048576
+    allow_any_authenticated_user: true
+    pass_identity_headers: true
+    preserve_host_header: true
+
+  # The UI and its API.
+  - name: app
+    from: https://app.localtest.me
+    to: http://backend
+    allow_any_authenticated_user: true
+    pass_identity_headers: true
+    preserve_host_header: true
+    # A request may wait for a session's pod to answer.
+    timeout: 5m

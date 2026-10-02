@@ -1,0 +1,7 @@
+# The root image is built from web/ and backend/ only.
+*
+!web
+!backend
+web/node_modules
+web/dist
+backend/bin
