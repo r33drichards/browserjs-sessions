@@ -1,0 +1,314 @@
+name: images
+
+# Builds the three container images and, from main, pushes them to Artifact
+# Registry.
+#
+#   pull request              build only: no sign-in, no push
+#   push to main, or started  build and push <registry>/<name>:<commit sha>
+#   by hand on main           and :main, digests in the run summary
+#
+# Only the images whose files changed are built. Started by hand, it builds
+# the ones chosen in the form (default: all).
+#
+# Pushing is keyless: GitHub's OIDC token is exchanged through Workload
+# Identity Federation for the images-push service account, which can write to
+# the one image repository and nothing else, and which Google only hands to
+# workflows running on refs/heads/main of this repository.
+
+on:
+  pull_request:
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "backend/**"
+      - "web/**"
+      - "images/**"
+      - ".github/workflows/images.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "backend/**"
+      - "web/**"
+      - "images/**"
+      - ".github/workflows/images.yml"
+  workflow_dispatch:
+    inputs:
+      images:
+        description: Which image to build
+        required: true
+        type: choice
+        default: all
+        options:
+          - all
+          - backend
+          - mcp-js
+          - browser
+
+# Every job states its own; this is the floor.
+permissions:
+  contents: read
+
+# A newer commit on a pull request replaces the build in progress. On main,
+# runs queue instead: every pushed commit gets its images.
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    name: what to build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.filter.outputs.matrix }}
+      any: ${{ steps.filter.outputs.any }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The filter compares two commits; both must be present.
+          fetch-depth: 0
+
+      - name: Choose images
+        id: filter
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          CHOSEN: ${{ inputs.images }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # name | build context | timeout (minutes) | layer cache | free disk first
+          # The browser image is a Nix build of about 3.6 GB in a single
+          # layer that changes whenever its inputs do: caching it would cost
+          # minutes and gigabytes of cache per run and never be hit.
+          table='[
+            {"name":"backend","context":".",             "timeout":30, "cache":true, "free_disk":false},
+            {"name":"mcp-js", "context":"images/mcp-js", "timeout":15, "cache":true, "free_disk":false},
+            {"name":"browser","context":"images/browser","timeout":120,"cache":false,"free_disk":true}
+          ]'
+
+          changed_files() {
+            case "$EVENT" in
+              pull_request)
+                # What the pull request changes relative to where it branched.
+                git diff --name-only "${PR_BASE}...${PR_HEAD}"
+                ;;
+              push)
+                if [ -z "$PUSH_BEFORE" ] || [ "$PUSH_BEFORE" = "0000000000000000000000000000000000000000" ] ||
+                  ! git cat-file -e "${PUSH_BEFORE}^{commit}" 2>/dev/null; then
+                  # New branch or rewritten history: no base to compare with.
+                  echo ".github/workflows/images.yml"
+                else
+                  git diff --name-only "$PUSH_BEFORE" "$PUSH_AFTER"
+                fi
+                ;;
+            esac
+          }
+
+          wanted=()
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            if [ "$CHOSEN" = "all" ] || [ -z "$CHOSEN" ]; then
+              wanted=(backend mcp-js browser)
+            else
+              wanted=("$CHOSEN")
+            fi
+          else
+            files="$(changed_files)"
+            echo "Changed files:"
+            printf '%s\n' "$files" | sed 's/^/  /'
+            touches() { grep -Eq "$1" <<<"$files"; }
+            if touches '^\.github/workflows/images\.yml$'; then
+              # The pipeline itself changed: prove it on every image.
+              wanted=(backend mcp-js browser)
+            else
+              if touches '^(Dockerfile$|\.dockerignore$|backend/|web/)'; then wanted+=(backend); fi
+              if touches '^images/mcp-js/'; then wanted+=(mcp-js); fi
+              if touches '^images/browser/'; then wanted+=(browser); fi
+            fi
+          fi
+
+          # The backend's Dockerfile is at the repository root and may not
+          # have been merged yet: skip that image, do not fail.
+          build=()
+          for name in "${wanted[@]}"; do
+            if [ "$name" = "backend" ] && [ ! -f Dockerfile ]; then
+              echo "::notice::backend skipped: there is no Dockerfile at the repository root yet"
+              continue
+            fi
+            build+=("$name")
+          done
+
+          names="$(printf '%s\n' "${build[@]}" | jq -R . | jq -cs 'map(select(length > 0))')"
+          matrix="$(jq -c --argjson names "$names" '{include: map(select(.name as $n | $names | index($n)))}' <<<"$table")"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          if [ "$(jq '.include | length' <<<"$matrix")" -gt 0 ]; then
+            echo "any=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "any=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Building: $(jq -r '[.include[].name] | join(", ") | if . == "" then "nothing" else . end' <<<"$matrix")" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # Pull requests, and runs started by hand on a branch other than main: the
+  # images are built to prove that they build, and thrown away.
+  build:
+    name: build ${{ matrix.name }}
+    needs: changes
+    if: needs.changes.outputs.any == 'true' && (github.event_name == 'pull_request' || github.ref != 'refs/heads/main')
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.timeout }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # A hosted runner has about 14 GB free; the browser image needs its
+      # Nix store, a copy of it, and the exported layer.
+      - name: Free disk space
+        if: matrix.free_disk
+        shell: bash
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/share/swift /usr/local/share/boost
+          sudo docker image prune --all --force >/dev/null
+          df -h /
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.context }}
+          platforms: linux/amd64
+          push: false
+          provenance: false
+          cache-from: ${{ matrix.cache && format('type=gha,scope={0}', matrix.name) || '' }}
+          # Pull requests can read main's cache; what they write stays theirs.
+          cache-to: ${{ matrix.cache && format('type=gha,scope={0},mode=max,ignore-error=true', matrix.name) || '' }}
+
+  # main only: build, push, and report the digests.
+  publish:
+    name: publish ${{ matrix.name }}
+    needs: changes
+    if: needs.changes.outputs.any == 'true' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.timeout }}
+    permissions:
+      contents: read
+      id-token: write # to sign in to Google Cloud without a key
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
+    env:
+      IMAGE: ${{ vars.IMAGE_REGISTRY }}/${{ matrix.name }}
+    steps:
+      - name: Check repository variables
+        shell: bash
+        env:
+          IMAGE_REGISTRY: ${{ vars.IMAGE_REGISTRY }}
+          IMAGE_PUSH_SA: ${{ vars.IMAGE_PUSH_SA }}
+          GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+        run: |
+          missing=0
+          for name in IMAGE_REGISTRY IMAGE_PUSH_SA GCP_WIF_PROVIDER; do
+            if [ -z "${!name}" ]; then
+              echo "::error::repository variable $name is not set (see docs/build-pipeline.md)"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Free disk space
+        if: matrix.free_disk
+        shell: bash
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/share/swift /usr/local/share/boost
+          sudo docker image prune --all --force >/dev/null
+          df -h /
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Build before signing in: the access token lives one hour and the
+      # browser build can take longer. The push step below reuses this
+      # build from the builder's own cache.
+      - name: Build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.context }}
+          platforms: linux/amd64
+          push: false
+          provenance: false
+          cache-from: ${{ matrix.cache && format('type=gha,scope={0}', matrix.name) || '' }}
+
+      - name: Sign in to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.IMAGE_PUSH_SA }}
+          token_format: access_token
+
+      - name: Registry host
+        id: registry
+        shell: bash
+        env:
+          IMAGE_REGISTRY: ${{ vars.IMAGE_REGISTRY }}
+        run: echo "host=${IMAGE_REGISTRY%%/*}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ steps.registry.outputs.host }}
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      - name: Push
+        id: push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.context }}
+          platforms: linux/amd64
+          push: true
+          # One plain image manifest per tag: the digest below is the image.
+          provenance: false
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:main
+          cache-from: ${{ matrix.cache && format('type=gha,scope={0}', matrix.name) || '' }}
+          cache-to: ${{ matrix.cache && format('type=gha,scope={0},mode=max,ignore-error=true', matrix.name) || '' }}
+
+      - name: Digest to job summary
+        shell: bash
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          NAME: ${{ matrix.name }}
+        run: |
+          {
+            echo "### ${NAME}"
+            echo
+            echo '```'
+            echo "${IMAGE}@${DIGEST}"
+            echo '```'
+            echo "Tags: \`${GITHUB_SHA}\`, \`main\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "${IMAGE}@${DIGEST}"
