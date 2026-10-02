@@ -69,12 +69,23 @@ podTemplate:
             path: /healthz
             port: browser-mcp
           periodSeconds: 5
+          # Sessions share CPU (see resources); a slow answer under load is
+          # not a dead browser. Not ready only after 30s without an answer.
+          timeoutSeconds: 5
+          failureThreshold: 6
+        # CPU is overcommitted on purpose: the node is packed by the small
+        # request (0.2 cores a session, both containers), and a busy session
+        # bursts up to its limit (2 cores a session). When the node is short,
+        # sessions slow down in proportion to their requests; none is killed.
+        # Memory is not overcommitted the same way, so its request is closer
+        # to real use and is what should fill a node first: about ten
+        # sessions on a 16 GB node.
         resources:
           requests:
-            cpu: 250m
-            memory: 512Mi
+            cpu: 150m
+            memory: 1Gi
           limits:
-            cpu: "2"
+            cpu: 1500m
             memory: 2Gi
         # No capabilities and no way to gain any. Chromium runs with
         # --no-sandbox; gVisor is the sandbox.
@@ -109,12 +120,14 @@ podTemplate:
             path: /api/artifacts
             port: mcp
           periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 6
         resources:
           requests:
-            cpu: 100m
+            cpu: 50m
             memory: 256Mi
           limits:
-            cpu: "1"
+            cpu: 500m
             memory: 1Gi
         securityContext:
           allowPrivilegeEscalation: false

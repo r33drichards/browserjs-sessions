@@ -36,7 +36,8 @@ kubernetes_version = "1.36"
 #   home = "203.0.113.7/32"
 # }
 
-# Session nodes: each n2-standard-4 holds about four 3 GiB sessions.
+# Session nodes: a 16 GB node holds about ten sessions (packed by their
+# requests in deploy/gke/blueprint.yaml; CPU is overcommitted).
 # session_max_nodes is the ceiling on what sessions can cost.
 session_machine_type = "n2-standard-4"
 session_max_nodes    = 3
