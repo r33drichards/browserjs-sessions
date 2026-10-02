@@ -69,6 +69,7 @@ type API struct {
 var (
 	_ billing.Stripe = (*API)(nil)
 	_ PeriodFinder   = (*API)(nil)
+	_ PlanChanger    = (*API)(nil)
 )
 
 // NewAPI is the client for a key. currency is the catalogue's. baseURL is
@@ -477,4 +478,83 @@ func (a *API) SubscriptionPeriodOf(ctx context.Context, paymentIntent string) (P
 		return period, true, nil
 	}
 	return PaidPeriod{}, false, nil
+}
+
+// scheduleOf is the ID of the subscription's schedule, "" for none.
+func scheduleOf(s *sdk.Subscription) string {
+	return idOf(s.Schedule, func(sc *sdk.SubscriptionSchedule) string { return sc.ID })
+}
+
+func (a *API) UpgradeSubscription(ctx context.Context, id, price string) error {
+	s, err := a.sc.V1Subscriptions.Retrieve(ctx, id, nil)
+	if err != nil {
+		return notFound(err)
+	}
+	if s.Items == nil || len(s.Items.Data) != 1 {
+		return fmt.Errorf("subscription %s does not have one item", id)
+	}
+	item := s.Items.Data[0]
+	// A change waiting for the period's end is dropped: the subscription is
+	// its own again.
+	if schedule := scheduleOf(s); schedule != "" {
+		if _, err := a.sc.V1SubscriptionSchedules.Release(ctx, schedule, nil); err != nil {
+			return err
+		}
+	}
+	params := &sdk.SubscriptionUpdateParams{
+		Items: []*sdk.SubscriptionUpdateItemParams{{ID: sdk.String(item.ID), Price: sdk.String(price)}},
+		// A new period from now, invoiced and paid at once, less the unused
+		// time of the old one; if the card refuses, nothing is changed.
+		ProrationBehavior:     sdk.String("always_invoice"),
+		BillingCycleAnchorNow: sdk.Bool(true),
+		PaymentBehavior:       sdk.String("error_if_incomplete"),
+	}
+	// The same upgrade asked twice in one period is one upgrade.
+	params.SetIdempotencyKey(fmt.Sprintf("upgrade-%s-%s-%d", id, price, item.CurrentPeriodStart))
+	_, err = a.sc.V1Subscriptions.Update(ctx, id, params)
+	var se *sdk.Error
+	if errors.As(err, &se) && se.Type == sdk.ErrorTypeCard {
+		return fmt.Errorf("%w: %s", ErrPaymentFailed, declineCode(se))
+	}
+	return err
+}
+
+func (a *API) SchedulePrice(ctx context.Context, id, price string) error {
+	s, err := a.sc.V1Subscriptions.Retrieve(ctx, id, nil)
+	if err != nil {
+		return notFound(err)
+	}
+	schedule := scheduleOf(s)
+	if price == "" {
+		if schedule == "" {
+			return nil
+		}
+		_, err := a.sc.V1SubscriptionSchedules.Release(ctx, schedule, nil)
+		return err
+	}
+	if s.Items == nil || len(s.Items.Data) != 1 || s.Items.Data[0].Price == nil {
+		return fmt.Errorf("subscription %s does not have one item with a price", id)
+	}
+	item := s.Items.Data[0]
+	if schedule == "" {
+		made, err := a.sc.V1SubscriptionSchedules.Create(ctx, &sdk.SubscriptionScheduleCreateParams{FromSubscription: sdk.String(id)})
+		if err != nil {
+			return err
+		}
+		schedule = made.ID
+	}
+	one := func(price string) []*sdk.SubscriptionScheduleUpdatePhaseItemParams {
+		return []*sdk.SubscriptionScheduleUpdatePhaseItemParams{{Price: sdk.String(price), Quantity: sdk.Int64(1)}}
+	}
+	// Two phases: the period that is paid for, as it is; then the new
+	// price, after which the subscription is its own again.
+	_, err = a.sc.V1SubscriptionSchedules.Update(ctx, schedule, &sdk.SubscriptionScheduleUpdateParams{
+		EndBehavior:       sdk.String("release"),
+		ProrationBehavior: sdk.String("none"),
+		Phases: []*sdk.SubscriptionScheduleUpdatePhaseParams{
+			{Items: one(item.Price.ID), StartDate: sdk.Int64(item.CurrentPeriodStart), EndDate: sdk.Int64(item.CurrentPeriodEnd)},
+			{Items: one(price)},
+		},
+	})
+	return err
 }

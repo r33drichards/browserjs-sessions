@@ -16,6 +16,7 @@ import {
   followCheckout,
   gateStep,
   hoursLeft,
+  planChangeMessage,
   price,
   ratesInWords,
   refusalOf,
@@ -73,6 +74,19 @@ describe("the client", () => {
     await expect(subscribed.checkout("cu_starter_monthly_v1")).rejects.toMatchObject({ status: 409, code: "already_subscribed" })
     await expect(subscribed.checkout("cu_nothing")).rejects.toMatchObject({ status: 400, code: "unknown_item" })
     await expect(backend("new").client.portal()).rejects.toMatchObject({ status: 409, code: "no_customer" })
+  })
+
+  it("changes a subscriber's plan: a cheaper one waits, a dearer one is now", async () => {
+    const { client, account } = backend("active") // on Pro
+    const down = await client.changePlan("cu_starter_monthly_v1")
+    expect(down).toMatchObject({ change: "scheduled", item: "cu_starter_monthly_v1" })
+    expect(account().plan.key).toBe("pro")
+    expect(planChangeMessage(down, "Starter")).toMatch(/^Your plan changes to Starter on \d+ \w+\. Until then it is as it is\.$/)
+    expect(await client.changePlan("cu_pro_monthly_v1")).toEqual({ change: "kept", item: "cu_pro_monthly_v1" })
+    expect(planChangeMessage({ change: "kept", item: "x" }, "Pro")).toBe("Your plan stays Pro.")
+    expect(planChangeMessage({ change: "upgraded", item: "x" }, "Pro")).toBe("You are on Pro now. Its credit for the new period has been added.")
+    await expect(client.changePlan("cu_nothing")).rejects.toMatchObject({ status: 400, code: "unknown_item" })
+    await expect(backend("payg").client.changePlan("cu_pro_monthly_v1")).rejects.toMatchObject({ status: 409, code: "not_subscribed" })
   })
 
   it("never asks about a checkout id that is not one", async () => {

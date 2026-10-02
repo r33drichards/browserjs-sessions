@@ -26,6 +26,7 @@ var checkoutIDPattern = regexp.MustCompile(`^cs_[A-Za-z0-9_]+$`)
 // A path ending in "/" is a prefix.
 var Paths = []string{
 	"/api/billing/checkout", "/api/billing/checkout/", "/api/billing/portal", "/api/billing/auto-recharge",
+	"/api/billing/subscription",
 }
 
 // Register adds this package's routes to the app's API mux, whose requests
@@ -36,6 +37,7 @@ func (s *Service) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/billing/checkout/{id}", s.person(s.checkoutState))
 	mux.HandleFunc("POST /api/billing/portal", s.person(s.portal))
 	mux.HandleFunc("PUT /api/billing/auto-recharge", s.person(s.autoRecharge))
+	mux.HandleFunc("POST /api/billing/subscription", s.person(s.changePlan))
 }
 
 // PaymentsOff serves the same routes while billing is on and Stripe is not
@@ -143,7 +145,7 @@ func (s *Service) checkout(w http.ResponseWriter, r *http.Request, acct billing.
 		if isPlan {
 			p.Mode, p.Kind = billing.ModeSubscription, billing.KindPlan
 			if sub := acct.Spec.Subscription; sub != nil && subscribed(sub.Status) {
-				s.fail(w, http.StatusConflict, CodeAlreadySubscribed, "You already have a subscription. A plan cannot be changed in place yet: cancel it in the billing portal, and choose another when it ends. Credit packs can be bought at any time.")
+				s.fail(w, http.StatusConflict, CodeAlreadySubscribed, "You already have a subscription. Change plan on the billing page; cancel it in the billing portal.")
 				return
 			}
 		}
