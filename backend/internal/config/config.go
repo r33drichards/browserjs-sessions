@@ -91,6 +91,9 @@ type Config struct {
 	StripeMode          string
 	StripeAPIKey        Secret
 	StripeWebhookSecret Secret
+	// BillingIDs is BILLING_IDS: the file of infra/billing's IDs (the
+	// ConfigMap billing-iac, key ids.json). It need not be there.
+	BillingIDs string
 }
 
 // APITokens reports whether users can make API tokens and use them.

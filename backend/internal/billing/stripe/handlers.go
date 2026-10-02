@@ -143,7 +143,7 @@ func (s *Service) checkout(w http.ResponseWriter, r *http.Request, acct billing.
 		if isPlan {
 			p.Mode, p.Kind = billing.ModeSubscription, billing.KindPlan
 			if sub := acct.Spec.Subscription; sub != nil && subscribed(sub.Status) {
-				s.fail(w, http.StatusConflict, CodeAlreadySubscribed, "You already have a subscription. Change it in the billing portal.")
+				s.fail(w, http.StatusConflict, CodeAlreadySubscribed, "You already have a subscription. A plan cannot be changed in place yet: cancel it in the billing portal, and choose another when it ends. Credit packs can be bought at any time.")
 				return
 			}
 		}

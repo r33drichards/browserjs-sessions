@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -210,8 +212,38 @@ func TestAPICreateCustomerAndPortal(t *testing.T) {
 		wantForm(t, f.last("POST /v1/billing_portal/sessions"), map[string]string{
 			"customer": "cus_1", "return_url": "https://app.example.test/billing", "configuration": "bpc_1"})
 	}
-	if n := f.count("GET /v1/billing_portal/configurations"); n != 2 {
-		t.Errorf("%d lists of configurations, want 2: one that found none, one that found it", n)
+	// With infra/billing's IDs mounted, the ID is the file's, and Stripe is
+	// not asked; a file of the other mode, or none, is not used.
+	path := filepath.Join(t.TempDir(), "ids.json")
+	write := func(body string) {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fromFile := stripe.NewAPI(fakeKey, "usd", f.url).IDsFile(path, "test")
+	for body, want := range map[string]string{
+		`{"mode":"test","stripe_portal_configuration_id":"bpc_file"}`: "bpc_file",
+		`{"mode":"live","stripe_portal_configuration_id":"bpc_live"}`: "bpc_1",
+		`{"mode":"test"}`: "bpc_1",
+		`not json`:        "bpc_1",
+	} {
+		write(body)
+		if _, err := fromFile.CreatePortal(ctx, "cus_1", "https://app.example.test/billing"); err != nil {
+			t.Fatal(err)
+		}
+		if got := f.last("POST /v1/billing_portal/sessions").form.Get("configuration"); got != want {
+			t.Errorf("ids.json %s: configuration %q, want %q", body, got, want)
+		}
+	}
+	os.Remove(path)
+	if _, err := fromFile.CreatePortal(ctx, "cus_1", "https://app.example.test/billing"); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.last("POST /v1/billing_portal/sessions").form.Get("configuration"); got != "bpc_1" {
+		t.Errorf("no ids.json: configuration %q, want the one found at Stripe", got)
+	}
+	if n := f.count("GET /v1/billing_portal/configurations"); n != 3 {
+		t.Errorf("%d lists of configurations, want 3: one that found none, one for each client that found it", n)
 	}
 }
 
