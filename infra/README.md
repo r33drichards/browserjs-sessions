@@ -167,7 +167,23 @@ gh variable set IMAGE_REGISTRY --body "<registry_url>"
 `main`. Until both are set, its push job fails at sign-in. See
 `docs/build-pipeline.md`.
 
-## 7. Hand over to `deploy/`
+## 7. Deploys (once)
+
+The same apply creates the `deployer` service account (Kubernetes Engine
+Admin, usable only from `main`). Set its e-mail as a repository variable:
+
+```sh
+gh variable set DEPLOY_SA --body "<deployer_service_account_email>"
+```
+
+`.github/workflows/deploy.yml` and `cluster-info.yml` sign in with it.
+Nothing changes in `bootstrap.sh`: `tofu-plan` can already read what this
+adds. The deployment itself, and why the role is Admin: `docs/gke-deployment.md`.
+
+## 8. Hand over to `deploy/`
+
+`deploy/gke` already carries the values in the table below for the real
+project; the table is what to change if the outputs ever differ.
 
 Run the `get_credentials_command` and `docker_login_command` outputs on your
 machine. Using `kubectl` and pushing images needs your own Google account to
@@ -240,7 +256,11 @@ full list is at the end of `docs/infrastructure.md`. The ones most likely to
 need a change on the first real apply:
 
 1. Whether the add-on is accepted at cluster creation (workaround above).
-2. Whether `REGULAR` already ships a new enough GKE version.
+2. Whether `REGULAR` already ships a new enough GKE version. It did not by
+   default: the cluster came up on 1.35.8, where the add-on serves only the
+   `v1alpha1` API. `terraform.tfvars` now asks for `"1.36"`; whether the
+   channel offers 1.36.3-gke.1767000 or later is still to be checked
+   (`gcloud container get-server-config`).
 3. Whether a Sandbox under the managed add-on restores from a Pod Snapshot;
    Google's tutorial for that still installs the open-source controller.
 4. Quota for N2 in a new project, and `Intel Ice Lake` in the chosen zone.
