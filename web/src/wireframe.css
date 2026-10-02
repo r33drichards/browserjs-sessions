@@ -208,3 +208,111 @@ a {
   font-weight: normal;
   vertical-align: middle;
 }
+/* Breadcrumbs and the message a finished flow leaves on the page it lands on. */
+.wf-crumbs {
+  margin-bottom: 12px;
+}
+.wf-flash {
+  margin-bottom: 16px;
+}
+/* 1q84n is Flashbar's item, mx3cw is Alert: outlined like every other box. */
+[class*="awsui_flash_1q84n_"],
+[class*="awsui_alert_mx3cw_"] {
+  border: 2px solid var(--ink) !important;
+  border-radius: var(--wobble) !important;
+  box-shadow: none !important;
+  background: #fff !important;
+  color: var(--ink) !important;
+}
+[class*="awsui_alert_mx3cw_"][class*="awsui_type-error_"],
+[class*="awsui_flash_1q84n_"][class*="awsui_flash-type-error_"] {
+  border-style: double !important;
+  border-width: 4px !important;
+}
+
+/* A small label in a box: "as code". */
+.wf-tag {
+  display: inline-block;
+  padding: 0 6px;
+  border: 1.5px dashed var(--ink);
+  border-radius: var(--wobble);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.wf-state[data-verdict="deny"] {
+  border-style: double;
+  border-width: 4px;
+  font-weight: bold;
+}
+
+/* Controls side by side, aligned on their bottom edge. */
+.wf-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* The policy editor and the read-only code beside it: the same outlined box. */
+.wf-editor,
+.wf-code {
+  box-sizing: border-box;
+  width: 100%;
+  border: 2px solid var(--ink);
+  border-radius: 4px;
+  background: #fff;
+  overflow: hidden;
+}
+.wf-editor-note {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 160px;
+}
+.wf-editor-note p {
+  margin: 0;
+}
+.wf-code {
+  margin: 0;
+  padding: 8px 12px;
+  overflow: auto;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre;
+  tab-size: 4;
+  /* Read-only: pencil hatching at the edge instead of an editor's gutter. */
+  border-style: dashed;
+}
+.wf-statusbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  padding: 4px 12px;
+  border: 2px solid var(--ink);
+  border-radius: 4px;
+  font-size: 13px;
+}
+.wf-problems {
+  margin: 0;
+  padding: 0 0 0 20px;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 13px;
+}
+.wf-problems b {
+  font-family: "Comic Neue", "Chalkboard SE", "Comic Sans MS", "Segoe Print", cursive;
+}
+.wf-spinner-small {
+  width: 10px;
+  height: 10px;
+  border-width: 2px;
+  vertical-align: middle;
+}
+/* Their icons and dismiss buttons are drawn for a coloured background. */
+[class*="awsui_flash_1q84n_"] *,
+[class*="awsui_alert_mx3cw_"] [class*="awsui_icon_"] {
+  color: var(--ink) !important;
+}

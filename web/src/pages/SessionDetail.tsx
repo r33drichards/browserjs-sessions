@@ -3,15 +3,20 @@ import Button from "@cloudscape-design/components/button"
 import Header from "@cloudscape-design/components/header"
 import Input from "@cloudscape-design/components/input"
 import SpaceBetween from "@cloudscape-design/components/space-between"
-import { useCallback, useState } from "react"
-import { useNavigate } from "react-router-dom"
-import type { Session } from "../api"
+import Tabs from "@cloudscape-design/components/tabs"
+import { Suspense, lazy, useCallback, useState } from "react"
+import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { ApiError, isSessionId } from "../api"
 import { useMe } from "../auth/MeProvider"
 import { signedOutHandled } from "../auth/signedOut"
 import { VncPane } from "../components/VncPane"
+import type { PolicySession as Session } from "../policyApi"
+import { isManagedAsCode, policySummaryLine } from "../policyApi"
 import { Shell, StateTag, api } from "../shell"
 import { usePolling } from "../usePolling"
+
+// Only a deployment with policies shows the tab, so only it loads the code.
+const PolicyTab = lazy(() => import("../components/PolicyTab").then(m => ({ default: m.PolicyTab })))
 
 const PLACEHOLDER: Record<string, string> = {
   starting: "Starting the browser…",
@@ -34,6 +39,8 @@ export function SessionDetail({ id }: { id: string }) {
   const [deleting, setDeleting] = useState(false)
   const [viewerControls, setViewerControls] = useState<HTMLElement | null>(null)
   const [copied, setCopied] = useState<"copied" | "failed" | null>(null)
+  // The open tab is in the address, so the policy's edit page can come back to it.
+  const [params, setParams] = useSearchParams()
 
   const load = useCallback(() => {
     api
@@ -105,8 +112,21 @@ export function SessionDetail({ id }: { id: string }) {
     setTimeout(() => setCopied(null), 1500)
   }
 
+  const browser =
+    session.state === "running" ? (
+      <VncPane sessionId={session.id} controls={viewerControls} />
+    ) : (
+      <div className="wf-placeholder">
+        <div>
+          {session.state === "starting" && <span className="wf-spinner" aria-hidden="true" />}
+          <p>{PLACEHOLDER[session.state]}</p>
+          {session.message && <p className="wf-mono">{session.message}</p>}
+        </div>
+      </div>
+    )
+
   return (
-    <Shell>
+    <Shell breadcrumbs={[{ text: session.name, href: `/sessions/${session.id}` }]}>
       <SpaceBetween size="l">
         <Header
           variant="h1"
@@ -144,6 +164,18 @@ export function SessionDetail({ id }: { id: string }) {
                 <span>created {new Date(session.created).toLocaleString()}</span>
                 {/* Only an admin looking at someone else's session needs telling whose it is. */}
                 {session.owner !== me.email && <span className="wf-mono">{session.owner}</span>}
+                {/* The title row is the summary that stays in view on every tab. */}
+                {session.policy && (
+                  <span>
+                    policy: <Link to="?tab=policy">{policySummaryLine(session.policy)}</Link>
+                    {isManagedAsCode(session.policy) && (
+                      <>
+                        {" "}
+                        <span className="wf-tag">as code</span>
+                      </>
+                    )}
+                  </span>
+                )}
               </span>
             </>
           ) : (
@@ -159,19 +191,30 @@ export function SessionDetail({ id }: { id: string }) {
           )}
         </Header>
 
-        {actionError && <Box>⚠ {actionError}</Box>}
-        {error && <Box>⚠ {error}</Box>}
+        {actionError ? <Box>⚠ {actionError}</Box> : null}
+        {error ? <Box>⚠ {error}</Box> : null}
 
-        {session.state === "running" ? (
-          <VncPane sessionId={session.id} controls={viewerControls} />
+        {session.policy ? (
+          <Tabs
+            ariaLabel="Session"
+            activeTabId={params.get("tab") === "policy" ? "policy" : "browser"}
+            onChange={e => setParams(e.detail.activeTabId === "policy" ? { tab: "policy" } : {}, { replace: true })}
+            tabs={[
+              { id: "browser", label: "Browser", content: browser },
+              {
+                id: "policy",
+                label: "Policy",
+                content: (
+                  <Suspense fallback="Loading the policy">
+                    <PolicyTab sessionId={session.id} sessionName={session.name} summary={session.policy} />
+                  </Suspense>
+                ),
+              },
+            ]}
+          />
         ) : (
-          <div className="wf-placeholder">
-            <div>
-              {session.state === "starting" && <span className="wf-spinner" aria-hidden="true" />}
-              <p>{PLACEHOLDER[session.state]}</p>
-              {session.message && <p className="wf-mono">{session.message}</p>}
-            </div>
-          </div>
+          // No policies on this deployment: the browser is the whole page.
+          browser
         )}
       </SpaceBetween>
     </Shell>
