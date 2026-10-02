@@ -3,7 +3,11 @@
 FROM nixos/nix:2.32.8 AS build
 WORKDIR /src
 COPY . .
+# desktop-smoke first: it runs the desktop_execute tool against a real Xvnc,
+# so an image whose nut.js cannot drive the display is never built.
 RUN nix --extra-experimental-features "nix-command flakes" --option filter-syscalls false \
+      build -L --no-link .#desktop-smoke \
+ && nix --extra-experimental-features "nix-command flakes" --option filter-syscalls false \
       build .#runtime -o /result \
  && mkdir -p /rootfs/nix/store /rootfs/tmp /rootfs/root /rootfs/etc /rootfs/data \
  && cp -a $(nix-store -qR /result) /rootfs/nix/store/ \

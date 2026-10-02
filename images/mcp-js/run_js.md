@@ -153,3 +153,111 @@ navigate once and then keep clicking/reading without reloading. Pass
 tab) and `close: true` on the last call when you are done with one. The
 pipeline stops at the first failing step and attaches a screenshot of that
 state. Record working selectors for each site in `/data/memory/sites/`.
+
+### Desktop control (nut.js) — `mcp.callTool("browser", "desktop_execute", …)`
+
+The whole desktop that Chromium runs on (the X display the operator watches
+over VNC) can be driven with [nut.js](https://github.com/nut-tree/nut.js):
+mouse, keyboard, screen and clipboard. nut.js is a Node.js library with a
+native addon, so it cannot be imported into `run_js`; it runs next to the
+display, in the browser container, and you call it from here. Each operation
+is the nut.js call of the same name (`mouse.click`, `keyboard.type`,
+`screen.grab`, …):
+
+```js
+// A screenshot. It comes back to your code, not to the model.
+const r = await mcp.callTool("browser", "desktop_execute", {
+  operations: [{ type: "screen.grab" }],
+});
+const { results, screen } = JSON.parse(r.content[0].text); // screen: { width, height }
+const png = r.content[1 + results[0].result.image_index];  // { type: "image", data: <base64 PNG>, mimeType }
+// Only when you need to look at it: attach it to this run_js result.
+artifact("screen", "image/png", Uint8Array.from(atob(png.data), (c) => c.charCodeAt(0)));
+console.log(JSON.stringify(screen));
+```
+
+```js
+// Click at a point and type text, then press Enter.
+await mcp.callTool("browser", "desktop_execute", {
+  operations: [
+    { type: "mouse.click", params: { x: 640, y: 52 } },
+    { type: "keyboard.type", params: { text: "example.com" } },
+    { type: "keyboard.type", params: { keys: ["Enter"] } },
+  ],
+});
+```
+
+```js
+// A key combination (Ctrl+L): press the keys, then release the same keys.
+await mcp.callTool("browser", "desktop_execute", {
+  operations: [
+    { type: "keyboard.pressKey", params: { keys: ["LeftControl", "L"] } },
+    { type: "keyboard.releaseKey", params: { keys: ["LeftControl", "L"] } },
+  ],
+});
+```
+
+Operations (`{ type, params }`, run in order):
+
+- Mouse: `mouse.setPosition {x, y}` (jump), `mouse.move {x, y}` (glide in a
+  straight line), `mouse.getPosition`, `mouse.click {button?, x?, y?}`,
+  `mouse.doubleClick {button?, x?, y?}`, `mouse.pressButton {button?}`,
+  `mouse.releaseButton {button?}`, `mouse.drag {to: {x, y}, from?: {x, y}}`
+  (LEFT held along the way), `mouse.scrollUp` / `mouse.scrollDown` /
+  `mouse.scrollLeft` / `mouse.scrollRight {amount, x?, y?}` (wheel steps).
+  With `x, y`, click and scroll go there first; without, they act where the
+  pointer is.
+- Keyboard: `keyboard.type {text}` types a string; `keyboard.type {keys}`
+  taps each key in turn; `keyboard.pressKey {keys}` and
+  `keyboard.releaseKey {keys}` hold and let go.
+- Screen: `screen.width`, `screen.height`, `screen.grab` (whole screen),
+  `screen.grabRegion {left, top, width, height}`, `screen.colorAt {x, y}` →
+  `{R, G, B, hex}`.
+- Windows: `getActiveWindow` → `{title, region}`, `getWindows` → a list of
+  them. These report what the X server has, which includes the window
+  manager's own frames: expect entries with an empty title.
+- Clipboard: `clipboard.setContent {text}`, `clipboard.getContent` →
+  `{text}`. The clipboard is shared with the person at the VNC view.
+- `sleep {ms}` (up to 30000).
+
+`Button`: `LEFT` (default), `MIDDLE`, `RIGHT`.
+
+`Key` (nut.js's names; letters and digits are keys, not characters):
+`Escape`, `F1`, `F2`, `F3`, `F4`, `F5`, `F6`, `F7`, `F8`, `F9`, `F10`, `F11`, `F12`, `F13`, `F14`, `F15`, `F16`, `F17`, `F18`, `F19`, `F20`, `F21`, `F22`, `F23`, `F24`, `Print`, `ScrollLock`, `Pause`, `Grave`, `Num1`, `Num2`, `Num3`, `Num4`, `Num5`, `Num6`, `Num7`, `Num8`, `Num9`, `Num0`, `Minus`, `Equal`, `Backspace`, `Insert`, `Home`, `PageUp`, `NumLock`, `NumPadEqual`, `Divide`, `Multiply`, `Subtract`, `Tab`, `Q`, `W`, `E`, `R`, `T`, `Y`, `U`, `I`, `O`, `P`, `LeftBracket`, `RightBracket`, `Backslash`, `Delete`, `End`, `PageDown`, `NumPad7`, `NumPad8`, `NumPad9`, `Add`, `CapsLock`, `A`, `S`, `D`, `F`, `G`, `H`, `J`, `K`, `L`, `Semicolon`, `Quote`, `Return`, `NumPad4`, `NumPad5`, `NumPad6`, `LeftShift`, `Z`, `X`, `C`, `V`, `B`, `N`, `M`, `Comma`, `Period`, `Slash`, `RightShift`, `Up`, `NumPad1`, `NumPad2`, `NumPad3`, `Enter`, `LeftControl`, `LeftSuper`, `LeftWin`, `LeftCmd`, `LeftAlt`, `LeftMeta`, `RightControl`, `RightSuper`, `RightWin`, `RightAlt`, `RightCmd`, `RightMeta`, `Space`, `Menu`, `Fn`, `Left`, `Down`, `Right`, `NumPad0`, `Decimal`, `Clear`, `AudioMute`, `AudioVolDown`, `AudioVolUp`, `AudioPlay`, `AudioStop`, `AudioPause`, `AudioPrev`, `AudioNext`, `AudioRewind`, `AudioForward`, `AudioRepeat`, `AudioRandom`.
+
+How it behaves:
+
+- **Results.** `r.content[0].text` is JSON: `{ results: [{ success, operation,
+  result }], screen: { width, height } }`. Screenshots are PNGs in the image
+  items after the text; a screenshot's `result` is `{ image_index, width,
+  height }`, and its image is `r.content[1 + image_index]`. Nothing reaches
+  the model unless you print it or emit it with `artifact(...)`, so grab the
+  screen freely and attach it only when you need to see it (a full-screen PNG
+  costs far more context than a line of text; `screen.grabRegion` and
+  `screen.colorAt` are cheaper ways to check one spot). For a large
+  screenshot, pass `heap_memory_max_mb: 64` to `run_js`.
+- **Coordinates** are screen pixels, `(0, 0)` at the top left, and must be
+  inside the screen. The screen is resized whenever the person watching
+  resizes their window, so coordinates from an earlier call can be stale:
+  take `screen` from a result, or a fresh screenshot, before aiming.
+- **Failures.** The whole call is checked before anything runs (an unknown
+  operation or key name runs nothing). It then stops at the first operation
+  that fails and `mcp.callTool` throws; `err.result.content` holds the
+  results so far and a screenshot of that moment. Keys and buttons still held
+  when a call ends are released for you.
+- **Speed.** `config: { keyboardDelayMs, mouseDelayMs, mouseSpeed }` next to
+  `operations` sets the pause before each key (default 10 ms) and each mouse
+  action (50 ms), and the glide speed of `mouse.move` and `mouse.drag`
+  (2000 px/s). One call runs at a time; keep a call well under the `run_js`
+  timeout (30 s unless you raise `execution_timeout_secs`).
+- **Text beyond the keyboard.** `keyboard.type {text}` presses the keys of a
+  US layout. For other characters (accents, CJK, emoji), put the text on the
+  clipboard and paste it: `clipboard.setContent`, then `LeftControl` + `V`.
+
+**Which tool.** For anything inside a web page, use `browser_execute`: it
+finds elements by selector, waits for them, reads the DOM, and does not depend
+on where things are on screen. Use `desktop_execute` for what the page does
+not contain: the browser's own UI (address bar, tabs, permission and download
+prompts, extension popups), native dialogs such as the file chooser, pages
+that only react to real input, and other windows. The person watching sees
+the pointer move and can use the mouse and keyboard at the same time.
