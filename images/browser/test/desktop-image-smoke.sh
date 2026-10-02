@@ -202,8 +202,40 @@ sleep 3
   bad "Chromium is running before anything asked for it: $(pgrep -fl chromium | head -n 3 | cut -c1-200)"
 memory_table "idle: the desktop only, Chromium not started"
 screenshot "$phase-empty"
-# The first browser_execute call starts it.
-check "browser_execute starts Chromium and runs its pipeline" browser_execute_ok
+now() { date +%s%N; }
+ms_since() { echo $((($(now) - $1) / 1000000)); }
+start_ahead() {
+  curl -fsS --max-time 5 -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8081/browser/start \
+    -H 'content-type: application/json' -d '{}'
+}
+if [ "$phase" = first ]; then
+  # What the backend does when it creates a session or adopts one from the
+  # warm pool: Chromium starts in the background, without a window.
+  check "a web page may not ask to start the browser" \
+    test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8081/browser/start -H 'Origin: https://evil.example' -H 'content-type: application/json' -d '{}')" = 403
+  t0="$(now)"
+  check "the backend's request to start the browser ahead of use is accepted" test "$(start_ahead)" = 202
+  if wait_for 60 cdp; then
+    ok "Chromium answers on the debugging port $(ms_since "$t0") ms after the request"
+  else
+    bad "Chromium did not answer within 60 s of the request"
+  fi
+  check "a repeat starts nothing" test "$(start_ahead)" = 200
+  sleep 15
+  [ "$(main_browser | wc -l)" = 1 ] && ! has_window chromium && cdp >/dev/null &&
+    ok "15 s later: one Chromium, still answering, still no window" ||
+    bad "15 s later: Chromium $(main_browser | tr '\n' ' '), windows: $(wmctrl -lx | awk '{ print $3 }' | tr '\n' ' ')"
+  memory_table "idle: the desktop, and Chromium started ahead of use without a window"
+  t0="$(now)"
+  check "the first browser_execute call runs on that Chromium" browser_execute_ok
+  echo "info the first browser_execute call took $(ms_since "$t0") ms"
+  [ "$(main_browser | wc -l)" = 1 ] && ok "and started no second browser" || bad "main Chromium processes: $(main_browser | tr '\n' ' ')"
+else
+  # Not started ahead (a restarted pod is not asked): the first call starts it.
+  t0="$(now)"
+  check "browser_execute starts Chromium and runs its pipeline" browser_execute_ok
+  echo "info the first browser_execute call, starting Chromium, took $(ms_since "$t0") ms"
+fi
 check "Chromium answers on the remote debugging port" cdp
 check "Chromium has a window" wait_for 20 has_window chromium
 check "Chromium's window is maximised and ends above the panel" wait_for 30 browser_ok

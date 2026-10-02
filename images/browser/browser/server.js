@@ -59,9 +59,11 @@ const NAV_TIMEOUT_MS = 45000;
 const LAUNCHER = process.env.BROWSER_LAUNCHER || '';
 const LAUNCH_TIMEOUT_MS = 60000;
 
-function launchBrowser() {
+// hidden: started ahead of use, with no window (/browser/start).
+function launchBrowser({ hidden = false } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(LAUNCHER, [], { stdio: ['ignore', 'inherit', 'inherit'] });
+    const env = hidden ? { ...process.env, BROWSER_START_HIDDEN: '1' } : process.env;
+    const child = spawn(LAUNCHER, [], { stdio: ['ignore', 'inherit', 'inherit'], env });
     const timer = setTimeout(() => {
       child.kill();
       reject(new Error('Chromium did not start within 60 s'));
@@ -78,7 +80,7 @@ function launchBrowser() {
   });
 }
 
-async function connectBrowser() {
+async function connectBrowser(options) {
   const connect = () => puppeteer.connect({ browserURL: CDP_URL, defaultViewport: null });
   try {
     return await connect();
@@ -87,18 +89,42 @@ async function connectBrowser() {
   }
   // Nothing answers: the session has not used its browser yet, or somebody
   // closed it. The launcher starts one at most, however many calls ask.
-  await launchBrowser();
+  await launchBrowser(options);
   return connect();
+}
+
+// Maximises the browser's windows once they are up, when the first one was
+// opened by a call rather than at Chromium's start (session-chromium.sh).
+function maximiseFirstWindow() {
+  if (!LAUNCHER) return;
+  const child = spawn(LAUNCHER, [], { stdio: 'ignore', env: { ...process.env, BROWSER_MAXIMISE_ONLY: '1' } });
+  child.on('error', () => {});
+}
+
+// A new session's browser, started ahead of its first use: the backend asks
+// once it has created the session or adopted it from the warm pool
+// (POST /browser/start). A pod waiting in the pool is never asked, and a
+// restored one keeps whatever it was running. Once per run of this server:
+// a repeat, or one after somebody closed Chromium, starts nothing.
+let startAsked = false;
+
+function startAhead() {
+  if (startAsked || !LAUNCHER) return false;
+  startAsked = true;
+  getBrowser({ hidden: true }).catch((err) => console.warn(`browser MCP: Chromium not started ahead of use: ${err.message || err}`));
+  return true;
 }
 
 let browserPromise = null;
 
-async function getBrowser() {
+// Calls that come while Chromium is starting wait for that start: there is
+// one promise, and so one launch.
+async function getBrowser(options) {
   if (browserPromise) {
     const browser = await browserPromise.catch(() => null);
     if (browser?.connected) return browser;
   }
-  browserPromise = connectBrowser();
+  browserPromise = connectBrowser(options);
   const browser = await browserPromise;
   browser.once('disconnected', () => {
     browserPromise = null;
@@ -269,6 +295,8 @@ async function getTab(name) {
     restoredPage(name, pages) ||
     pages.find((p) => !owned.has(p) && SPARE_URLS.has(p.url())) ||
     (await browser.newPage());
+  // A browser started ahead of use has no window until now.
+  if (pages.length === 0) maximiseFirstWindow();
   tabs.set(name, page);
   // A quitting Chromium closes every page just like a human closing a tab
   // does, so this must leave the saved state alone: only an explicit
@@ -429,6 +457,21 @@ http
     // somebody closed it. The next browser_execute call starts it.
     if (req.url === '/healthz') {
       res.writeHead(200).end('ok');
+      return;
+    }
+    if (req.url === '/browser/start') {
+      if (req.method !== 'POST') {
+        res.writeHead(405, { Allow: 'POST' }).end();
+        return;
+      }
+      // The backend asks, through the pod; a web page in the session may not.
+      const refused = mcpCallerRefusal(req);
+      if (refused) {
+        res.writeHead(403).end('forbidden');
+        return;
+      }
+      const started = startAhead();
+      res.writeHead(started ? 202 : 200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ started }));
       return;
     }
     if (files && (await files(req, res))) return;

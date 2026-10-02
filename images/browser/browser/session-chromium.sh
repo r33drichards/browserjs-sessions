@@ -59,6 +59,14 @@ maximise_browser_windows() {
   done
 }
 
+# BROWSER_MAXIMISE_ONLY=1: only maximise the browser's windows, once they are
+# up (the MCP server, after it opened the first window of a browser that was
+# started without one).
+if [ "${BROWSER_MAXIMISE_ONLY:-}" = 1 ]; then
+  maximise_browser_windows
+  exit 0
+fi
+
 # One start at a time: two callers at once (a launcher click and a
 # browser_execute call) must not both find no browser and start one each.
 lock="$RUNTIME/chromium-start.lock"
@@ -73,6 +81,9 @@ trap 'rmdir "$lock" 2>/dev/null || true' EXIT
 if [ -n "$(browser_pids)" ]; then
   rmdir "$lock" 2>/dev/null || true
   trap - EXIT
+  # Started without a window (BROWSER_START_HIDDEN) and none opened since:
+  # the window this opens is its first, and is maximised like one.
+  [ -n "$(browser_windows)" ] || maximise_browser_windows &
   exec "$CHROMIUM_BIN" --no-sandbox --user-data-dir="$PROFILE_DIR" "$@"
 fi
 
@@ -93,13 +104,21 @@ fi
 # A start URL is opened next to the restored tabs, so with a session to
 # restore pass none (or every start would add one more blank tab).
 start=("$@")
-if [ ${#start[@]} -eq 0 ]; then
+# BROWSER_START_HIDDEN=1: started ahead of use, for a new session (the MCP
+# server's /browser/start). Chromium runs and answers on the debugging port
+# but opens no window; the first browser_execute call, the panel launcher or
+# a link opens one. A new session has no tabs to restore.
+hidden=""
+if [ "${BROWSER_START_HIDDEN:-}" = 1 ]; then
+  hidden=--no-startup-window
+  start=()
+elif [ ${#start[@]} -eq 0 ]; then
   if [ -z "$RESTORE_FLAG" ] || [ -z "$(ls -A "$PROFILE_DIR/Default/Sessions" 2>/dev/null)" ]; then
     start=(about:blank)
   fi
 fi
 
-maximise_browser_windows &
+[ -n "$hidden" ] || maximise_browser_windows &
 # In the background, and not this script's to wait for: it outlives the
 # launcher click or the tool call that started it.
 # shellcheck disable=SC2086
@@ -117,7 +136,7 @@ nohup "$CHROMIUM_BIN" \
   --window-size="$(desktop_size)" \
   --force-device-scale-factor=1 \
   --start-maximized \
-  $RESTORE_FLAG \
+  $RESTORE_FLAG $hidden \
   "${start[@]}" </dev/null >&2 &
 disown
 

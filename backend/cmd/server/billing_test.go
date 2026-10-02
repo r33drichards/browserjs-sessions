@@ -259,7 +259,12 @@ func TestDrainWaitsForACallAtAnotherReplica(t *testing.T) {
 		release := make(chan struct{})
 		var once sync.Once
 		w.finish = func() { once.Do(func() { close(release) }) }
-		pod := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) {
+		pod := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+			// The backend's start of a new session's browser is not the call.
+			if r.URL.Path == "/browser/start" {
+				rw.WriteHeader(http.StatusAccepted)
+				return
+			}
 			close(w.arrived)
 			<-release
 			_, _ = rw.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))

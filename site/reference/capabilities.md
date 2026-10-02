@@ -23,9 +23,10 @@ interface, dialogs such as the file chooser, other windows.
 | Fonts | DejaVu, Noto, colour emoji |
 | Network | The public internet |
 
-A session starts with the desktop empty. Chromium is not running until it is
-wanted: the first `browser_execute` call starts it, and so does its launcher
-on the panel or a link opened from another program. Its window opens
+A session starts with the desktop empty. When it is created, Chromium starts
+in the background without a window, so the first `browser_execute` call
+finds it ready; that call, the launcher on the panel or a link opened from
+another program opens its window. Its window opens
 maximised. It is one profile, kept on the session's disk, however it was
 started. If you close Chromium it stays closed, and the next
 `browser_execute` call starts it again with its tabs.
