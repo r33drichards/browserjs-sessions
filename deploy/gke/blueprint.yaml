@@ -34,14 +34,14 @@ podTemplate:
       # mcp-js runs as uid/gid 1000 and writes to the session disk.
       fsGroup: 1000
       fsGroupChangePolicy: OnRootMismatch
-      # NOT YET: sandbox-hardening-policy wants runAsNonRoot here, and the
-      # browser image still runs as root (docs/gke-deployment.md, "The
-      # browser runs as root"). Until the image has a non-root user, the
-      # deploy workflow's hardening_exemption input takes this namespace out
-      # of that policy. With the new image, uncomment:
-      # runAsNonRoot: true
-      # runAsUser: 1000
-      # runAsGroup: 1000
+      # Nothing in a session runs as root: sandbox-hardening-policy requires
+      # it. uid 1000 is "browser" in the browser image and "mcpuser" in
+      # mcp-js; the session disk is group-writable for gid 1000 (fsGroup).
+      runAsNonRoot: true
+      runAsUser: 1000
+      runAsGroup: 1000
+      # No seccompProfile: GKE Sandbox does not support seccomp (gVisor is
+      # the system call filter), and the policies do not ask for one.
     containers:
       - name: browser
         image: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/browser@sha256:0d9862ca0e421ad29b3fce8c4a44cf67e4ac9316e5ed32759e3d0e2401529a24
@@ -76,8 +76,8 @@ podTemplate:
           limits:
             cpu: "2"
             memory: 2Gi
-        # Root, but with no capabilities and no way to gain any. Chromium runs
-        # with --no-sandbox; gVisor is the sandbox.
+        # No capabilities and no way to gain any. Chromium runs with
+        # --no-sandbox; gVisor is the sandbox.
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
@@ -117,9 +117,6 @@ podTemplate:
             cpu: "1"
             memory: 1Gi
         securityContext:
-          runAsNonRoot: true
-          runAsUser: 1000
-          runAsGroup: 1000
           allowPrivilegeEscalation: false
           capabilities:
             drop: ["ALL"]
