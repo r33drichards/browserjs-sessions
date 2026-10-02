@@ -176,6 +176,16 @@ routes:
     timeout: 0s
     idle_timeout: 0s
 
+  # Stripe's webhook. Nobody signs in: the request's signature is the
+  # credential, checked by the backend (docs/contracts/billing/stripe.md).
+  # The backend serves it only while STRIPE_MODE is set.
+  - name: api-stripe-webhook
+    from: https://api.computeruse.site
+    path: /stripe/webhook
+    to: http://backend
+    allow_public_unauthenticated_access: true
+    preserve_host_header: true
+
   # The public site (site.yaml): anyone may read it, signed in or not, and
   # it is told nothing about who is asking. An exact host of its own, so it
   # takes nothing from the routes above.

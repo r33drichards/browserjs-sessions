@@ -130,6 +130,16 @@ run "defaults_pomerium_nlb" {
   }
 
   assert {
+    condition     = google_storage_bucket.billing_export.name == "browserjs-sessions-test-billing-export" && google_storage_bucket.billing_export.versioning[0].enabled && one(google_storage_bucket.billing_export.lifecycle_rule[0].condition).age == 90
+    error_message = "The ledger's export bucket is <project>-billing-export, versioned, and keeps 90 days."
+  }
+
+  assert {
+    condition     = google_storage_bucket_iam_member.billing_export_writer.role == "roles/storage.objectCreator" && endswith(google_storage_bucket_iam_member.billing_export_writer.member, "/subject/ns/browserjs-sessions/sa/billing-export")
+    error_message = "Only the billing-export ServiceAccount's Workload Identity principal may add an export, and it may do nothing else."
+  }
+
+  assert {
     condition     = endswith(google_storage_bucket_iam_member.snapshots_session_writer[0].member, "/subject/ns/browserjs-sessions/sa/session")
     error_message = "The snapshot writer must be the session ServiceAccount's Workload Identity principal."
   }

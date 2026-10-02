@@ -173,3 +173,13 @@ routes:
     preserve_host_header: true
     timeout: 0s
     idle_timeout: 0s
+
+  # Stripe's webhook. Nobody signs in: the request's signature is the
+  # credential, checked by the backend (docs/contracts/billing/stripe.md).
+  # The backend serves it only while STRIPE_MODE is set.
+  - name: api-stripe-webhook
+    from: https://api.localtest.me
+    path: /stripe/webhook
+    to: http://backend
+    allow_public_unauthenticated_access: true
+    preserve_host_header: true

@@ -32,6 +32,18 @@ rules:
   - apiGroups: ["browserjs.dev"]
     resources: ["apitokens/status"]
     verbs: ["patch"]
+  # Billing (docs/contracts/billing/deploy.md). An Account's spec and the
+  # Grants are the backend's; accounts/status, the ledger, is the billing
+  # operator's alone, and a closed period is only read.
+  - apiGroups: ["browserjs.dev"]
+    resources: ["accounts"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["browserjs.dev"]
+    resources: ["grants"]
+    verbs: ["get", "list", "watch", "create", "patch"]
+  - apiGroups: ["browserjs.dev"]
+    resources: ["usageperiods"]
+    verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -117,6 +129,61 @@ spec:
                   name: api-tokens
                   key: signing-key
                   optional: true
+            # Metering and billing (docs/contracts/billing/deploy.md). OFF:
+            # BILLING is not set here, and with it unset the backend is as
+            # it was before the feature, whatever the variables below say.
+            # An overlay's patch-billing-meter.yaml sets it
+            # (hack/billing-stage.sh, docs/billing-deployment.md). Two are
+            # left to their defaults by not being named: BILLING_EXEMPT_EMAILS
+            # (the value of ADMIN_EMAILS) and TERMS_VERSION (none asked).
+            - name: BILLING_GRACE
+              value: 5m
+            - name: BILLING_DRAIN_TIMEOUT
+              value: 10m
+            - name: BILLING_STALE_AFTER
+              value: 10m
+            - name: MAX_AWAKE_SESSIONS
+              value: "10"
+            - name: WAKES_PER_HOUR
+              value: "30"
+            - name: ZERO_BALANCE_DELETE
+              value: "off"
+            - name: ZERO_BALANCE_DELETE_AFTER
+              value: 336h
+            - name: SIGNUP_CREDIT
+              value: "on"
+            - name: AUTO_RECHARGE
+              value: "off"
+            - name: BILLING_CATALOGUE
+              value: /etc/browserjs/catalogue.yaml
+            # Stripe. The mode and the two keys are written together by the
+            # deploy workflow (hack/stripe-secret.sh), and are absent until
+            # the repository variable STRIPE_MODE is set: no checkout, no
+            # webhook route.
+            - name: STRIPE_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: billing-mode
+                  key: STRIPE_MODE
+                  optional: true
+            - name: STRIPE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: stripe
+                  key: STRIPE_API_KEY
+                  optional: true
+            - name: STRIPE_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: stripe
+                  key: STRIPE_WEBHOOK_SECRET
+                  optional: true
+            - name: OPEN_SIGNUP
+              value: "false"
+            - name: SIGNUPS_PER_DAY
+              value: "200"
+            - name: SIGNUPS_PER_IP_PER_DAY
+              value: "5"
           ports:
             - name: http
               containerPort: 8080
@@ -146,9 +213,17 @@ spec:
               mountPath: /etc/browserjs
               readOnly: true
       volumes:
+        # One directory, two ConfigMaps: the session blueprint
+        # (blueprint.yaml) and the billing catalogue (catalogue.yaml). Whole
+        # ConfigMaps, not files by subPath, so a changed catalogue reaches
+        # the pod without a restart.
         - name: blueprint
-          configMap:
-            name: session-blueprint
+          projected:
+            sources:
+              - configMap:
+                  name: session-blueprint
+              - configMap:
+                  name: billing-catalogue
 ---
 apiVersion: v1
 kind: Service

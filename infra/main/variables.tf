@@ -413,6 +413,41 @@ variable "snapshot_bucket_force_destroy" {
   default     = false
 }
 
+# --- Billing export ---------------------------------------------------------------------
+
+variable "billing_export_bucket_name" {
+  description = "Name of the bucket the ledger is exported to daily. The default is <project_id>-billing-export; deploy/gke/billing-export.yaml (BUCKET) must name it."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.billing_export_bucket_name == null || can(regex("^[a-z0-9][a-z0-9_.-]{1,61}[a-z0-9]$", var.billing_export_bucket_name))
+    error_message = "A bucket name is 3-63 characters: lowercase letters, digits, hyphens, underscores and dots."
+  }
+}
+
+variable "billing_export_service_account" {
+  description = "Kubernetes ServiceAccount of the billing-export CronJob, in sessions_namespace. Only it may add an export."
+  type        = string
+  default     = "billing-export"
+
+  validation {
+    condition     = can(regex("^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$", var.billing_export_service_account))
+    error_message = "Not a valid ServiceAccount name."
+  }
+}
+
+variable "billing_export_retention_days" {
+  description = "An export is deleted when it is this many days old."
+  type        = number
+  default     = 90
+
+  validation {
+    condition     = var.billing_export_retention_days >= 7
+    error_message = "Keep at least a week of exports."
+  }
+}
+
 # --- Registry ---------------------------------------------------------------------------
 
 variable "registry_keep_versions" {

@@ -1,0 +1,41 @@
+# BILLING IS ENFORCED while this patch is listed in kustomization.yaml, after
+# patch-billing-meter.yaml (it only changes the value that one sets): no
+# card, no session; at zero credit the sessions are drained and put to
+# sleep. The backend refuses to start in this stage without STRIPE_MODE.
+#
+# It also starts the daily export of the ledger (billing-export.yaml), which
+# needs the bucket of infra/main.
+#
+# Switched by hack/billing-stage.sh (docs/billing-deployment.md).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: billing-operator
+spec:
+  template:
+    spec:
+      containers:
+        - name: billing-operator
+          env:
+            - name: BILLING
+              value: enforce
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  template:
+    spec:
+      containers:
+        - name: backend
+          env:
+            - name: BILLING
+              value: enforce
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: billing-export
+spec:
+  suspend: false

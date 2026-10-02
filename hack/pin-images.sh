@@ -2,7 +2,7 @@
 # Pin the images deploy/gke runs, by digest.
 #
 #   hack/pin-images.sh backend=sha256:… browser=sha256:… mcp-js=sha256:… site=sha256:…
-#                      policy-operator=sha256:…
+#                      policy-operator=sha256:… billing-operator=sha256:…
 #       writes the given digests (any subset) into the images: block of
 #       deploy/gke/kustomization.yaml, then copies the two session images
 #       into deploy/gke/blueprint.yaml and deploy/gke/warmpool.yaml
@@ -21,6 +21,9 @@
 # policy-operator may stay unpinned while session policies are off in
 # deploy/gke (hack/policy-stage.sh): it has no pods then.
 #
+# billing-operator likewise while billing is off in deploy/gke
+# (hack/billing-stage.sh).
+#
 # The digests are in the summary of the "images" workflow run for the commit.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -28,7 +31,7 @@ cd "$(dirname "$0")/.."
 kustomization=deploy/gke/kustomization.yaml
 # Where the session images are named: a cold session's pod and a warm one's.
 blueprints=(deploy/gke/blueprint.yaml deploy/gke/warmpool.yaml)
-images=(backend browser mcp-js site policy-operator)
+images=(backend browser mcp-js site policy-operator billing-operator)
 # Named in the blueprints as well as in the images: block.
 session_images=(browser mcp-js)
 
@@ -70,6 +73,17 @@ in_blueprint() { # image, file
 
 # Session policies are off: deploy/gke gives the operator no pods.
 policies_off() { grep -qE '^ *- path: patch-policy-off\.yaml$' "$kustomization"; }
+# Billing is off: likewise for the billing operator.
+billing_off() { ! grep -qE '^ *- path: patch-billing-meter\.yaml$' "$kustomization"; }
+# The image's feature is off in deploy/gke, so it may be unpinned. Prints
+# the feature's name.
+feature_off() { # image
+  case "$1" in
+    policy-operator) policies_off && echo "session policies" ;;
+    billing-operator) billing_off && echo "billing" ;;
+    *) return 1 ;;
+  esac
+}
 
 check=""
 case "${1:-}" in
@@ -81,7 +95,7 @@ case "${1:-}" in
     for image in "${images[@]}"; do
       deployed "$image" || continue
       read -r name _ <<<"$(pinned "$image")"
-      if [ "$image" = policy-operator ] && policies_off &&
+      if feature_off "$image" >/dev/null &&
         ! gcloud artifacts docker images describe "$name:$tag" >/dev/null 2>&1; then
         echo "$image:$tag is not in the registry yet: left as it is"
         continue
@@ -95,7 +109,7 @@ case "${1:-}" in
     for arg in "$@"; do
       [[ "$arg" == *=* ]] || die "expected image=digest, got: $arg"
       case "${arg%%=*}" in
-        backend | browser | mcp-js | site | policy-operator) set_digest "${arg%%=*}" "${arg#*=}" ;;
+        backend | browser | mcp-js | site | policy-operator | billing-operator) set_digest "${arg%%=*}" "${arg#*=}" ;;
         *) die "unknown image: ${arg%%=*} (one of: ${images[*]})" ;;
       esac
     done
@@ -107,8 +121,8 @@ for image in "${images[@]}"; do
   deployed "$image" || continue
   read -r name digest <<<"$(pinned "$image")"
   if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-    if [ "$image" = policy-operator ] && policies_off; then
-      echo "pin-images: policy-operator is not pinned; allowed while session policies are off in deploy/gke"
+    if feature="$(feature_off "$image")"; then
+      echo "pin-images: $image is not pinned; allowed with $feature off in deploy/gke"
       continue
     fi
     echo "pin-images: $image is not pinned in $kustomization (digest: $digest)" >&2

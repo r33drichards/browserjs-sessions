@@ -1,0 +1,32 @@
+# BILLING IS ON, IN SHADOW, while this patch is listed in kustomization.yaml:
+# the billing operator has its one pod and meters every account, and the
+# backend shows the usage. Nothing is refused and nothing is stopped.
+#
+# hack/billing-stage.sh lists it and takes it out; docs/billing-deployment.md
+# says what has to be true first. BILLING is set nowhere else.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: billing-operator
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: billing-operator
+          env:
+            - name: BILLING
+              value: meter
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  template:
+    spec:
+      containers:
+        - name: backend
+          env:
+            - name: BILLING
+              value: meter

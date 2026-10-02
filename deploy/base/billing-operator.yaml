@@ -1,0 +1,171 @@
+# The billing operator (images/billing-operator): every TICK it looks at the
+# session Sandboxes, charges each Account for what was awake and what was on
+# disk, and writes the ledger to Account.status
+# (docs/contracts/billing/metering.md). Nothing calls it.
+#
+# BILLING IS OFF here: no pods, and no BILLING variable. An overlay turns it
+# on with its patch-billing-meter.yaml, which hack/billing-stage.sh lists
+# (docs/billing-deployment.md).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: billing-operator
+---
+# Pomerium's and Dex's ConfigMaps and every Secret are in this namespace
+# too. The operator reads none of them, the Stripe keys least of all: its
+# rights name the three billing resources, the Sandboxes it counts, and
+# events. It never writes an Account's spec and never makes a Grant; the
+# backend never writes an Account's status.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: billing-operator
+rules:
+  - apiGroups: ["browserjs.dev"]
+    resources: ["accounts"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["browserjs.dev"]
+    resources: ["accounts/status"]
+    verbs: ["get", "patch", "update"]
+  # delete: the daily retention pass.
+  - apiGroups: ["browserjs.dev"]
+    resources: ["grants"]
+    verbs: ["get", "list", "watch", "delete"]
+  - apiGroups: ["browserjs.dev"]
+    resources: ["grants/status"]
+    verbs: ["patch"]
+  - apiGroups: ["browserjs.dev"]
+    resources: ["usageperiods"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: ["agents.x-k8s.io"]
+    resources: ["sandboxes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: billing-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: billing-operator
+subjects:
+  - kind: ServiceAccount
+    name: billing-operator
+---
+# The contract's rule for kopf, which watches the definitions of the
+# resources it handles.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: browserjs-billing-operator
+rules:
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: browserjs-billing-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: browserjs-billing-operator
+subjects:
+  - kind: ServiceAccount
+    name: billing-operator
+    namespace: browserjs-sessions
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: billing-operator
+  labels:
+    app: billing-operator
+spec:
+  # Off. On, it is exactly one and never two at once (kopf runs standalone,
+  # and two meters would charge twice). While it is away nothing is charged:
+  # the time is lost in the users' favour, up to MAX_GAP a session.
+  replicas: 0
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: billing-operator
+  template:
+    metadata:
+      # The NetworkPolicy selects on this label: nothing else may carry it.
+      labels:
+        app: billing-operator
+    spec:
+      serviceAccountName: billing-operator
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: billing-operator
+          image: browserjs/billing-operator
+          command:
+            - kopf
+            - run
+            - --standalone
+            - --namespace=browserjs-sessions
+            - --liveness=http://0.0.0.0:8081/healthz
+            - -m
+            - billing_operator
+          env:
+            # kopf asks who it runs as, and uid 65532 has no entry in the
+            # image's /etc/passwd (as for the policy operator).
+            - name: USER
+              value: billing-operator
+            # BILLING is not here: patch-billing-meter.yaml of an overlay
+            # adds it, with the pods.
+            - name: TICK
+              value: 60s
+            # The longest stretch one tick may charge for: what a restart
+            # or a missed tick costs the product, not the user.
+            - name: MAX_GAP
+              value: 150s
+            - name: BILLING_CATALOGUE
+              value: /etc/browserjs/catalogue.yaml
+          ports:
+            - name: liveness
+              containerPort: 8081
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: liveness
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # The whole ConfigMap as a directory, not one file by subPath: a
+            # changed catalogue then reaches the pod without a restart.
+            - name: catalogue
+              mountPath: /etc/browserjs
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: catalogue
+          configMap:
+            name: billing-catalogue
+        - name: tmp
+          emptyDir: {}

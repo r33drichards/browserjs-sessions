@@ -1,0 +1,213 @@
+name: billing kind
+
+# Metering and billing's deployment on throwaway kind clusters inside the
+# runner: the checks of test/billing/run.sh (the CRDs' rules, who may do
+# what, who reaches whom, the catalogue reaching the pods, the Stripe Secret
+# step with made-up values, the export and its restore into a second
+# cluster), and before them the checks that need no cluster. Nothing here
+# signs in anywhere, touches the production cluster or has a Stripe key.
+# What it saw is in the job summary.
+
+on:
+  pull_request:
+    paths:
+      - "deploy/**"
+      - "docs/contracts/billing/**"
+      - "hack/billing-stage.sh"
+      - "hack/billing-restore.sh"
+      - "hack/stripe-secret.sh"
+      - "hack/pin-images.sh"
+      - "hack/gke-status.sh"
+      - "test/billing/**"
+      - "backend/internal/auth/deploy_test.go"
+      - ".github/workflows/billing-kind.yml"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: billing-kind-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kind:
+    name: kind
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: The copies are the contract's
+        run: |
+          set -euo pipefail
+          for file in crd-account.yaml crd-grant.yaml crd-usageperiod.yaml catalogue.yaml; do
+            cmp "docs/contracts/billing/$file" "deploy/base/$file"
+          done
+
+      # Whatever stage the repository is at: every stage renders, and going
+      # back leaves the files as they were.
+      - name: Manifests, in every stage
+        run: |
+          set -euo pipefail
+          shellcheck -S warning hack/billing-stage.sh hack/billing-restore.sh hack/stripe-secret.sh \
+            hack/pin-images.sh hack/gke-status.sh test/billing/run.sh
+          render() {
+            for overlay in deploy/base deploy/local deploy/local-test deploy/gke deploy/gke-staging-issuer test/policy test/billing; do
+              kubectl kustomize "$overlay" >"$RUNNER_TEMP/rendered.yaml"
+            done
+          }
+          # BILLING, as the last overlay rendered (deploy/gke) gives it to
+          # the backend and to the operator.
+          billing() {
+            kubectl kustomize deploy/gke | awk '$1 == "-" && $2 == "name:" && $3 == "BILLING" { getline; print $2 }' | sort | uniq -c | xargs
+          }
+          hack/billing-stage.sh --check
+          gke_stage="$(hack/billing-stage.sh --check | sed -n 's|^billing-stage: deploy/gke is ||p')"
+          local_stage="$(hack/billing-stage.sh --check | sed -n 's|^billing-stage: deploy/local is ||p')"
+          render
+          for stage in off meter enforce; do
+            hack/billing-stage.sh gke "$stage"
+            hack/billing-stage.sh local "$stage"
+            hack/billing-stage.sh --check
+            render
+            case "$stage" in
+              off) want="" ;;
+              *) want="2 $stage" ;;
+            esac
+            if [ "$(billing)" != "$want" ]; then
+              echo "::error::in the stage $stage, BILLING in deploy/gke is \"$(billing)\", not \"$want\""
+              exit 1
+            fi
+            # The operator has its pod exactly when billing is on, and the
+            # export runs exactly when it is enforced.
+            replicas="$(kubectl kustomize deploy/gke | awk '/^kind:/ { kind = $2 } /^  name: billing-operator$/ && kind == "Deployment" { found = 1 } found && $1 == "replicas:" { print $2; exit }')"
+            suspended="$(kubectl kustomize deploy/gke | awk '/^kind:/ { kind = $2 } kind == "CronJob" && $1 == "suspend:" { print $2; exit }')"
+            echo "stage $stage: operator replicas $replicas, export suspended $suspended"
+            case "$stage" in
+              off) [ "$replicas $suspended" = "0 true" ] ;;
+              meter) [ "$replicas $suspended" = "1 true" ] ;;
+              enforce) [ "$replicas $suspended" = "1 false" ] ;;
+            esac
+          done
+          hack/billing-stage.sh gke "$gke_stage"
+          hack/billing-stage.sh local "$local_stage"
+          git diff --exit-code
+
+      # A stage whose files disagree, or which cannot go with STRIPE_MODE,
+      # stops the deploy before it touches the cluster.
+      - name: A stage that cannot be deployed is refused
+        run: |
+          set -euo pipefail
+          refused() { # description, command...
+            local what="$1"
+            shift
+            if "$@" >"$RUNNER_TEMP/out" 2>&1; then
+              cat "$RUNNER_TEMP/out"
+              echo "::error::accepted: $what"
+              exit 1
+            fi
+            echo "refused: $what ($(tail -1 "$RUNNER_TEMP/out"))"
+          }
+          hack/billing-stage.sh gke off
+          STRIPE_MODE="" hack/billing-stage.sh --check
+          refused "STRIPE_MODE with billing off" env STRIPE_MODE=test hack/billing-stage.sh --check
+          refused "an unknown STRIPE_MODE" env STRIPE_MODE=staging hack/billing-stage.sh --check
+          hack/billing-stage.sh gke meter
+          STRIPE_MODE="" hack/billing-stage.sh --check
+          STRIPE_MODE=test hack/billing-stage.sh --check
+          hack/billing-stage.sh gke enforce
+          refused "enforce without STRIPE_MODE" env STRIPE_MODE= hack/billing-stage.sh --check
+          STRIPE_MODE=live hack/billing-stage.sh --check
+          # enforce listed without meter.
+          hack/billing-stage.sh gke off
+          sed -i 's|^\( *\)# \(- path: patch-billing-enforce.yaml\)$|\1\2|' deploy/gke/kustomization.yaml
+          refused "enforce listed without meter" hack/billing-stage.sh --check
+          git checkout -- deploy
+          # BILLING set outside the two patches.
+          printf '            - name: BILLING\n              value: enforce\n' >>deploy/gke/patch-backend.yaml
+          refused "BILLING in patch-backend.yaml" hack/billing-stage.sh --check
+          git checkout -- deploy
+
+          # The operator's image: unpinned only while billing is off. By
+          # the message, whatever else pin-images has to say about main.
+          unpin() {
+            sed -i '/name: browserjs\/billing-operator/,/digest:/ s|digest: .*|digest: REPLACE_WITH_DIGEST|' deploy/gke/kustomization.yaml
+          }
+          pins() { hack/pin-images.sh --check 2>&1 || true; }
+          unpin
+          hack/billing-stage.sh gke off
+          pins | grep -F "billing-operator is not pinned; allowed"
+          for stage in meter enforce; do
+            hack/billing-stage.sh gke "$stage"
+            pins | grep -F "pin-images: billing-operator is not pinned in deploy/gke/kustomization.yaml"
+          done
+          sed -i '/name: browserjs\/billing-operator/,/digest:/ s|digest: .*|digest: sha256:0000000000000000000000000000000000000000000000000000000000000000|' deploy/gke/kustomization.yaml
+          if pins | grep -F "billing-operator"; then
+            echo "::error::pin-images complains about a pinned billing-operator"
+            exit 1
+          fi
+          git checkout -- deploy
+
+          # Stripe's secrets: optional without the mode, required with it,
+          # and never printed. The values are made up.
+          env -u STRIPE_MODE hack/stripe-secret.sh --check
+          STRIPE_MODE="" hack/stripe-secret.sh --check
+          refused "test mode without its secrets" env STRIPE_MODE=test hack/stripe-secret.sh --check
+          grep -c 'the repository secret STRIPE_TEST_' "$RUNNER_TEMP/out" | grep -qx 2
+          refused "test mode with only the live secrets" env STRIPE_MODE=test \
+            STRIPE_LIVE_API_KEY=rk_live_madeup STRIPE_LIVE_WEBHOOK_SECRET=whsec_madeup hack/stripe-secret.sh --check
+          refused "live mode without its secrets" env STRIPE_MODE=live \
+            STRIPE_TEST_API_KEY=rk_test_madeup STRIPE_TEST_WEBHOOK_SECRET=whsec_madeup hack/stripe-secret.sh --check
+          refused "a live key in test mode" env STRIPE_MODE=test \
+            STRIPE_TEST_API_KEY=rk_live_madeup1234 STRIPE_TEST_WEBHOOK_SECRET=whsec_madeup5678 hack/stripe-secret.sh --check
+          if grep -e madeup1234 -e madeup5678 "$RUNNER_TEMP/out"; then
+            echo "::error::a value was printed"
+            exit 1
+          fi
+          STRIPE_MODE=test STRIPE_TEST_API_KEY=rk_test_madeup STRIPE_TEST_WEBHOOK_SECRET=whsec_madeup hack/stripe-secret.sh --check
+          STRIPE_MODE=live STRIPE_LIVE_API_KEY=rk_live_madeup STRIPE_LIVE_WEBHOOK_SECRET=whsec_madeup hack/stripe-secret.sh --check
+          git diff --exit-code
+
+      # The API host's routes (with Stripe's webhook), in every overlay.
+      - name: Routes
+        run: cd backend && go test -count=1 ./internal/auth/ -run TestAllowedEmailsMirrorPomeriumsPolicy
+
+      # "restore" first: the cluster made last is the current context.
+      - name: Clusters
+        run: |
+          set -euo pipefail
+          kind version
+          kind create cluster --name restore --wait 120s
+          kind create cluster --name billing --wait 120s
+          kubectl config current-context
+          kubectl version
+
+      - name: test/billing/run.sh
+        run: RESTORE_CONTEXT=kind-restore RESULTS="$RUNNER_TEMP/results.md" test/billing/run.sh
+
+      - name: Results to job summary
+        if: ${{ !cancelled() }}
+        run: |
+          if [ -f "$RUNNER_TEMP/results.md" ]; then
+            { echo "## Billing on kind"; echo; cat "$RUNNER_TEMP/results.md"; } | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: What the cluster looked like
+        if: ${{ failure() }}
+        run: |
+          ns=browserjs-sessions
+          kubectl config use-context kind-billing || true
+          kubectl -n "$ns" get pods,jobs,cronjobs,configmaps,networkpolicies -o wide || true
+          kubectl -n "$ns" describe pods || true
+          for pod in $(kubectl -n "$ns" get pods -o name); do
+            echo "=== $pod"
+            kubectl -n "$ns" logs "$pod" --all-containers --prefix --tail=40 || true
+          done
+          kubectl -n "$ns" get events --sort-by=.lastTimestamp | tail -60 || true
