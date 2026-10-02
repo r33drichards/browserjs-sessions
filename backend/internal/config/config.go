@@ -82,8 +82,15 @@ type Config struct {
 	// BILLING is not off; without the webhook's secret there is no webhook
 	// route, and the balance pass alone notices credit running out.
 	MetronomeURL           string
-	MetronomeToken         string
-	MetronomeWebhookSecret string
+	MetronomeToken         Secret
+	MetronomeWebhookSecret Secret
+
+	// StripeMode is STRIPE_MODE: "test" or "live", "" for no Stripe: there
+	// are then no checkout routes and no webhook. The key and the webhook's
+	// signing secret are of that mode (stripe.go).
+	StripeMode          string
+	StripeAPIKey        Secret
+	StripeWebhookSecret Secret
 }
 
 // APITokens reports whether users can make API tokens and use them.
@@ -228,6 +235,9 @@ func FromEnv(get func(string) string) (Config, error) {
 	if err := c.billingFromEnv(get, or); err != nil {
 		return Config{}, err
 	}
+	if err := c.stripeFromEnv(get); err != nil {
+		return Config{}, err
+	}
 	return c, nil
 }
 
@@ -269,6 +279,7 @@ func (c *Config) billingFromEnv(get func(string) string, or func(k, def string) 
 	}{
 		{"ZERO_BALANCE_DELETE", "off", &b.ZeroBalanceDelete},
 		{"SIGNUP_CREDIT", "on", &b.SignupCredit},
+		{"AUTO_RECHARGE", "off", &b.AutoRecharge},
 	} {
 		switch strings.ToLower(or(sw.name, sw.def)) {
 		case "on", "true":
@@ -300,7 +311,7 @@ func (c *Config) billingFromEnv(get func(string) string, or func(k, def string) 
 		b.Payments = mode
 	}
 	c.MetronomeURL = strings.TrimRight(get("METRONOME_URL"), "/")
-	c.MetronomeToken, c.MetronomeWebhookSecret = get("METRONOME_API_TOKEN"), get("METRONOME_WEBHOOK_SECRET")
+	c.MetronomeToken, c.MetronomeWebhookSecret = Secret(get("METRONOME_API_TOKEN")), Secret(get("METRONOME_WEBHOOK_SECRET"))
 	// The value is never put in an error.
 	if b.Mode != billing.Off && c.MetronomeToken == "" {
 		return fmt.Errorf("METRONOME_API_TOKEN is required while BILLING is %s", b.Mode)

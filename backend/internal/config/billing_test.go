@@ -48,6 +48,7 @@ func TestBillingDefaults(t *testing.T) {
 func TestBillingFromEnv(t *testing.T) {
 	c, err := FromEnv(withRequired(map[string]string{
 		"BILLING": "enforce", "STRIPE_MODE": "test", "ADMIN_EMAILS": "root@example.com",
+		"API_URL": "https://api.example.com", "STRIPE_API_KEY": "rk_test_madeUp", "STRIPE_WEBHOOK_SECRET": "whsec_madeUp",
 		"METRONOME_API_TOKEN": "made-up", "METRONOME_WEBHOOK_SECRET": "made-up-too", "METRONOME_URL": "http://metronome.test/",
 		"BILLING_GRACE": "1m", "BILLING_DRAIN_TIMEOUT": "2m", "BILLING_BALANCE_PASS": "3m", "ZERO_BALANCE_DELETE_AFTER": "24h",
 		"BILLING_EXEMPT_EMAILS": " Guest@Example.com , ", "MAX_AWAKE_SESSIONS": "4", "WAKES_PER_HOUR": "7",

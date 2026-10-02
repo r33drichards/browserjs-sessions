@@ -115,6 +115,12 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// Stripe (STRIPE_MODE): stripe.go. Nil without it. Before billing runs:
+	// its balance pass asks Stripe's side for auto-recharge.
+	payments, err := newStripe(ctx, cfg, bill)
+	if err != nil {
+		return err
+	}
 	handler, px := newHandlerWith(cfg, verifier, store, tracker, bill)
 	bill.run(ctx, px)
 	// API tokens and the API host (API_URL): tokens.go.
@@ -126,6 +132,8 @@ func run() error {
 		}
 		slog.Info("API host", "url", cfg.APIURL, "tokens", cfg.APITokens(), "signingKeyKept", len(cfg.APISigningKey) > 0)
 	}
+	// In front of the API host, which knows nothing of Stripe's webhook.
+	handler = withStripe(cfg, verifier, payments, handler)
 
 	handler = bill.withWebhooks(cfg, handler)
 
