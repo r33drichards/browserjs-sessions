@@ -404,6 +404,35 @@ replacements="${REPLACEMENTS:-20}"
 stamp() { printf '%s %s\n' "$(date +%s.%N)" "$*" >>"$work/timeline"; }
 call $P_WITH url 3600s >"$work/during.jsonl" &
 caller=$!
+# Evidence for when a call fails. A new connection to the Service every 50 ms
+# from inside the session's pod (mcp-js keeps its connections; this does
+# not), and every change of an OPA pod's readiness, both with the time.
+k exec "$WITH" -c browser -- python3 -u -c '
+import socket, time
+while True:
+    t = time.time()
+    try:
+        c = socket.create_connection(("opa.'"$NS"'.svc", 8181), timeout=1)
+        c.settimeout(1)
+        c.sendall(b"GET /health HTTP/1.1\r\nHost: opa\r\nConnection: close\r\n\r\n")
+        ok = c.recv(64).startswith(b"HTTP/1.1 200")
+        peer = c.getpeername()[0]
+        c.close()
+        if not ok: print("%.3f bad answer after %.3f s" % (t, time.time() - t))
+    except Exception as e:
+        print("%.3f %r after %.3f s" % (t, e, time.time() - t))
+    time.sleep(0.05)
+' >"$work/probe.log" 2>&1 &
+prober=$!
+(
+  last=""
+  while :; do
+    now="$(k get pods -l app=opa -o json 2>/dev/null | jq -r '[.items[] | "\(.metadata.name | .[-5:])@\(.status.podIP // "-"):\(if .metadata.deletionTimestamp then "terminating" elif any(.status.conditions[]?; .type == "Ready" and .status == "True") then "ready" else "notready" end)"] | sort | join(" ")')"
+    [ "$now" = "$last" ] || { printf '%s pods %s\n' "$(date +%s.%N)" "$now" >>"$work/timeline"; last="$now"; }
+    sleep 0.2
+  done
+) &
+watcher=$!
 sleep 2
 for i in $(seq 1 "$replacements"); do
   victim="$(k get pods -l app=opa -o json | jq -r '[.items[] | select(.metadata.deletionTimestamp == null) | select(any(.status.conditions[]?; .type == "Ready" and .status == "True"))] | sort_by(.metadata.creationTimestamp) | .[0].metadata.name')"
@@ -414,18 +443,18 @@ for i in $(seq 1 "$replacements"); do
   stamp "$i replaced"
   sleep 1
 done
-kill "$caller" 2>/dev/null
-wait "$caller" 2>/dev/null || true
+kill "$caller" "$prober" "$watcher" 2>/dev/null
+wait "$caller" "$prober" "$watcher" 2>/dev/null || true
 got="$(cat "$work/during.jsonl")"
 is "no call fails while OPA pods are deleted and replaced, $replacements times ($(jq -s length <<<"$got") calls)" ran "$(outcome "$got")"
 if [ "$(outcome "$got")" != ran ]; then
   # When, against the deletions, and what the agent's code and mcp-js saw.
   echo "      calls that did not run (at, seconds, seen):"
   jq -rs '.[] | select(.outcome != "ran") | "      \(.at) \(.seconds)s \(.outcome): \(.seen | .[0:200])"' <<<"$got"
+  echo "      new connections to the Service that failed (at, error):"
+  sed 's/^/      /' "$work/probe.log" | head -60
   echo "      timeline:"
-  sed 's/^/      /' "$work/timeline"
-  echo "      mcp-js:"
-  k logs "$WITH" -c mcp-js --tail=2000 2>/dev/null | grep -i 'opa\|policy' | tail -20 | sed 's/^/      /'
+  sort -n "$work/timeline" | sed 's/^/      /'
 fi
 note "" && note "### OPA pods deleted and replaced, $replacements times, while calls are made" && note "" &&
   note "$(jq -rs '"\(length) calls, outcomes: \(map(.outcome) | group_by(.) | map("\(.[0]) \(length)") | join(", ")); slowest \(map(.seconds) | max) s"' <<<"$got")"
