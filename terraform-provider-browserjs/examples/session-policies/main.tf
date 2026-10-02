@@ -1,6 +1,6 @@
 # Three sessions and their policies, managed as code.
 #
-#   export BROWSERJS_ENDPOINT=https://api.browserjs.com   # the default
+#   export BROWSERJS_ENDPOINT=https://api.computeruse.site   # the default
 #   export BROWSERJS_TOKEN=bjs_...                        # from the Tokens page
 #   tofu plan && tofu apply                               # or terraform
 

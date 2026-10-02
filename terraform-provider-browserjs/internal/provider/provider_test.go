@@ -40,7 +40,7 @@ func TestProviderAttributesWinOverTheEnvironment(t *testing.T) {
 func TestProviderRejectsABadEndpoint(t *testing.T) {
 	h := newHarness(t)
 	h.server, h.schema = newServer(t)
-	wantError(t, h.configure(cfg{"endpoint": "api.browserjs.com", "token": testToken}), "endpoint", "Invalid browserjs endpoint")
+	wantError(t, h.configure(cfg{"endpoint": "api.computeruse.site", "token": testToken}), "endpoint", "Invalid browserjs endpoint")
 }
 
 func TestProviderWarnsAboutPlainHTTP(t *testing.T) {

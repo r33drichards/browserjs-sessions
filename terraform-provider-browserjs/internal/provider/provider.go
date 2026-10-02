@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	defaultEndpoint = "https://api.browserjs.com"
+	defaultEndpoint = "https://api.computeruse.site"
 	envEndpoint     = "BROWSERJS_ENDPOINT"
 	envToken        = "BROWSERJS_TOKEN"
 )

@@ -11,15 +11,15 @@ spec:
     kind: ClusterIssuer
     name: letsencrypt-production
   dnsNames:
-    - app.browserjs.com
-    - api.browserjs.com
-    - authenticate.browserjs.com
-    - dex.browserjs.com
+    - app.computeruse.site
+    - api.computeruse.site
+    - authenticate.computeruse.site
+    - dex.computeruse.site
     # Every session is under this one name.
-    - sessions.browserjs.com
+    - sessions.computeruse.site
     # DEPRECATED: the host each session had before. Remove it with the
     # legacy-session-* routes in pomerium-config.yaml.
-    - "*.sessions.browserjs.com"
+    - "*.sessions.computeruse.site"
   privateKey:
     algorithm: ECDSA
     size: 256

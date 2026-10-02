@@ -7,23 +7,23 @@ cluster. Claims are marked **VERIFIED** (read in the cited source) or
 
 | | URL |
 |---|---|
-| MCP endpoint (what the UI shows, what a client is given) | `https://sessions.browserjs.com/<id>/mcp` |
-| Screen (websocket, one-time ticket from the app's API) | `wss://sessions.browserjs.com/<id>/vnc?ticket=<ticket>` |
-| Upload (one-time, issued by mcp-js's `get_artifact_upload_url`) | `https://sessions.browserjs.com/<id>/api/artifact-uploads/<token>` |
-| OAuth protected-resource metadata (Pomerium's) | `https://sessions.browserjs.com/.well-known/oauth-protected-resource/<id>/mcp` |
-| OAuth authorization server metadata (Pomerium's) | `https://sessions.browserjs.com/.well-known/oauth-authorization-server` |
+| MCP endpoint (what the UI shows, what a client is given) | `https://sessions.computeruse.site/<id>/mcp` |
+| Screen (websocket, one-time ticket from the app's API) | `wss://sessions.computeruse.site/<id>/vnc?ticket=<ticket>` |
+| Upload (one-time, issued by mcp-js's `get_artifact_upload_url`) | `https://sessions.computeruse.site/<id>/api/artifact-uploads/<token>` |
+| OAuth protected-resource metadata (Pomerium's) | `https://sessions.computeruse.site/.well-known/oauth-protected-resource/<id>/mcp` |
+| OAuth authorization server metadata (Pomerium's) | `https://sessions.computeruse.site/.well-known/oauth-authorization-server` |
 
 `<id>` is the session's ID, `s-` and ten characters, or `s-` and five for a
 session that came out of the warm pool.
 
-Before, every session had a host of its own, `https://<id>.sessions.browserjs.com/mcp`.
+Before, every session had a host of its own, `https://<id>.sessions.computeruse.site/mcp`.
 Those hosts still answer ([Old hosts](#old-hosts-deprecated)), but nothing
 hands out their URLs any more.
 
 ## One host, not the app's
 
-The sessions are on `sessions.browserjs.com`, a host that has nothing else on
-it. The alternative, `https://app.browserjs.com/s/<id>/mcp`, needs no DNS
+The sessions are on `sessions.computeruse.site`, a host that has nothing else on
+it. The alternative, `https://app.computeruse.site/s/<id>/mcp`, needs no DNS
 record and no certificate name, and was not chosen:
 
 - **A browser signed in to the app would be signed in to every MCP
@@ -33,7 +33,7 @@ record and no certificate name, and was not chosen:
   reads the bearer token, and on `ErrNoSessionFound` the code goes on to
   `sessionStore.ReadSessionHandleAndCheckIDP`). An MCP call runs code in the
   user's logged-in browser, so that endpoint should not answer to a cookie
-  that every visitor of the app carries. On `sessions.browserjs.com` a
+  that every visitor of the app carries. On `sessions.computeruse.site` a
   browser has a Pomerium cookie only if it went through an MCP client's
   sign-in there.
 - **What a pod answers would be of the app's origin.** A pod runs what its
@@ -58,7 +58,7 @@ no such header.
 
 ## How a request is routed
 
-Pomerium has three routes on `sessions.browserjs.com`, each a regular
+Pomerium has three routes on `sessions.computeruse.site`, each a regular
 expression on the whole path (`deploy/gke/pomerium-config.yaml`; VERIFIED:
 Pomerium hands `regex` to Envoy as `safe_regex`, `mkRouteMatch` in
 `config/envoyconfig/routes.go`, of which Envoy says "The entire path
@@ -84,7 +84,7 @@ session's pod there, and it exists in both forms of URL).
   is put back under `/<id>` (`rewriteLocation`, after
   `libs/fleet/backend/handlers/svc.go` in trycua/cua). A redirect to another
   origin is handed on unchanged, as before.
-- mcp-js is started with `MCP_V8_PUBLIC_URL=https://sessions.browserjs.com/<id>`
+- mcp-js is started with `MCP_V8_PUBLIC_URL=https://sessions.computeruse.site/<id>`
   and makes an upload URL by appending the path to it (VERIFIED:
   `server/src/mcp_dispatch.rs` at `v0.21.0-rc.3`,
   `format!("{base}{path}")` with `path = "/api/artifact-uploads/{token}"`,
@@ -103,14 +103,14 @@ host is exact (no `*`), it now also answers the discovery itself, which it
 does not do on wildcard hosts, and the backend's stand-in
 (`backend/internal/proxy/metadata.go`) is needed for the old hosts only.
 
-1. The client calls `POST https://sessions.browserjs.com/<id>/mcp` with no
+1. The client calls `POST https://sessions.computeruse.site/<id>/mcp` with no
    token. Pomerium answers 401 with
-   `WWW-Authenticate: Bearer resource_metadata="https://sessions.browserjs.com/.well-known/oauth-protected-resource/<id>/mcp"`
+   `WWW-Authenticate: Bearer resource_metadata="https://sessions.computeruse.site/.well-known/oauth-protected-resource/<id>/mcp"`
    (VERIFIED: `internal/mcp/handler_metadata.go`,
    `ProtectedResourceMetadataURL(host, requestPath)` joins the well-known
    path and the request's).
-2. That document says `resource` is `https://sessions.browserjs.com/<id>/mcp`
-   and `authorization_servers` is `["https://sessions.browserjs.com"]`
+2. That document says `resource` is `https://sessions.computeruse.site/<id>/mcp`
+   and `authorization_servers` is `["https://sessions.computeruse.site"]`
    (VERIFIED: same file, `getProtectedResourceMetadata` takes the resource's
    path from what follows the well-known prefix; the route for it is a prefix
    route added to every exact host that has an MCP server route,
@@ -124,7 +124,7 @@ does not do on wildcard hosts, and the backend's stand-in
    <https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization>).
    At the root Pomerium names the host itself as the resource, not a
    session.
-3. `https://sessions.browserjs.com/.well-known/oauth-authorization-server`
+3. `https://sessions.computeruse.site/.well-known/oauth-authorization-server`
    names `/.pomerium/mcp/authorize` and `/.pomerium/mcp/token` on the same
    host. One issuer for every session.
 4. The client sends the user to authorize, with `resource` set to the MCP
@@ -145,20 +145,20 @@ now names the sessions' host. It is never shown to a pod.
 
 ## Old hosts (deprecated)
 
-`https://<id>.sessions.browserjs.com/…` is still served, by the same routes
+`https://<id>.sessions.computeruse.site/…` is still served, by the same routes
 and the same checks, for MCP URLs already configured in clients and upload
 URLs from sessions created before (a session's pod keeps the
 `MCP_V8_PUBLIC_URL` it was created with). The API and the UI give out the
 new URLs only.
 
 To retire them, when no client uses them and no session from before is left
-(Pomerium's access log shows requests to `*.sessions.browserjs.com`):
+(Pomerium's access log shows requests to `*.sessions.computeruse.site`):
 
 1. `deploy/gke/pomerium-config.yaml` and `deploy/local/pomerium-config.yaml`:
    delete the four `legacy-session-*` routes.
 2. `deploy/gke/patch-backend.yaml`, `deploy/local/patch-backend.yaml`: delete
    `LEGACY_SESSION_URL_TEMPLATE`.
-3. `deploy/gke/certificate.yaml`: delete `"*.sessions.browserjs.com"`. With
+3. `deploy/gke/certificate.yaml`: delete `"*.sessions.computeruse.site"`. With
    no wildcard left, the names could be proven by HTTP-01 instead of DNS-01;
    nothing requires changing that.
 4. `infra/main/edge.tf`: delete the `sessions` entry of `public_names` (the
@@ -173,7 +173,7 @@ To retire them, when no client uses them and no session from before is left
 In this order; each step is safe to stop after.
 
 1. **Merge.** The merge applies `infra/main` ("infra apply" runs on a change
-   there): one `A` record, `sessions.browserjs.com`, to the edge address.
+   there): one `A` record, `sessions.computeruse.site`, to the edge address.
    Check that run's summary. Until the name resolves, new sessions' URLs do
    not. The merge deploys nothing.
 2. **Images**: build the backend from the merged commit, pin its digest in
@@ -191,22 +191,22 @@ deploy applies both together.
 ## Test plan on the cluster
 
 1. `test/smoke.sh`: 30 checks. The ones that are new: the certificate names
-   `sessions.browserjs.com`; Pomerium answers the protected-resource
+   `sessions.computeruse.site`; Pomerium answers the protected-resource
    metadata for a session and names the session's MCP URL; the 401 on
    `/<id>/mcp` points there; nothing else on the host has a route (404).
    The old-host checks must still pass.
 2. In the UI, create a session. Its MCP URL reads
-   `https://sessions.browserjs.com/<id>/mcp`, and the screen connects (the
+   `https://sessions.computeruse.site/<id>/mcp`, and the screen connects (the
    browser's network panel shows the websocket to
-   `wss://sessions.browserjs.com/<id>/vnc?ticket=…`).
-3. Connect a real client: `claude mcp add --transport http browserjs https://sessions.browserjs.com/<id>/mcp`,
+   `wss://sessions.computeruse.site/<id>/vnc?ticket=…`).
+3. Connect a real client: `claude mcp add --transport http browserjs https://sessions.computeruse.site/<id>/mcp`,
    then `/mcp` in Claude Code and sign in. Expect the browser to open
-   `https://sessions.browserjs.com/.pomerium/mcp/authorize?…`, the tools to
+   `https://sessions.computeruse.site/.pomerium/mcp/authorize?…`, the tools to
    list, and `run_js` to answer. Then the same URL as a custom connector in
    claude.ai. This is the step that shows a client accepts a resource with a
    path on this Pomerium; it is UNVERIFIED until done.
 4. From the client, call `get_artifact_upload_url`; the URL starts with
-   `https://sessions.browserjs.com/<id>/api/artifact-uploads/`; `curl -T` a
+   `https://sessions.computeruse.site/<id>/api/artifact-uploads/`; `curl -T` a
    file to it (200), and a second time (4xx).
 5. As a second allowed user, point a client at the first user's URL: sign-in
    succeeds, the call is 404.
@@ -214,7 +214,7 @@ deploy applies both together.
    that has it, and its upload URLs (old host) still take a file.
 7. A warm-pool session (ID of five characters): steps 2 to 4.
 8. In a browser signed in to the app, open
-   `https://sessions.browserjs.com/<id>/mcp`: Pomerium's 401 page, or the
+   `https://sessions.computeruse.site/<id>/mcp`: Pomerium's 401 page, or the
    backend's 403 if the browser has been through an MCP sign-in on that
    host; never the pod's answer.
 9. Let a session sleep; call its MCP URL; it wakes and answers.

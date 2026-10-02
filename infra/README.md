@@ -140,13 +140,13 @@ apply again.
 
 Take `dns_name_servers` from the apply run's summary.
 
-In Namecheap: Domain List, Manage `browserjs.com`, Nameservers, choose
+In Namecheap: Domain List, Manage `computeruse.site`, Nameservers, choose
 **Custom DNS**, enter the four `ns-cloud-…googledomains.com` names (without
 the trailing dot), save. Propagation takes minutes to a day. Check with:
 
 ```sh
-dig +short NS browserjs.com
-dig +short app.browserjs.com        # should print the edge_ip_address output
+dig +short NS computeruse.site
+dig +short app.computeruse.site        # should print the edge_ip_address output
 ```
 
 This replaces every record Namecheap served for the domain: mail (MX), any
@@ -156,7 +156,9 @@ Certificates cannot be issued until the delegation is live.
 A domain listed in `additional_domains` gets a zone of its own with the same
 records, and its own nameservers, in the output `additional_dns_name_servers`.
 Nothing is served under it: it is how the deployment moves to another domain,
-[docs/domain-switch.md](../docs/domain-switch.md).
+[docs/domain-switch.md](../docs/domain-switch.md). `previous_domain`
+(`browserjs.com`) is the domain the deployment moved from: its zone and
+records are kept, and removing the variable deletes them.
 
 ## 6. Image pushes (once)
 
@@ -245,7 +247,7 @@ request's plan shows the destroys before you merge and apply. The cluster needs
 - OAuth client secrets (Google and GitHub for Dex) and Pomerium's secrets:
   created by hand, never in OpenTofu state.
 - Registering the domain, and the Namecheap nameserver change.
-- Mail or any other record for `browserjs.com` (the apex has no record).
+- Mail or any other record for `computeruse.site` (the apex has no record).
 - Pushing images, CI, and who may push (`roles/artifactregistry.writer`).
 - Who may use `kubectl` (`roles/container.developer` or similar).
 - Backups of session disks, alerting, uptime checks, Cloud Armor.

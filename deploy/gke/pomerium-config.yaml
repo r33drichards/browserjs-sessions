@@ -1,4 +1,4 @@
-# Pomerium's configuration for production (browserjs.com). Secrets
+# Pomerium's configuration for production (computeruse.site). Secrets
 # (SHARED_SECRET, COOKIE_SECRET, SIGNING_KEY, IDP_CLIENT_SECRET) come from
 # the environment.
 address: :8443
@@ -6,12 +6,12 @@ health_check_addr: 0.0.0.0:28080
 certificate_file: /tls/tls.crt
 certificate_key_file: /tls/tls.key
 
-authenticate_service_url: https://authenticate.browserjs.com
+authenticate_service_url: https://authenticate.computeruse.site
 
 # Users sign in with Dex, which offers Google and GitHub. Pomerium itself
 # fetches this address (discovery, tokens), through its own public name.
 idp_provider: oidc
-idp_provider_url: https://dex.browserjs.com/dex
+idp_provider_url: https://dex.computeruse.site/dex
 idp_client_id: pomerium
 
 # Sessions, MCP client registrations and MCP refresh tokens: lose these and
@@ -29,7 +29,7 @@ timeout_read: 5m
 
 routes:
   # Sessions: one host for all of them, each under its ID
-  # (https://sessions.browserjs.com/<id>/...). The backend tells the sessions'
+  # (https://sessions.computeruse.site/<id>/...). The backend tells the sessions'
   # host from the app's by Host, so every route keeps the caller's, and the
   # session by the first segment of the path. Each route matches whole
   # paths; nothing else on this host reaches the backend.
@@ -37,7 +37,7 @@ routes:
   # mcp-js's one-time upload URL: the token in the path is the credential,
   # checked by the session's pod.
   - name: session-upload
-    from: https://sessions.browserjs.com
+    from: https://sessions.computeruse.site
     regex: '^/s-[a-z0-9]+/api/artifact-uploads/[0-9a-f]+$'
     to: http://backend
     allow_public_unauthenticated_access: true
@@ -47,7 +47,7 @@ routes:
   # The session's screen, a websocket: the ticket in the query is the
   # credential, checked by the backend.
   - name: session-vnc
-    from: https://sessions.browserjs.com
+    from: https://sessions.computeruse.site
     regex: '^/s-[a-z0-9]+/vnc$'
     to: http://backend
     allow_public_unauthenticated_access: true
@@ -61,10 +61,10 @@ routes:
   # Because this host is exact (no wildcard), Pomerium also answers the
   # OAuth discovery for it: /.well-known/oauth-authorization-server, and
   # /.well-known/oauth-protected-resource/<id>/mcp, which names
-  # https://sessions.browserjs.com/<id>/mcp as the resource. Its 401 points an
+  # https://sessions.computeruse.site/<id>/mcp as the resource. Its 401 points an
   # MCP client there.
   - name: session-mcp
-    from: https://sessions.browserjs.com
+    from: https://sessions.computeruse.site
     regex: '^/s-[a-z0-9]+/mcp(/.*)?$'
     to: http://backend
     mcp:
@@ -81,7 +81,7 @@ routes:
     pass_identity_headers: true
     preserve_host_header: true
 
-  # DEPRECATED: a host per session (https://<id>.sessions.browserjs.com/...),
+  # DEPRECATED: a host per session (https://<id>.sessions.computeruse.site/...),
   # where sessions were before. Kept so that the MCP URLs and upload URLs
   # already handed out go on working; no new URL leads here. To retire them,
   # delete these four routes, LEGACY_SESSION_URL_TEMPLATE on the backend,
@@ -89,7 +89,7 @@ routes:
   # certificate and from DNS (docs/gke-deployment.md, "Session URLs").
 
   - name: legacy-session-upload
-    from: https://*.sessions.browserjs.com
+    from: https://*.sessions.computeruse.site
     prefix: /api/artifact-uploads/
     to: http://backend
     allow_public_unauthenticated_access: true
@@ -97,7 +97,7 @@ routes:
     timeout: 5m
 
   - name: legacy-session-vnc
-    from: https://*.sessions.browserjs.com
+    from: https://*.sessions.computeruse.site
     path: /vnc
     to: http://backend
     allow_public_unauthenticated_access: true
@@ -108,14 +108,14 @@ routes:
   # documents itself only on hosts with an exact route, not on wildcard
   # hosts, so the backend answers them (backend/internal/proxy/metadata.go).
   - name: legacy-session-oauth-metadata
-    from: https://*.sessions.browserjs.com
+    from: https://*.sessions.computeruse.site
     prefix: /.well-known/oauth-
     to: http://backend
     allow_public_unauthenticated_access: true
     preserve_host_header: true
 
   - name: legacy-session-mcp
-    from: https://*.sessions.browserjs.com
+    from: https://*.sessions.computeruse.site
     prefix: /mcp
     to: http://backend
     mcp:
@@ -127,14 +127,14 @@ routes:
 
   # Dex's own pages (sign-in, the callbacks from Google and GitHub).
   - name: dex
-    from: https://dex.browserjs.com
+    from: https://dex.computeruse.site
     to: http://dex:5556
     allow_public_unauthenticated_access: true
     preserve_host_header: true
 
   # The UI and its API.
   - name: app
-    from: https://app.browserjs.com
+    from: https://app.computeruse.site
     to: http://backend
     policy: *allowed
     pass_identity_headers: true
@@ -150,7 +150,7 @@ routes:
 
   # The API.
   - name: api
-    from: https://api.browserjs.com
+    from: https://api.computeruse.site
     prefix: /v1/
     to: http://backend
     allow_public_unauthenticated_access: true
@@ -158,7 +158,7 @@ routes:
 
   # An API token exchanged for an access token (OAuth client credentials).
   - name: api-token
-    from: https://api.browserjs.com
+    from: https://api.computeruse.site
     path: /oauth/token
     to: http://backend
     allow_public_unauthenticated_access: true
@@ -168,7 +168,7 @@ routes:
   # place of the sign-in. A call may run for minutes and the event stream
   # for as long as its client keeps it.
   - name: api-mcp
-    from: https://api.browserjs.com
+    from: https://api.computeruse.site
     regex: '^/s-[a-z0-9]+/mcp(/.*)?$'
     to: http://backend
     allow_public_unauthenticated_access: true

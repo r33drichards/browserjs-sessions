@@ -22,7 +22,7 @@ mock_provider "google" {
   mock_resource "google_certificate_manager_dns_authorization" {
     defaults = {
       dns_resource_record = [{
-        name = "_acme-challenge.mock.browserjs.com."
+        name = "_acme-challenge.mock.computeruse.site."
         type = "CNAME"
         data = "mock.authorize.certificatemanager.goog."
       }]
@@ -65,13 +65,13 @@ run "defaults_pomerium_nlb" {
   }
 
   assert {
-    condition = toset([for record in google_dns_record_set.public : record.name]) == toset([
-      "api.browserjs.com.",
-      "app.browserjs.com.",
-      "authenticate.browserjs.com.",
-      "dex.browserjs.com.",
-      "sessions.browserjs.com.",
-      "*.sessions.browserjs.com.",
+    condition = toset([for record in google_dns_record_set.domains : record.name]) == toset([
+      "api.computeruse.site.",
+      "app.computeruse.site.",
+      "authenticate.computeruse.site.",
+      "dex.computeruse.site.",
+      "sessions.computeruse.site.",
+      "*.sessions.computeruse.site.",
     ])
     error_message = "Expected A records for the six public names."
   }
@@ -165,59 +165,118 @@ run "defaults_pomerium_nlb" {
   }
 }
 
-run "additional_domain" {
+# The one deployment, as terraform.tfvars has it: served under
+# computeruse.site, with the zone of browserjs.com kept. The resource
+# addresses asserted here are the ones in its state: another address for the
+# same zone or record would delete it and make it again.
+run "previous_domain_keeps_its_addresses" {
   command = plan
 
   variables {
-    additional_domains = ["computeruse.site"]
-  }
-
-  assert {
-    condition     = keys(google_dns_managed_zone.domains) == ["computeruse.site"] && google_dns_managed_zone.domains["computeruse.site"].dns_name == "computeruse.site." && google_dns_managed_zone.domains["computeruse.site"].name == "computeruse-site"
-    error_message = "An additional domain gets a zone of its own."
-  }
-
-  assert {
-    condition = toset([for record in google_dns_record_set.domains : record.name]) == toset([
-      "api.computeruse.site.",
-      "app.computeruse.site.",
-      "authenticate.computeruse.site.",
-      "dex.computeruse.site.",
-      "sessions.computeruse.site.",
-      "*.sessions.computeruse.site.",
-    ])
-    error_message = "Expected the six public names again under the additional domain."
-  }
-
-  assert {
-    condition = alltrue([
-      for record in google_dns_record_set.domains :
-      record.managed_zone == "computeruse-site" && record.type == "A" && record.ttl == 300
-    ])
-    error_message = "The additional domain's records are A records in its own zone."
-  }
-
-  assert {
-    condition     = google_dns_managed_zone.this[0].dns_name == "browserjs.com." && length(google_dns_record_set.public) == 6 && output.hostnames.app == "app.browserjs.com"
-    error_message = "An additional domain changes nothing about the domain itself."
-  }
-
-  assert {
-    condition     = length(output.additional_dns_records) == 6 && keys(output.additional_dns_name_servers) == ["computeruse.site"]
-    error_message = "The additional domain's nameservers and records must be outputs."
-  }
-}
-
-run "no_additional_domain" {
-  command = plan
-
-  variables {
+    domain             = "computeruse.site"
+    previous_domain    = "browserjs.com"
     additional_domains = []
   }
 
   assert {
-    condition     = length(google_dns_managed_zone.domains) == 0 && length(google_dns_record_set.domains) == 0 && output.additional_dns_name_servers == {}
-    error_message = "Without additional_domains there is one zone."
+    condition     = keys(google_dns_managed_zone.domains) == ["computeruse.site"] && google_dns_managed_zone.domains["computeruse.site"].dns_name == "computeruse.site." && google_dns_managed_zone.domains["computeruse.site"].name == "computeruse-site"
+    error_message = "The served domain's zone is google_dns_managed_zone.domains[\"computeruse.site\"], named computeruse-site."
+  }
+
+  assert {
+    condition     = length(google_dns_managed_zone.this) == 1 && google_dns_managed_zone.this[0].dns_name == "browserjs.com." && google_dns_managed_zone.this[0].name == "browserjs-com"
+    error_message = "The previous domain's zone is google_dns_managed_zone.this[0], named browserjs-com."
+  }
+
+  assert {
+    condition = { for key, record in google_dns_record_set.domains : key => record.name } == {
+      "computeruse.site/api"           = "api.computeruse.site."
+      "computeruse.site/app"           = "app.computeruse.site."
+      "computeruse.site/authenticate"  = "authenticate.computeruse.site."
+      "computeruse.site/dex"           = "dex.computeruse.site."
+      "computeruse.site/sessions_host" = "sessions.computeruse.site."
+      "computeruse.site/sessions"      = "*.sessions.computeruse.site."
+    }
+    error_message = "The served domain's records are keyed <domain>/<key of public_names>."
+  }
+
+  assert {
+    condition = { for key, record in google_dns_record_set.public : key => record.name } == {
+      api           = "api.browserjs.com."
+      app           = "app.browserjs.com."
+      authenticate  = "authenticate.browserjs.com."
+      dex           = "dex.browserjs.com."
+      sessions_host = "sessions.browserjs.com."
+      sessions      = "*.sessions.browserjs.com."
+    }
+    error_message = "The previous domain's records are keyed by the key of public_names alone."
+  }
+
+  assert {
+    condition = alltrue([
+      for record in google_dns_record_set.domains : record.managed_zone == "computeruse-site" && record.type == "A" && record.ttl == 300
+      ]) && alltrue([
+      for record in google_dns_record_set.public : record.managed_zone == "browserjs-com" && record.type == "A" && record.ttl == 300
+    ])
+    error_message = "Each record is an A record in the zone of its own domain."
+  }
+
+  assert {
+    condition     = output.hostnames.app == "app.computeruse.site" && output.dns_zone_name == "computeruse-site" && toset(output.certificate_dns_names) == toset(["api.computeruse.site", "app.computeruse.site", "authenticate.computeruse.site", "dex.computeruse.site", "sessions.computeruse.site", "*.sessions.computeruse.site"])
+    error_message = "Only domain is served: the hostnames and the certificate's names are under it alone."
+  }
+
+  assert {
+    condition     = keys(output.additional_dns_name_servers) == ["browserjs.com"] && toset(output.additional_dns_records[*].name) == toset(["api.browserjs.com", "app.browserjs.com", "authenticate.browserjs.com", "dex.browserjs.com", "sessions.browserjs.com", "*.sessions.browserjs.com"])
+    error_message = "The previous domain's nameservers and records must be outputs, apart from the served domain's."
+  }
+}
+
+# The same zones and records at the same addresses with the domains the other
+# way round: what the configuration was before the move, and what undoing the
+# move by terraform.tfvars alone gives.
+run "served_under_the_previous_domain" {
+  command = plan
+
+  variables {
+    domain             = "browserjs.com"
+    previous_domain    = "browserjs.com"
+    additional_domains = ["computeruse.site"]
+  }
+
+  assert {
+    condition     = keys(google_dns_managed_zone.domains) == ["computeruse.site"] && google_dns_managed_zone.this[0].dns_name == "browserjs.com."
+    error_message = "Which domain is served must not change which resource holds which zone."
+  }
+
+  assert {
+    condition     = google_dns_record_set.domains["computeruse.site/app"].name == "app.computeruse.site." && google_dns_record_set.public["app"].name == "app.browserjs.com." && length(google_dns_record_set.domains) == 6 && length(google_dns_record_set.public) == 6
+    error_message = "Which domain is served must not change which resource holds which record."
+  }
+
+  assert {
+    condition     = output.hostnames.app == "app.browserjs.com" && output.dns_zone_name == "browserjs-com" && keys(output.additional_dns_name_servers) == ["computeruse.site"]
+    error_message = "The outputs follow the served domain."
+  }
+}
+
+run "one_domain" {
+  command = plan
+
+  variables {
+    domain             = "example.org"
+    previous_domain    = null
+    additional_domains = []
+  }
+
+  assert {
+    condition     = keys(google_dns_managed_zone.domains) == ["example.org"] && length(google_dns_managed_zone.this) == 0 && length(google_dns_record_set.public) == 0 && length(google_dns_record_set.domains) == 6
+    error_message = "A deployment with one domain has one zone, in google_dns_managed_zone.domains."
+  }
+
+  assert {
+    condition     = output.dns_zone_name == "example-org" && output.additional_dns_name_servers == {} && length(output.additional_dns_records) == 0
+    error_message = "With one domain there is nothing additional."
   }
 }
 
@@ -239,12 +298,12 @@ run "gateway_alb" {
   }
 
   assert {
-    condition     = google_certificate_manager_dns_authorization.this["sessions"].domain == "sessions.browserjs.com"
+    condition     = google_certificate_manager_dns_authorization.this["sessions"].domain == "sessions.computeruse.site"
     error_message = "The sessions' host and the wildcard under it are authorised through the one name."
   }
 
   assert {
-    condition     = toset(google_certificate_manager_certificate.this[0].managed[0].domains) == toset(["api.browserjs.com", "app.browserjs.com", "authenticate.browserjs.com", "dex.browserjs.com", "sessions.browserjs.com", "*.sessions.browserjs.com"])
+    condition     = toset(google_certificate_manager_certificate.this[0].managed[0].domains) == toset(["api.computeruse.site", "app.computeruse.site", "authenticate.computeruse.site", "dex.computeruse.site", "sessions.computeruse.site", "*.sessions.computeruse.site"])
     error_message = "The certificate must cover the five hosts and the session wildcard."
   }
 
@@ -285,7 +344,7 @@ run "federated_tokens_and_regional_cluster" {
   }
 
   assert {
-    condition     = length(google_dns_managed_zone.this) == 0 && length(google_dns_record_set.public) == 0 && output.dns_name_servers == null && length(google_dns_managed_zone.domains) == 0 && length(google_dns_record_set.domains) == 0
+    condition     = length(google_dns_managed_zone.this) == 0 && length(google_dns_record_set.public) == 0 && length(google_dns_managed_zone.domains) == 0 && length(google_dns_record_set.domains) == 0 && output.dns_name_servers == null
     error_message = "create_dns_zone = false must create no DNS resources."
   }
 

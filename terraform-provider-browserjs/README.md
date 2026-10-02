@@ -82,7 +82,7 @@ provider_installation {
 ### Use it
 
 ```sh
-export BROWSERJS_ENDPOINT=https://api.browserjs.com   # the default
+export BROWSERJS_ENDPOINT=https://api.computeruse.site   # the default
 export BROWSERJS_TOKEN=bjs_...                        # Tokens page of the UI
 cd examples/session-policies
 tofu plan                                             # or terraform plan

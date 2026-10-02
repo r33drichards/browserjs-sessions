@@ -144,22 +144,25 @@ output "certificate_dns_names" {
 
 output "dns_zone_name" {
   description = "Cloud DNS zone name (cert-manager's cloudDNS solver can be pinned to it with hostedZoneName)."
-  value       = var.create_dns_zone ? google_dns_managed_zone.this[0].name : null
+  value       = var.create_dns_zone ? local.zones[var.domain].name : null
 }
 
 output "dns_name_servers" {
   description = "Set these as the domain's custom nameservers at the registrar (Namecheap: Domain List > Manage > Nameservers > Custom DNS). Nothing resolves until that is done."
-  value       = var.create_dns_zone ? google_dns_managed_zone.this[0].name_servers : null
+  value       = var.create_dns_zone ? local.zones[var.domain].name_servers : null
 }
 
 output "additional_dns_name_servers" {
-  description = "Per additional domain: the nameservers to set at its registrar (Namecheap: Domain List > Manage > Nameservers > Custom DNS). They differ from dns_name_servers: Cloud DNS gives each zone its own set."
-  value       = { for domain, zone in google_dns_managed_zone.domains : domain => zone.name_servers }
+  description = "Per domain other than the served one: the nameservers its registrar must have (Namecheap: Domain List > Manage > Nameservers > Custom DNS). They differ from dns_name_servers: Cloud DNS gives each zone its own set."
+  value       = { for domain, zone in local.zones : domain => zone.name_servers if domain != var.domain }
 }
 
 output "additional_dns_records" {
-  description = "The records under the additional domains. Created here when create_dns_zone is true."
-  value       = [for record in values(local.additional_records) : { name = record.name, type = "A", value = local.edge_ip }]
+  description = "The records under the domains other than the served one. Created here when create_dns_zone is true."
+  value = [
+    for name in concat([for record in values(local.domain_records) : record.name], values(local.previous_records)) :
+    { name = name, type = "A", value = local.edge_ip } if !endswith(name, var.domain)
+  ]
 }
 
 output "dns_records" {

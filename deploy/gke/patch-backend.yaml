@@ -9,20 +9,20 @@ spec:
         - name: backend
           env:
             - name: PUBLIC_URL
-              value: https://app.browserjs.com
+              value: https://app.computeruse.site
             # Every session is under one host, by its ID.
             - name: SESSION_URL_TEMPLATE
-              value: https://sessions.browserjs.com/{id}
+              value: https://sessions.computeruse.site/{id}
             # DEPRECATED: the host each session had before. Requests there
             # are still served, for the URLs already handed out. Remove this
             # with the legacy-session-* routes in pomerium-config.yaml.
             - name: LEGACY_SESSION_URL_TEMPLATE
-              value: https://{id}.sessions.browserjs.com
+              value: https://{id}.sessions.computeruse.site
             # Fetched through the public address, with the public
             # certificate. From inside the cluster that address leads
             # straight to Pomerium's Service.
             - name: POMERIUM_JWKS_URL
-              value: https://app.browserjs.com/.well-known/pomerium/jwks.json
+              value: https://app.computeruse.site/.well-known/pomerium/jwks.json
             - name: ADMIN_EMAILS
               value: rwendt1337@gmail.com
             # The API host (the "api" route of pomerium-config.yaml). Naming
@@ -32,7 +32,7 @@ spec:
             # them on, add ALLOWED_EMAILS with the addresses of the policy
             # in pomerium-config.yaml (docs/api-tokens.md).
             - name: API_URL
-              value: https://api.browserjs.com
+              value: https://api.computeruse.site
             # An idle session sleeps to a Pod Snapshot and wakes from it
             # (snapshots.yaml). "false" is today's behaviour: every wake is a
             # cold start, with Chromium restoring its tabs from disk.

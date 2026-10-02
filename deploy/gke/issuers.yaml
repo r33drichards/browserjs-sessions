@@ -29,7 +29,7 @@ spec:
       - dns01:
           cloudDNS:
             project: browserjs-sessions
-            hostedZoneName: browserjs-com
+            hostedZoneName: computeruse-site
 ---
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
@@ -45,4 +45,4 @@ spec:
       - dns01:
           cloudDNS:
             project: browserjs-sessions
-            hostedZoneName: browserjs-com
+            hostedZoneName: computeruse-site

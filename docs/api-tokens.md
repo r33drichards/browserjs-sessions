@@ -12,13 +12,13 @@ and [`deploy/base/crd-apitoken.yaml`](../deploy/base/crd-apitoken.yaml).
 ## The whole flow
 
 ```
-API=https://api.browserjs.com
+API=https://api.computeruse.site
 
-# 1. Once, signed in, in the browser's console on https://app.browserjs.com
+# 1. Once, signed in, in the browser's console on https://app.computeruse.site
 #    (or on the token page): make a token. It is shown this one time.
 await (await fetch('/api/tokens', {method: 'POST', body: JSON.stringify(
   {name: 'ci', scopes: ['sessions:read', 'sessions:connect']})})).json()
-# => {"id": "k3xw5qj2m7ab", "token": "bjs_k3xw5qj2m7ab_...", "token_url": "https://api.browserjs.com/oauth/token", ...}
+# => {"id": "k3xw5qj2m7ab", "token": "bjs_k3xw5qj2m7ab_...", "token_url": "https://api.computeruse.site/oauth/token", ...}
 
 CLIENT_ID=k3xw5qj2m7ab
 CLIENT_SECRET=bjs_k3xw5qj2m7ab_...        # the token itself
@@ -60,7 +60,7 @@ Settings of the backend, empty by default:
 | set | empty | The host of `API_URL` is the API's alone, and refuses every credential. No token endpoints. This is `deploy/gke`. |
 | set | set | On. This is `deploy/local`. |
 
-`API_URL` is the API host's base URL with no path (`https://api.browserjs.com`);
+`API_URL` is the API host's base URL with no path (`https://api.computeruse.site`);
 it must be the `from` of the `api` routes in the overlay's
 `pomerium-config.yaml`. An overlay that has the routes must set it: otherwise
 the backend would take requests to that host for the app's.
@@ -257,7 +257,7 @@ curl --cacert .local/tls/ca.crt https://api.localtest.me/v1/sessions     # 401
 | | |
 |---|---|
 | DNS | `api.<domain>`, an A record to the edge address: `api` in `local.public_names` of `infra/main/edge.tf` |
-| Certificate | `api.browserjs.com` in `deploy/gke/certificate.yaml` |
+| Certificate | `api.computeruse.site` in `deploy/gke/certificate.yaml` |
 | Routes | `api`, `api-token`, `api-mcp` in `deploy/gke/pomerium-config.yaml` |
 | Backend | `API_URL` in `deploy/gke/patch-backend.yaml`; `ALLOWED_EMAILS` when it is turned on |
 | Secret | `api-tokens` (`signing-key`), optional |

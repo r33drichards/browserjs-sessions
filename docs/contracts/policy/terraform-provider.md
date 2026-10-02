@@ -9,14 +9,14 @@ It speaks only the API of `backend-api.yaml`, on the API host.
 
 ```hcl
 provider "browserjs" {
-  endpoint = "https://api.browserjs.com"   # or BROWSERJS_ENDPOINT
+  endpoint = "https://api.computeruse.site"   # or BROWSERJS_ENDPOINT
   token    = var.browserjs_token           # or BROWSERJS_TOKEN; sensitive
 }
 ```
 
 | Attribute | Type | | Notes |
 |---|---|---|---|
-| `endpoint` | string | optional | Base URL of the API host, without `/v1`. Env `BROWSERJS_ENDPOINT`. Default `https://api.browserjs.com`. |
+| `endpoint` | string | optional | Base URL of the API host, without `/v1`. Env `BROWSERJS_ENDPOINT`. Default `https://api.computeruse.site`. |
 | `token` | string, sensitive | optional | Env `BROWSERJS_TOKEN`. Configuring fails when neither is set. |
 
 Every request sends `Authorization: Bearer <token>` and

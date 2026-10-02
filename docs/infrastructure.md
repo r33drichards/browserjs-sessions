@@ -421,7 +421,7 @@ itself.
 `type: LoadBalancer` gives Pomerium a regional external passthrough Network
 Load Balancer on a reserved regional address; Pomerium terminates TLS with one
 cert-manager certificate (Let's Encrypt, DNS-01 through Cloud DNS) covering the
-four hosts and `*.sessions.browserjs.com` (the wildcard is for the old
+four hosts and `*.sessions.computeruse.site` (the wildcard is for the old
 per-session hosts, deprecated: [session-urls.md](session-urls.md)). Why:
 
 1. It is the topology Pomerium documents and ships for GKE.
@@ -460,7 +460,7 @@ would then need a `Gateway` (`gke-l7-global-external-managed`), an `HTTPRoute`
 to Pomerium, a `GCPBackendPolicy` with `timeoutSec: 86400`, a
 `HealthCheckPolicy`, and HTTPS from the load balancer to Pomerium
 (`appProtocol`/backend TLS) or `insecure_server`. The two modes exclude each
-other: both need `_acme-challenge.sessions.browserjs.com`, one as a CNAME and
+other: both need `_acme-challenge.sessions.computeruse.site`, one as a CNAME and
 one as a TXT record.
 
 ## 6. Identity, registry, network policy

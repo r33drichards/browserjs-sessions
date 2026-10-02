@@ -440,18 +440,29 @@ variable "registry_delete_older_than_days" {
 # --- Edge: address, DNS, certificates -----------------------------------------------------
 
 variable "domain" {
-  description = "The registered domain, without a trailing dot."
+  description = "The registered domain the deployment is served under, without a trailing dot. It must be the domain in deploy/gke (Pomerium's routes, the certificate, Dex)."
   type        = string
-  default     = "browserjs.com"
+  default     = "computeruse.site"
 
   validation {
     condition     = can(regex("^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,}$", var.domain))
-    error_message = "Expected a domain such as browserjs.com (lowercase, no trailing dot)."
+    error_message = "Expected a domain such as computeruse.site (lowercase, no trailing dot)."
+  }
+}
+
+variable "previous_domain" {
+  description = "The domain the deployment began under, whose zone and records keep their first resource addresses (google_dns_managed_zone.this, google_dns_record_set.public) whichever domain is served. Unsetting it DELETES that zone and its records. Null for a deployment that has only ever had one domain."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.previous_domain == null || can(regex("^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,}$", var.previous_domain))
+    error_message = "Expected a domain such as example.org (lowercase, no trailing dot)."
   }
 }
 
 variable "additional_domains" {
-  description = "Further registered domains that get a zone of their own with the same records as domain, to the same address. For moving the deployment to another domain: see docs/domain-switch.md."
+  description = "Further registered domains that get a zone of their own with the same records as domain, to the same address, and under which nothing is served. For moving the deployment to another domain: see docs/domain-switch.md."
   type        = list(string)
   default     = []
 
