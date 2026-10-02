@@ -28,6 +28,7 @@ export function SessionsList() {
   const [suggested, setSuggested] = useState("") // the placeholder; used when the field is left empty
   const [createError, setCreateError] = useState("")
   const [busy, setBusy] = useState(false)
+  const [copied, setCopied] = useState<{ id: string; ok: boolean } | null>(null) // the row whose button just answered
 
   const load = useCallback(() => {
     api
@@ -42,6 +43,18 @@ export function SessionsList() {
   }, [showAll])
 
   usePolling(load)
+
+  // The address an MCP client connects to; the same one the session's page shows.
+  async function copyMcpUrl(s: Session) {
+    let ok = true
+    try {
+      await navigator.clipboard.writeText(s.mcp_url)
+    } catch {
+      ok = false
+    }
+    setCopied({ id: s.id, ok })
+    setTimeout(() => setCopied(c => (c?.id === s.id ? null : c)), 1500)
+  }
 
   function openCreate() {
     setName("")
@@ -116,6 +129,9 @@ export function SessionsList() {
             header: "",
             cell: s => (
               <SpaceBetween direction="horizontal" size="xs">
+                <Button onClick={() => copyMcpUrl(s)} ariaLabel={`Copy the MCP URL of ${s.name}`}>
+                  {copied?.id === s.id ? (copied.ok ? "Copied" : "Couldn't copy") : "Copy MCP URL"}
+                </Button>
                 {s.state === "running" || s.state === "starting" ? (
                   <Button onClick={() => act(() => api.setRunning(s.id, false))}>Stop</Button>
                 ) : (
