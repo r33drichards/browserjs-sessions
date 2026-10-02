@@ -43,7 +43,7 @@ images:
     digest: sha256:c7f95389964e6b1e6d978d287925e9ffae04b79658e589c46354e86c05e7b365
   - name: browserjs/site
     newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/site
-    digest: sha256:b6a1c14769bfd44793b5e9baf29d4f2763cf7639982ee6f29715d2aa5e55e535
+    digest: sha256:68c85ef7444b3a2e607487f8b193bb267c615241c1d1d54e3195f7cd4e533c34
 
 configMapGenerator:
   - name: session-blueprint
