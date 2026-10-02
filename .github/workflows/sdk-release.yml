@@ -6,7 +6,9 @@ name: sdk release
 #
 #   - Pushing a tag `sdk-v<version>` builds and publishes.
 #   - Running it by hand builds only, unless `publish` is ticked.
-#   - A pull request that changes this file builds only.
+#
+# It never runs on a pull request: four platforms, two of them macOS, are
+# too dear for that.
 #
 # The version is the one in sdk/Cargo.toml and sdk/js/package.json; a tag
 # that says another is refused before anything is built.
@@ -26,10 +28,6 @@ name: sdk release
 on:
   push:
     tags: ["sdk-v*"]
-  # A change to this workflow is tried: it builds and publishes nothing.
-  pull_request:
-    paths:
-      - ".github/workflows/sdk-release.yml"
   workflow_dispatch:
     inputs:
       publish:

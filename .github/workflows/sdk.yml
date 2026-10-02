@@ -50,6 +50,17 @@ jobs:
 
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
 
+      # Cargo's downloads and build, and the generators cargo installs.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            sdk/target
+          key: sdk-${{ github.job }}-${{ matrix.language || 'rust' }}-${{ hashFiles('sdk/Cargo.lock', 'flake.lock', 'sdk/scripts/bindings.sh') }}
+          restore-keys: |
+            sdk-${{ github.job }}-${{ matrix.language || 'rust' }}-
+
       - name: Format
         run: nix develop ..#sdk -c cargo fmt --all --check
 
@@ -83,6 +94,17 @@ jobs:
           persist-credentials: false
 
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+
+      # Cargo's downloads and build, and the generators cargo installs.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            sdk/target
+          key: sdk-${{ github.job }}-${{ matrix.language || 'rust' }}-${{ hashFiles('sdk/Cargo.lock', 'flake.lock', 'sdk/scripts/bindings.sh') }}
+          restore-keys: |
+            sdk-${{ github.job }}-${{ matrix.language || 'rust' }}-
 
       # Generates the language's bindings from the library just built, checks
       # that the generated sources in the tree are those, and runs the
