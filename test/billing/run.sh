@@ -437,7 +437,7 @@ is "and removing nothing is not" "" "$(outputs)"
 # --- 5. the export, and its restore ------------------------------------------------
 step "5. export"
 is "the CronJob is suspended as deploy/gke has it with billing off" "true" \
-  "$(kubectl kustomize deploy/gke | awk '/^kind: CronJob/ { cron = 1 } cron && $1 == "suspend:" { print $2; exit }')"
+  "$(kubectl kustomize deploy/gke | awk '/^kind: CronJob/ { cron = 1 } cron && $1 == "suspend:" && !seen++ { print $2 }')"
 # deploy/gke's own file, with no bucket: the export is printed, not uploaded.
 grep -q 'value: browserjs-sessions-billing-export$' deploy/gke/billing-export.yaml || fail "billing-export.yaml names no bucket to take out"
 sed 's|value: browserjs-sessions-billing-export$|value: ""|' deploy/gke/billing-export.yaml | k apply -f - >/dev/null

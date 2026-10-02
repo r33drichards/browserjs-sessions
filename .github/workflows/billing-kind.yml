@@ -68,7 +68,7 @@ jobs:
           # BILLING, as the last overlay rendered (deploy/gke) gives it to
           # the backend and to the operator.
           billing() {
-            kubectl kustomize deploy/gke | awk '$1 == "-" && $2 == "name:" && $3 == "BILLING" { getline; print $2 }' | sort | uniq -c | xargs
+            awk '$1 == "-" && $2 == "name:" && $3 == "BILLING" { getline; print $2 }' "$RUNNER_TEMP/gke.yaml" | sort | uniq -c | xargs
           }
           hack/billing-stage.sh --check
           gke_stage="$(hack/billing-stage.sh --check | sed -n 's|^billing-stage: deploy/gke is ||p')"
@@ -79,6 +79,9 @@ jobs:
             hack/billing-stage.sh local "$stage"
             hack/billing-stage.sh --check
             render
+            # To a file: awk stops reading at its answer, which a pipe from
+            # kustomize would take for a failure.
+            kubectl kustomize deploy/gke >"$RUNNER_TEMP/gke.yaml"
             case "$stage" in
               off) want="" ;;
               *) want="2 $stage" ;;
@@ -89,8 +92,8 @@ jobs:
             fi
             # The operator has its pod exactly when billing is on, and the
             # export runs exactly when it is enforced.
-            replicas="$(kubectl kustomize deploy/gke | awk '/^kind:/ { kind = $2 } /^  name: billing-operator$/ && kind == "Deployment" { found = 1 } found && $1 == "replicas:" { print $2; exit }')"
-            suspended="$(kubectl kustomize deploy/gke | awk '/^kind:/ { kind = $2 } kind == "CronJob" && $1 == "suspend:" { print $2; exit }')"
+            replicas="$(awk '/^kind:/ { kind = $2 } /^  name: billing-operator$/ && kind == "Deployment" { found = 1 } found && $1 == "replicas:" { print $2; exit }' "$RUNNER_TEMP/gke.yaml")"
+            suspended="$(awk '/^kind:/ { kind = $2 } kind == "CronJob" && $1 == "suspend:" { print $2; exit }' "$RUNNER_TEMP/gke.yaml")"
             echo "stage $stage: operator replicas $replicas, export suspended $suspended"
             case "$stage" in
               off) [ "$replicas $suspended" = "0 true" ] ;;
