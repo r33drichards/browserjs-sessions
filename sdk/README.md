@@ -179,7 +179,7 @@ Cargo runs through the flake's `sdk` dev shell:
 
 ```bash
 cd sdk
-nix develop ..#sdk -c cargo test                    # 50 or so tests, against a fake API in the test process
+nix develop ..#sdk -c cargo test                    # against a fake API in the test process
 nix develop ..#sdk -c cargo clippy --workspace --all-targets -- -D warnings
 nix develop ..#sdk -c scripts/bindings.sh python --test
 nix develop ..#sdk -c scripts/bindings.sh javascript --test   # also rewrites js/src/generated
@@ -192,7 +192,8 @@ calls through the built library: the token exchange, create, `run_js` over
 MCP, sleep, and a typed error.
 
 After changing the exported surface (anything under `#[uniffi::export]`, a
-`uniffi::Record`, an enum), run `scripts/bindings.sh go` and
+`uniffi::Record`, an enum, **or a doc comment on one of them**: UniFFI's
+checksums cover the docs, and stale bindings refuse to load), run `scripts/bindings.sh go` and
 `scripts/bindings.sh javascript` and commit what they write. CI
 (`.github/workflows/sdk.yml`) fails when the generated sources in the tree
 are not what the generators produce, and uploads what they produced. Python

@@ -206,6 +206,7 @@ jobs:
           npm run typecheck
           npm run build
           node --test test/smoke.test.mjs
+          mkdir -p "$GITHUB_WORKSPACE/dist/npm"
           npm pack --pack-destination "$GITHUB_WORKSPACE/dist/npm"
           tar -tzf "$GITHUB_WORKSPACE"/dist/npm/*.tgz
 
