@@ -1,0 +1,54 @@
+name: operators
+
+# The pytest suites of the two operators, each in its own Nix dev shell
+# (images/<operator>/flake.nix), as a developer runs them. No cluster, no
+# Docker, no secret: the tests run against fakes in their own trees.
+
+on:
+  pull_request:
+    paths:
+      - "images/billing-operator/**"
+      - "images/policy-operator/**"
+      # The tests read the contracts' vectors, examples and catalogue.
+      - "docs/contracts/billing/**"
+      - "docs/contracts/policy/**"
+      - ".github/workflows/operators.yml"
+  push:
+    branches: [main]
+    paths:
+      - "images/billing-operator/**"
+      - "images/policy-operator/**"
+      - "docs/contracts/billing/**"
+      - "docs/contracts/policy/**"
+      - ".github/workflows/operators.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: operators-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest ${{ matrix.operator }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        operator: [billing-operator, policy-operator]
+    defaults:
+      run:
+        shell: bash
+        working-directory: images/${{ matrix.operator }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+
+      - name: Test
+        run: nix develop -c pytest
