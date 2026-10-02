@@ -88,4 +88,4 @@ patches:
   # second only, enforcing with neither. They are the last patches, and are
   # switched by hack/policy-stage.sh (docs/policy-deployment.md).
   # - path: patch-policy-off.yaml
-  - path: patch-policy-backend-off.yaml
+  # - path: patch-policy-backend-off.yaml
