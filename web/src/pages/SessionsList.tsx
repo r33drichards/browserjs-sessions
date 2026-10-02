@@ -13,6 +13,7 @@ import type { Session } from "../api"
 import { useMe } from "../auth/MeProvider"
 import { signedOutHandled } from "../auth/signedOut"
 import { Shell, StateTag, api } from "../shell"
+import { petname } from "../petname"
 import { usePolling } from "../usePolling"
 
 export function SessionsList() {
@@ -24,6 +25,7 @@ export function SessionsList() {
   const [showAll, setShowAll] = useState(false)
   const [creating, setCreating] = useState(false)
   const [name, setName] = useState("")
+  const [suggested, setSuggested] = useState("") // the placeholder; used when the field is left empty
   const [createError, setCreateError] = useState("")
   const [busy, setBusy] = useState(false)
 
@@ -43,16 +45,22 @@ export function SessionsList() {
 
   function openCreate() {
     setName("")
+    // Not a name one of the sessions on screen already has.
+    const taken = new Set((sessions ?? []).map(s => s.name))
+    let pet = petname()
+    for (let i = 0; i < 5 && taken.has(pet); i++) pet = petname()
+    setSuggested(pet)
     setCreateError("")
     setCreating(true)
   }
 
   async function create() {
-    if (busy || !name.trim()) return
+    if (busy) return
     setBusy(true)
     setCreateError("")
     try {
-      const session = await api.createSession(name)
+      // Left empty, the session gets the name shown as the placeholder.
+      const session = await api.createSession(name.trim() || suggested)
       navigate(`/sessions/${session.id}`)
     } catch (e) {
       if (!signedOutHandled(e)) setCreateError(String((e as Error).message))
@@ -142,16 +150,24 @@ export function SessionsList() {
           <Box float="right">
             <SpaceBetween direction="horizontal" size="xs">
               <Button onClick={() => setCreating(false)}>Cancel</Button>
-              <Button variant="primary" loading={busy} disabled={!name.trim()} onClick={create}>
+              <Button variant="primary" loading={busy} onClick={create}>
                 Create
               </Button>
             </SpaceBetween>
           </Box>
         }
       >
-        <FormField label="Name" errorText={createError}>
+        <FormField
+          label={
+            <>
+              Name - <i>optional</i>
+            </>
+          }
+          errorText={createError}
+        >
           <Input
             value={name}
+            placeholder={suggested}
             onChange={e => setName(e.detail.value)}
             onKeyDown={e => {
               if (e.detail.key === "Enter") void create()

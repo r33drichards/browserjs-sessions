@@ -31,6 +31,19 @@ type Config struct {
 	IdleAfter          time.Duration // idle time before a session is put to sleep
 	ReadyTimeout       time.Duration // how long a request waits for a waking session
 	MaxSessionsPerUser int
+
+	// Snapshots makes an idle session sleep to a GKE Pod Snapshot and wake
+	// from it. Off unless SNAPSHOTS is set: a cluster without Pod Snapshots
+	// (kind) has none of the resources.
+	Snapshots       bool
+	SnapshotTimeout time.Duration // how long one snapshot may take before the session sleeps without it
+	RestoreTimeout  time.Duration // how long a restore may take before the session is started cold
+
+	// WarmPool is the SandboxWarmPool new sessions are taken from, "" for
+	// none: every session then starts cold. WarmPoolWait is how long a new
+	// session waits for the pool before starting cold after all.
+	WarmPool     string
+	WarmPoolWait time.Duration
 }
 
 func FromEnv(get func(string) string) (Config, error) {
@@ -48,6 +61,7 @@ func FromEnv(get func(string) string) (Config, error) {
 		BlueprintPath:   or("BLUEPRINT_PATH", "/etc/browserjs/blueprint.yaml"),
 		WebDir:          or("WEB_DIR", "/srv/web"),
 		SignOutURL:      or("SIGN_OUT_URL", "/.pomerium/sign_out"),
+		WarmPool:        get("WARM_POOL"),
 	}
 	template := get("SESSION_URL_TEMPLATE")
 	for _, req := range []struct{ name, value string }{
@@ -83,8 +97,25 @@ func FromEnv(get func(string) string) (Config, error) {
 	if c.MaxSessionsPerUser, err = strconv.Atoi(or("MAX_SESSIONS_PER_USER", "5")); err != nil {
 		return Config{}, fmt.Errorf("MAX_SESSIONS_PER_USER: %w", err)
 	}
+	if c.Snapshots, err = strconv.ParseBool(or("SNAPSHOTS", "false")); err != nil {
+		return Config{}, fmt.Errorf("SNAPSHOTS: %w", err)
+	}
+	if c.SnapshotTimeout, err = positiveDuration(or("SNAPSHOT_TIMEOUT", "2m")); err != nil {
+		return Config{}, fmt.Errorf("SNAPSHOT_TIMEOUT: %w", err)
+	}
+	if c.RestoreTimeout, err = positiveDuration(or("SNAPSHOT_RESTORE_TIMEOUT", "2m")); err != nil {
+		return Config{}, fmt.Errorf("SNAPSHOT_RESTORE_TIMEOUT: %w", err)
+	}
 	if c.MaxSessionsPerUser < 1 {
 		return Config{}, fmt.Errorf("MAX_SESSIONS_PER_USER must be at least 1, got %d", c.MaxSessionsPerUser)
+	}
+	// The pool names its Sandboxes "<pool>-<5 characters>", and a session's
+	// ID is its Sandbox's name.
+	if c.WarmPool != "" && !sessions.ValidID(c.WarmPool+"-bcdfg") {
+		return Config{}, fmt.Errorf("WARM_POOL must be \"s\" (its Sandboxes' names are session IDs), got %q", c.WarmPool)
+	}
+	if c.WarmPoolWait, err = positiveDuration(or("WARM_POOL_WAIT", "5s")); err != nil {
+		return Config{}, fmt.Errorf("WARM_POOL_WAIT: %w", err)
 	}
 	return c, nil
 }

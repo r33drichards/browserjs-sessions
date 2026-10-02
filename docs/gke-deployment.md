@@ -53,6 +53,10 @@ collected at the end.
     node selector and toleration, `serviceAccountName: session`, no service
     account token, all capabilities dropped, CPU and memory limits, disks
     from the StorageClass below.
+  - The warm pool (`warmpool.yaml`, [warm-pool.md](warm-pool.md)): a
+    `SandboxWarmPool` of one node's worth of sessions (seven) started ahead of time, over a
+    `SandboxTemplate` that repeats the blueprint, and `WARM_POOL=s` on the
+    backend.
   - The `session` ServiceAccount, and the StorageClass `browserjs-zonal`
     (`pd.csi.storage.gke.io`, `pd-balanced`, `WaitForFirstConsumer`).
   - The NetworkPolicies of `deploy/base`, unchanged (see below).
@@ -64,10 +68,10 @@ from four repository secrets on every run, and generates `pomerium` (shared
 secret, cookie secret, signing key, Dex client secret) once, the first time,
 and never replaces it.
 
-**Pod Snapshots are not used.** The add-on is enabled on the cluster and the
-bucket exists, but nothing in `deploy/` creates a snapshot resource. A
-stopped or sleeping session keeps its disk; Chromium restores its tabs from
-it.
+**Pod Snapshots** (`snapshots.yaml`): an idle session sleeps to a snapshot of
+its pod and wakes from it, browser as it was. Without a usable snapshot, and
+after a stop, a session keeps its disk and Chromium restores its tabs from
+it. See "Sleep and wake from Pod Snapshots" below.
 
 ### Network policy
 
@@ -258,7 +262,8 @@ git commit -am "deploy: pin the images"
 ```
 
 The digests live in the `images:` block of `deploy/gke/kustomization.yaml`;
-the script copies the two session images into `deploy/gke/blueprint.yaml`.
+the script copies the two session images into `deploy/gke/blueprint.yaml`
+and `deploy/gke/warmpool.yaml`.
 `hack/pin-images.sh --check` is the deploy's first step.
 
 The browser digest pinned must be of an image built after the non-root
@@ -350,8 +355,117 @@ shows "starting"). If it does not become running:
 `gh workflow run cluster-info.yml --ref main -f sandbox=<session id>`.
 
 Then: stop and resume it (tabs come back), let it idle 15 minutes (asleep,
-wakes on an MCP call), connect an MCP client to
+wakes on an MCP call; the test plan under "Sleep and wake from Pod
+Snapshots"), connect an MCP client to
 `https://<id>.sessions.browserjs.com/mcp`, delete it and see its disk go.
+
+## Sleep and wake from Pod Snapshots
+
+`deploy/gke/snapshots.yaml` and `SNAPSHOTS=true` on the backend. Sources and
+what is verified: `docs/infrastructure.md`, section 3.
+
+**Sleep** (a session idle for 15 minutes). The backend reads the node the pod
+is on (`status.nodeName` of the Sandbox) and that node's `browserjs.com/pool`
+label, creates a `PodSnapshotManualTrigger` for the pod, and waits for the
+trigger to complete and for the `PodSnapshot` it names to be `Ready`. Then, in
+one write, it sets `operatingMode: Suspended`, records the snapshot
+(`browserjs.dev/snapshot`, `browserjs.dev/snapshot-pool`) and adds
+`browserjs.com/pool: <pool>` to the pod template's `nodeSelector`. Any older
+snapshot of the session is deleted. If the session was used while the
+snapshot was taken, it stays up and the snapshot is deleted.
+
+**A snapshot that fails or takes longer than `SNAPSHOT_TIMEOUT` (2m)** does
+not stop the sleep: the session is suspended without a snapshot, as before
+this feature, and every snapshot of it is deleted.
+
+**Wake** (an MCP call, or the UI opening the session). If the recorded
+snapshot is still there and `Ready`, the Sandbox is set to `Running` as it
+is: the new pod lands on the snapshot's pool and GKE restores it, because it
+is in the same snapshot group (the policy groups by the controller's
+per-Sandbox pod label, so no session can wake from another's snapshot).
+Otherwise the record and the pin are removed in the same write and the pod
+cold starts on any pool, Chromium restoring its tabs from disk.
+
+**A restore that does not work.** If the woken session is not running
+`SNAPSHOT_RESTORE_TIMEOUT` (2m) after its pod got a node (or after the wake,
+while it has none: no capacity in the pinned pool), or its pod fails, the
+backend deletes the snapshot, removes the pin, suspends the Sandbox to remove
+the pod, and runs it again: a cold start. `READY_TIMEOUT` is 5m so that one
+request can outlast both attempts.
+
+**Stop by the user** takes no snapshot and deletes the session's snapshots:
+resume after a stop is a cold start, as before. **Delete** deletes the
+session's snapshots first, then the Sandbox; GKE removes a deleted
+PodSnapshot's objects from the bucket.
+
+**Turning it off.** Set `SNAPSHOTS` to `"false"` and deploy: sessions sleep
+and wake cold. Pins and snapshots already made stay as they are (a pinned
+session still wakes from its snapshot, GKE does that on its own); to be rid
+of them, also remove `snapshots.yaml` from the kustomization, delete the
+PodSnapshots (`kubectl -n browserjs-sessions delete podsnapshots --all`) and
+the policy.
+
+### What is not known until it runs on the cluster
+
+- **The disk is not in the snapshot.** The pod runs on for a moment after
+  the checkpoint and Chromium exits cleanly, writing its profile. The
+  restored browser's memory is from the checkpoint and its disk from a few
+  seconds later. Chromium's databases may or may not take that well
+  (UNVERIFIED). If they do not, the alternative is `postCheckpoint: stop` in
+  the policy, whose effect on a Sandbox pod is itself UNVERIFIED.
+- **A pod replaced while the session is awake** (node upgrade, eviction) is
+  made again by the controller and would be restored from the snapshot of
+  the last sleep, over a disk that has moved on. The snapshot is not deleted
+  after a wake because it is UNVERIFIED that a restored pod no longer reads
+  from it (memory is loaded in the background).
+- `podKSA` uploads with `automountServiceAccountToken: false`; whether the
+  managed Sandbox controller restores at all (Google's tutorial installs the
+  open-source one); snapshot and restore times for a 1 to 3 GiB browser.
+- Any change to the pod spec in `blueprint.yaml` (an image digest too) only
+  reaches new sessions; an existing session keeps its own spec, so its
+  snapshots stay valid. A node upgrade that changes the gVisor version makes
+  them unrestorable; the fallback above then applies.
+
+### Test plan on the cluster
+
+After the deploy, with `gh workflow run cluster-info.yml --ref main` (add
+`-f sandbox=<id>` for one session) and its "Pod Snapshots" section:
+
+1. **Resources.** The storage config and policy are listed and `Ready`. In
+   the backend's log: `idle sessions sleep to Pod Snapshots`.
+2. **State to recognise.** Create a session. In its browser open a page with
+   state that a reload loses: type in a text field without submitting, start
+   a video and pause it mid-way, and run in the console
+   `window.t0 = Date.now()`. Also `localStorage.setItem("k", "v")` on some
+   site. Note the node and pool of the pod.
+3. **Sleep.** Close the viewer and wait 15 to 17 minutes. Expect in the
+   status: the Sandbox `Suspended`, `STOPPED-BY idle`, a `SNAPSHOT`, `POOL`
+   equal to `PIN` equal to the pool noted; one PodSnapshot for the pod,
+   `READY True`; no trigger left. Backend log: `session snapshotted`. A
+   `GKEPodSnapshotting` event "Successfully checkpointed the pod". If the log
+   says `snapshot failed; the session will wake cold`, the error after it is
+   the finding (IAM on the bucket, the admission policy, the timeout).
+4. **Wake.** Open the session in the UI and time it until the screen shows.
+   Expect: the text field as typed, the video at its position, `window.t0`
+   still defined (a cold start loses all three and only brings the tabs
+   back), `localStorage.getItem("k")` is `"v"`. In the status: the pod on a
+   node of the same pool, listed with `PodRestored=True` naming the
+   snapshot. Compare the time with a cold start (about 45 s once scheduled).
+5. **Twice.** Let it sleep and wake a second time: still one PodSnapshot,
+   with a new name. Browse for a while after the wake and check that the
+   sites' storage (step 2) is intact: this is the disk question above.
+6. **Wake by MCP.** With the session asleep, make an MCP call to
+   `https://<id>.sessions.browserjs.com/mcp`; it answers after the restore.
+7. **Fallback.** With a session asleep, delete its snapshot by hand
+   (`kubectl -n browserjs-sessions delete podsnapshot <name>`), then open
+   it: it cold starts, tabs restored by Chromium, and the status shows no
+   `SNAPSHOT` and no `PIN`.
+8. **Stop and delete.** Stop a session that has a snapshot: the PodSnapshot
+   goes. Let another sleep, then delete it: its Sandbox, disk and
+   PodSnapshot go, and `gcloud storage ls gs://browserjs-sessions-pod-snapshots/sessions/`
+   no longer lists it.
+9. **Isolation.** With one session asleep (so a snapshot exists), create a
+   new session: it must start with an empty browser, not the other's pages.
 
 ## When a step fails
 

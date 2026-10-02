@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"text/template"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -37,6 +39,12 @@ type Store struct {
 	blueprint *template.Template
 	publicURL string
 	urls      *URLTemplate
+	snap      *snapshotter // nil: no Pod Snapshots (see EnableSnapshots)
+
+	// See warm.go. warmPool is "" when new sessions do not come from a pool.
+	claims   dynamic.ResourceInterface
+	warmPool string
+	warmWait time.Duration
 }
 
 // NewStore parses blueprint (see deploy/base/blueprint.yaml for the format).
@@ -52,6 +60,7 @@ func NewStore(client dynamic.Interface, namespace, blueprint, publicURL string, 
 	}
 	return &Store{
 		client:    client.Resource(SandboxGVR).Namespace(namespace),
+		claims:    client.Resource(ClaimGVR).Namespace(namespace),
 		blueprint: tmpl,
 		publicURL: publicURL,
 		urls:      urls,
@@ -81,6 +90,13 @@ func (s *Store) Create(ctx context.Context, name, owner string) (Session, error)
 	}
 	if owner == "" {
 		return Session{}, ErrOwnerRequired
+	}
+	if s.warmPool != "" {
+		warm, err := s.createWarm(ctx, name, owner)
+		if err == nil {
+			return warm, nil
+		}
+		slog.Warn("no session from the warm pool; starting one cold", "err", err)
 	}
 	id := newID()
 
@@ -187,6 +203,26 @@ func (s *Store) Update(ctx context.Context, id string, name *string, action stri
 	if len(annotations) == 0 {
 		return nil
 	}
+	if s.snap != nil && action != "" {
+		// A user's stop takes no snapshot, and an older one must not be
+		// restored over what the session did since: forget it. A resume
+		// keeps a snapshot that is still good (the session was asleep).
+		obj, err := s.client.Get(ctx, id, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		ann := obj.GetAnnotations()
+		if action == ActionStop || ann[AnnSnapshot] == "" || !s.snap.ready(ctx, ann[AnnSnapshot]) {
+			annotations[AnnSnapshot], annotations[AnnSnapshotPool] = nil, nil
+			if _, pinned := ann[AnnSnapshotPool]; pinned {
+				spec, _ := patch["spec"].(map[string]any)
+				spec["podTemplate"] = map[string]any{"spec": map[string]any{"nodeSelector": map[string]any{LabelPool: nil}}}
+			}
+		}
+	}
 	patch["metadata"] = map[string]any{"annotations": annotations}
 	body, err := json.Marshal(patch)
 	if err != nil {
@@ -196,6 +232,9 @@ func (s *Store) Update(ctx context.Context, id string, name *string, action stri
 	if apierrors.IsNotFound(err) {
 		return ErrNotFound
 	}
+	if err == nil && s.snap != nil && action == ActionStop {
+		s.snap.pruneLogged(ctx, id, "")
+	}
 	return err
 }
 
@@ -204,7 +243,7 @@ func (s *Store) Rename(ctx context.Context, id, name string) error {
 }
 
 // Suspend removes the session's pod and keeps its disk. by is StoppedByUser
-// or StoppedByIdle.
+// or StoppedByIdle; an idle suspend is a Sleep.
 //
 // A user's stop always applies. An idle suspend applies only to a session
 // that is not suspended already: it returns ErrStateChanged rather than take
@@ -214,13 +253,7 @@ func (s *Store) Suspend(ctx context.Context, id, by string) error {
 	case StoppedByUser:
 		return s.Update(ctx, id, nil, ActionStop)
 	case StoppedByIdle:
-		return s.modify(ctx, id, func(obj *unstructured.Unstructured) (bool, error) {
-			if operatingMode(obj) == "Suspended" || obj.GetDeletionTimestamp() != nil {
-				return false, ErrStateChanged
-			}
-			setAnnotation(obj, AnnStoppedBy, StoppedByIdle)
-			return true, unstructured.SetNestedField(obj.Object, "Suspended", "spec", "operatingMode")
-		})
+		return s.Sleep(ctx, id, nil)
 	default:
 		return fmt.Errorf("suspend: unknown reason %q", by)
 	}
@@ -231,7 +264,8 @@ func (s *Store) Resume(ctx context.Context, id string) error {
 	return s.Update(ctx, id, nil, ActionResume)
 }
 
-// Wake resumes a session that was put to sleep for being idle. It does
+// Wake resumes a session that was put to sleep for being idle; its pod is
+// restored from the snapshot taken then, if there is one. It does
 // nothing to one that is already awake, and returns ErrStateChanged for one
 // its user stopped, including a stop that lands while Wake is in progress.
 func (s *Store) Wake(ctx context.Context, id string) error {
@@ -243,6 +277,9 @@ func (s *Store) Wake(ctx context.Context, id string) error {
 			return false, ErrStateChanged
 		}
 		setAnnotation(obj, AnnStoppedBy, "")
+		if err := s.keepOrDropSnapshot(ctx, obj); err != nil {
+			return false, err
+		}
 		return true, unstructured.SetNestedField(obj.Object, "Running", "spec", "operatingMode")
 	})
 }
@@ -296,9 +333,19 @@ func (s *Store) modify(ctx context.Context, id string, change func(obj *unstruct
 }
 
 // Delete removes the session. Its disk goes with it (the PVC is owned by the
-// Sandbox — confirmed against a real cluster in Task 20).
+// Sandbox — confirmed against a real cluster in Task 20), and so do its
+// snapshots: first, so that a failure leaves a session to delete again
+// rather than a snapshot nobody knows of.
 func (s *Store) Delete(ctx context.Context, id string) error {
-	err := s.client.Delete(ctx, id, metav1.DeleteOptions{})
+	if s.snap != nil {
+		if _, err := s.snap.prune(ctx, id, ""); err != nil {
+			return err
+		}
+	}
+	err := s.releaseClaim(ctx, id)
+	if err == nil {
+		err = s.client.Delete(ctx, id, metav1.DeleteOptions{})
+	}
 	if apierrors.IsNotFound(err) {
 		return ErrNotFound
 	}

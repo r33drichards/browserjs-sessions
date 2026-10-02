@@ -54,6 +54,14 @@ func (t *Tracker) Open(id string) (done func()) {
 	}
 }
 
+// StillIdle reports whether a session Idle returned has stayed unused since.
+func (t *Tracker) StillIdle(id string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	last, known := t.last[id]
+	return known && t.open[id] == 0 && t.now().Sub(last) >= t.after
+}
+
 // Reset ends a session's idle period without touching its open connections:
 // the next time it is seen running, a fresh period starts. The sweeper calls
 // it for a session it has just put to sleep, which may be running again (its

@@ -260,6 +260,45 @@ matching snapshot."
   unrestorable. Sessions then fall back to a cold start with Chromium's session
   restore, which the design already allows for.
 
+**How the app uses it** (`deploy/gke/snapshots.yaml`, `docs/gke-deployment.md`).
+Added when the feature was wired in:
+
+- VERIFIED on the cluster (cluster-info workflow, GKE 1.36.4-gke.1247000):
+  `podsnapshotstorageconfigs`, `podsnapshotpolicies`, `podsnapshots`,
+  `podsnapshotmanualtriggers` and `podsnapshottokenrequests` are served at
+  `podsnapshot.gke.io/v1`; a `pod-snapshot-agent` runs on the session nodes
+  (namespace `gke-managed-pod-snapshots`); a
+  `gke-pod-snapshot-validating-admission-policy` exists (contents not read
+  yet); a session pod has the Sandbox's name and the label
+  `agents.x-k8s.io/sandbox-name-hash` (FNV-1a of the name), and the Sandbox
+  reports `status.nodeName`.
+- Trigger and result (VERIFIED in the upstream Python client,
+  `clients/python/agentic-sandbox-client/k8s_agent_sandbox/gke_extensions/snapshots/`,
+  and [Trigger a Pod snapshot](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/pod-snapshots-trigger)):
+  a trigger is done when its `Triggered` condition is `True` with reason
+  `Complete` and `status.snapshotCreated.name` names the PodSnapshot;
+  `False` with reason `Failed` or `Error` is a failure. A restore only
+  considers a PodSnapshot whose `Ready` condition is `True`. A restored pod
+  has a `PodRestored` condition whose message names the snapshot.
+- Restore choice (RESTORE): "By default, GKE restores workloads from the
+  most recent PodSnapshot resource that matches the Pod"; with
+  `snapshotGroupingRules`, "the restored Pod must have matching label keys
+  and values". Upstream's per-session pattern, used here, groups by
+  `agents.x-k8s.io/sandbox-name-hash`
+  ([openclaw-fleet-gke/60-snapshots](https://github.com/kubernetes-sigs/agent-sandbox/tree/main/examples/openclaw-fleet-gke/60-snapshots)),
+  and flips `operatingMode` to `Suspended` once the snapshot is Ready and
+  back to `Running` to restore. The same example says a failed match
+  "silently cold-starts" with no event. `podsnapshot.gke.io/ps-name` on a
+  pod names one snapshot instead; not used.
+- The distilled spec hash leaves out `nodeSelector`, most labels,
+  environment and resources (PS), so the pool pin does not invalidate a
+  snapshot. UNVERIFIED on the cluster.
+- Deleting a PodSnapshot "also removes the files stored in Cloud Storage"
+  (RESTORE).
+- UNVERIFIED: whether PodSnapshotStorageConfig is cluster-scoped (the status
+  script now prints each CRD's scope; the manifest works either way); time
+  to snapshot and to restore; any size limit.
+
 **GA or preview.** No Preview banner on PS, PREP or RESTORE (VERIFIED). ABOUT
 says "Some underlying features, such as GKE Pod snapshots, might be in Preview
 or have specific regional availability" (VERIFIED). Enabling it on an existing

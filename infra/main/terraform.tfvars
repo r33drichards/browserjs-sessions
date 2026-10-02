@@ -41,7 +41,9 @@ kubernetes_version = "1.36"
 # session_max_nodes is the ceiling on what sessions can cost.
 session_machine_type = "n2-standard-4"
 session_max_nodes    = 3
-session_spot         = false
+# Spot: cheaper, but Compute Engine can take a node back with 30 seconds'
+# notice; sessions on it restart from their disks (tabs reopen, pages reload).
+session_spot = true
 
 # A new node starts the browser from a remote mount of its image instead of
 # pulling all 905 MB first (docs/cold-start.md). Changing this recreates

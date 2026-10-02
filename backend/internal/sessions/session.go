@@ -31,7 +31,10 @@ func OwnerLabel(owner string) string {
 	return hex.EncodeToString(sum[:])[:32]
 }
 
-var idPattern = regexp.MustCompile(`^s-[a-z2-7]{10}$`)
+// A session's ID is its Sandbox's name: ten characters from newID for one
+// the backend named, five from the API server (generateName "s-") for one
+// that came out of the warm pool "s".
+var idPattern = regexp.MustCompile(`^s-([a-z2-7]{10}|[a-z0-9]{5})$`)
 
 // ValidID reports whether id has the form of a session ID. Anything else
 // cannot name a session and need not be sent to the cluster.
@@ -56,9 +59,13 @@ type Session struct {
 	Message string    `json:"message,omitempty"` // why it is starting or failed
 	Created time.Time `json:"created"`
 	PodIP   string    `json:"-"`
+	Node    string    `json:"-"` // the node its pod is scheduled to, if any
 }
 
-type condition struct{ status, reason, message string }
+type condition struct {
+	status, reason, message string
+	observedGeneration      int64 // the Sandbox generation the condition is about
+}
 
 func conditions(obj *unstructured.Unstructured) map[string]condition {
 	out := map[string]condition{}
@@ -73,6 +80,7 @@ func conditions(obj *unstructured.Unstructured) map[string]condition {
 		c.status, _ = m["status"].(string)
 		c.reason, _ = m["reason"].(string)
 		c.message, _ = m["message"].(string)
+		c.observedGeneration, _, _ = unstructured.NestedInt64(m, "observedGeneration")
 		out[typ] = c
 	}
 	return out
@@ -85,6 +93,9 @@ func FromSandbox(obj *unstructured.Unstructured) Session {
 		Name:    obj.GetAnnotations()[AnnName],
 		Owner:   obj.GetAnnotations()[AnnOwner],
 		Created: obj.GetCreationTimestamp().Time,
+	}
+	if adopted, err := time.Parse(time.RFC3339, obj.GetAnnotations()[AnnCreated]); err == nil {
+		s.Created = adopted
 	}
 	mode, _, _ := unstructured.NestedString(obj.Object, "spec", "operatingMode")
 	conds := conditions(obj)
@@ -123,6 +134,9 @@ func FromSandbox(obj *unstructured.Unstructured) Session {
 		if ips, _, _ := unstructured.NestedStringSlice(obj.Object, "status", "podIPs"); len(ips) > 0 {
 			s.PodIP = ips[0]
 		}
+	}
+	if mode != "Suspended" {
+		s.Node, _, _ = unstructured.NestedString(obj.Object, "status", "nodeName")
 	}
 	return s
 }

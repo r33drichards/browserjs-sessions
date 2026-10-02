@@ -1,6 +1,7 @@
 package idle_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -198,5 +199,39 @@ func TestSweepGivesAResumedSessionAFullIdlePeriod(t *testing.T) {
 				t.Errorf("state = %s after a full idle period, want stopping", state(s.ID))
 			}
 		})
+	}
+}
+
+// A snapshot takes a while. A session that is used while its snapshot is
+// taken stays up, and the snapshot is thrown away.
+func TestSweepLeavesASessionUsedDuringItsSnapshot(t *testing.T) {
+	ctx := t.Context()
+	store, client, gke := sessionstest.NewWithSnapshots(t, sessions.SnapshotOptions{Timeout: 2 * time.Second})
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	tracker := idle.New(15*time.Minute, func() time.Time { return now })
+
+	used, _ := store.Create(ctx, "used", "u")
+	quiet, _ := store.Create(ctx, "quiet", "u")
+	for _, id := range []string{used.ID, quiet.ID} {
+		sessionstest.SetStatus(t, client, id, sessionstest.Ready("10.0.0.1"))
+	}
+	if err := idle.Sweep(ctx, store, tracker); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(16 * time.Minute)
+	gke.OnTrigger = func() { tracker.Touch(used.ID) }
+	if err := idle.Sweep(ctx, store, tracker); err != nil {
+		t.Fatal(err)
+	}
+
+	state := func(id string) sessions.State { s, _ := store.Get(ctx, id); return s.State }
+	if state(used.ID) != sessions.Running {
+		t.Errorf("the session in use was suspended")
+	}
+	if state(quiet.ID) != sessions.Stopping {
+		t.Errorf("quiet session state = %s", state(quiet.ID))
+	}
+	if got := sessionstest.Snapshots(t, client); len(got) != 1 || !strings.Contains(got[0], quiet.ID) {
+		t.Errorf("snapshots = %v, want one, of the quiet session", got)
 	}
 }

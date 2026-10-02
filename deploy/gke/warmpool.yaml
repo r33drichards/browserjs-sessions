@@ -1,0 +1,209 @@
+# The warm pool: session pods started ahead of time, so that a new session is
+# one that is already running. The backend takes one with a SandboxClaim
+# (WARM_POOL in patch-backend.yaml; backend/internal/sessions/warm.go) and the
+# pool starts another. With the pool empty, or WARM_POOL unset, a session
+# starts cold from blueprint.yaml as before.
+#
+# The template is blueprint.yaml again, and has to stay the same as it: a
+# session is the same thing whichever way it started. The one difference is
+# how mcp-js learns its public URL. backend/internal/sessions/deploy_test.go
+# fails when the two drift apart, and hack/pin-images.sh writes the image
+# lines of both.
+#
+# A warm Sandbox has everything a session has, its 5Gi disk included. The
+# pool is sized in nodes (replicas, below); what that costs and how the
+# cluster grows and shrinks around it is docs/warm-pool.md.
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  # Session IDs are Sandbox names, and the pool names its Sandboxes
+  # "<pool>-<5 characters>": this name is why they are "s-…".
+  name: s
+spec:
+  # THE SIZE OF THE POOL: replicas = overhead nodes x 7.
+  #
+  #   overhead nodes   replicas   what is kept ready
+  #         0              0      nothing (and nothing is paid for)
+  #         1              7      one node of warm sessions   <- now
+  #         2             14      two
+  #
+  # Why 7 a node. A session pod requests 200m CPU and 1280Mi (browser 150m +
+  # 1Gi, mcp-js 50m + 256Mi). A 4-vCPU, 16 GB session node, as "cluster info"
+  # showed it (run 36961294377, n2-standard-4):
+  #
+  #   allocatable                      3920m    13273Mi
+  #   GKE's own pods on the node (11)   707m     1176Mi
+  #   left for sessions                3213m    12097Mi
+  #
+  # Memory decides: 12097 / 1280 = 9 session pods a node (CPU would allow 16).
+  # Two of the nine are left free, so 7: a sleeping session that wakes, or a
+  # session started cold, finds room on the node that is already there, and
+  # the pool by itself never needs a second node.
+  replicas: 7
+  sandboxTemplateRef:
+    name: session
+  # New images replace the waiting Sandboxes at once, rather than being
+  # handed to the next user stale. Sessions in use are never touched.
+  updateStrategy:
+    type: Recreate
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: session
+spec:
+  # The NetworkPolicy "session-pods" of deploy/base selects these pods by
+  # their app label, warm or adopted; the controller's own default would let
+  # only its Sandbox Router in, and the backend is what talks to a session.
+  networkPolicyManagement: Unmanaged
+  podTemplate:
+    metadata:
+      labels:
+        app: browserjs-session
+    spec:
+      # The managed add-on's sandbox-core-policy requires gVisor; the label and
+      # taint are what GKE puts on the sessions node pool.
+      runtimeClassName: gvisor
+      nodeSelector:
+        sandbox.gke.io/runtime: gvisor
+      tolerations:
+        - key: sandbox.gke.io/runtime
+          operator: Equal
+          value: gvisor
+          effect: NoSchedule
+      serviceAccountName: session
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      # Chromium only saves its tabs on a clean exit: the browser's entrypoint
+      # asks it to quit and waits up to 10 s before stopping the rest.
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        # mcp-js runs as uid/gid 1000 and writes to the session disk.
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        # Nothing in a session runs as root: sandbox-hardening-policy requires
+        # it. uid 1000 is "browser" in the browser image and "mcpuser" in
+        # mcp-js; the session disk is group-writable for gid 1000 (fsGroup).
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        # No seccompProfile: GKE Sandbox does not support seccomp (gVisor is
+        # the system call filter), and the policies do not ask for one.
+      containers:
+        - name: browser
+          image: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/browser@sha256:2c8b673ffdea5dd72fbc347ec0120b4574e1e7637301d0283c624959fb9c486e
+          env:
+            - name: SESSION_MODE
+              value: "1"
+            - name: DATA_DIR
+              value: /data
+            - name: TAB_STATE_FILE
+              value: /data/chrome/browserjs-tabs.json
+          ports:
+            - name: vnc
+              containerPort: 6080
+            - name: browser-mcp
+              containerPort: 8081
+          # The image has no shell tools to exec; both probes are HTTP.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: browser-mcp
+            periodSeconds: 1
+            failureThreshold: 120
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: browser-mcp
+            periodSeconds: 5
+            # Sessions share CPU (see resources); a slow answer under load is
+            # not a dead browser. Not ready only after 30s without an answer.
+            timeoutSeconds: 5
+            failureThreshold: 6
+          # CPU is overcommitted on purpose: the node is packed by the small
+          # request (0.2 cores a session, both containers), and a busy session
+          # bursts up to its limit (2 cores a session). When the node is short,
+          # sessions slow down in proportion to their requests; none is killed.
+          # Memory is not overcommitted the same way, so its request is closer
+          # to real use and is what should fill a node first: about ten
+          # sessions on a 16 GB node.
+          resources:
+            requests:
+              cpu: 150m
+              memory: 1Gi
+            limits:
+              cpu: 1500m
+              memory: 2Gi
+          # No capabilities and no way to gain any. Chromium runs with
+          # --no-sandbox; gVisor is the sandbox.
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data/chrome
+              subPath: chrome
+            - name: shm
+              mountPath: /dev/shm
+        - name: mcp-js
+          image: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/mcp-js@sha256:984dceedf06bf2e18473807617bbc491b409b4fe43e1cea93865128719c0cf3b
+          env:
+            # One-time upload URLs are made from this, so they come back
+            # through the session's own host. The pod is started before it is
+            # anybody's session, but its name is already the session's ID: the
+            # Sandbox's name, which adoption does not change.
+            - name: SESSION_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: MCP_V8_PUBLIC_URL
+              value: "https://$(SESSION_ID).sessions.browserjs.com"
+          ports:
+            - name: mcp
+              containerPort: 8080
+          startupProbe:
+            httpGet:
+              path: /api/artifacts
+              port: mcp
+            periodSeconds: 1
+            failureThreshold: 180
+          readinessProbe:
+            httpGet:
+              path: /api/artifacts
+              port: mcp
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data/memory
+              subPath: memory
+            - name: data
+              mountPath: /data/mcp
+              subPath: mcp
+      volumes:
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Gi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: browserjs-zonal
+        resources:
+          requests:
+            storage: 5Gi

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -26,6 +27,7 @@ import (
 type fixture struct {
 	t       *testing.T
 	handler http.Handler
+	api     *api.API
 	store   *sessions.Store
 	client  dynamic.Interface
 	faults  *faulty
@@ -68,8 +70,9 @@ func newFixture(t *testing.T) *fixture {
 	store, client := sessionstest.New(t)
 	az := &faulty{Checker: authz.NewOwners(store, 0)}
 	mux := http.NewServeMux()
-	api.New(store, az, sessionstest.URLs(), 2).Register(mux)
-	return &fixture{t: t, handler: mux, store: store, client: client, faults: az}
+	a := api.New(store, az, sessionstest.URLs(), 2)
+	a.Register(mux)
+	return &fixture{t: t, handler: mux, api: a, store: store, client: client, faults: az}
 }
 
 // do performs a request as user, bypassing the verification of who it is.
@@ -138,8 +141,8 @@ func TestCreateListAndCap(t *testing.T) {
 		t.Errorf("owner GET after create: %d", rec.Code)
 	}
 
-	if rec := f.do(alice, "POST", "/api/sessions", `{"name":""}`); rec.Code != http.StatusBadRequest {
-		t.Errorf("empty name: %d", rec.Code)
+	if rec := f.do(alice, "POST", "/api/sessions", `{"name":"`+strings.Repeat("x", 64)+`"}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("long name: %d", rec.Code)
 	}
 	if rec := f.do(alice, "POST", "/api/sessions", `{"name":"two"}`); rec.Code != http.StatusCreated {
 		t.Fatalf("second create: %d %s", rec.Code, rec.Body)
@@ -440,5 +443,66 @@ func TestAdminDemotion(t *testing.T) {
 	}
 	if got := decode[[]session](t, f.do(demoted, "GET", "/api/sessions?all=1", "")); len(got) != 0 {
 		t.Errorf("former admin lists %d sessions with all=1", len(got))
+	}
+}
+
+func TestCreateWithoutANameGetsAPetName(t *testing.T) {
+	petName := regexp.MustCompile(`^[a-z]+-[a-z]+$`)
+	for _, body := range []string{`{}`, `{"name":""}`, `{"name":"  "}`, ``} {
+		f := newFixture(t)
+		rec := f.do(alice, "POST", "/api/sessions", body)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create %q: %d %s", body, rec.Code, rec.Body)
+		}
+		created := decode[session](t, rec)
+		if !petName.MatchString(created.Name) {
+			t.Errorf("create %q: name = %q, want adjective-animal", body, created.Name)
+		}
+		if s, err := f.store.Get(t.Context(), created.ID); err != nil || s.Name != created.Name {
+			t.Errorf("create %q: stored = %+v, %v", body, s, err)
+		}
+	}
+}
+
+func TestSuppliedNamesAreKeptAndStillValidated(t *testing.T) {
+	f := newFixture(t)
+	f.api.SetPetName(func() string { t.Error("generated a name for a session that has one"); return "x" })
+	if rec := f.do(alice, "POST", "/api/sessions", `{"name":" mine "}`); rec.Code != http.StatusCreated ||
+		decode[session](t, rec).Name != "mine" {
+		t.Errorf("named create: %d %s", rec.Code, rec.Body)
+	}
+	for _, body := range []string{`{"name":"` + strings.Repeat("x", 64) + `"}`, `{"name":"a\u0000b"}`, `{`, `[]`} {
+		if rec := f.do(alice, "POST", "/api/sessions", body); rec.Code != http.StatusBadRequest {
+			t.Errorf("create %q: %d %s, want 400", body, rec.Code, rec.Body)
+		}
+	}
+}
+
+func TestGeneratedNameAvoidsTheUsersOwn(t *testing.T) {
+	f := newFixture(t)
+	names := []string{"brave-otter", "brave-otter", "calm-heron"}
+	next := func() string {
+		n := names[0]
+		if len(names) > 1 {
+			names = names[1:]
+		}
+		return n
+	}
+	f.api.SetPetName(next)
+	first := decode[session](t, f.do(alice, "POST", "/api/sessions", `{}`))
+	second := decode[session](t, f.do(alice, "POST", "/api/sessions", `{}`))
+	if first.Name != "brave-otter" || second.Name != "calm-heron" {
+		t.Errorf("names = %q, %q", first.Name, second.Name)
+	}
+
+	// Another user's sessions do not count, and a generator that only ever
+	// repeats itself still gets a session made.
+	f.api.SetPetName(func() string { return "brave-otter" })
+	if s := decode[session](t, f.do(bob, "POST", "/api/sessions", `{}`)); s.Name != "brave-otter" {
+		t.Errorf("bob's name = %q", s.Name)
+	}
+	if rec := f.do(bob, "POST", "/api/sessions", `{}`); rec.Code != http.StatusCreated ||
+		decode[session](t, rec).Name != "brave-otter" {
+		t.Errorf("exhausted tries: %d %s", rec.Code, rec.Body)
 	}
 }

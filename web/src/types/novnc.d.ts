@@ -5,5 +5,6 @@ declare module "@novnc/novnc" {
     resizeSession: boolean
     viewOnly: boolean
     disconnect(): void
+    clipboardPasteFrom(text: string): void
   }
 }

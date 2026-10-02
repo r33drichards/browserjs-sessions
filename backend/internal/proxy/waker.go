@@ -5,6 +5,7 @@ package proxy
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -32,6 +33,11 @@ type Waker struct {
 	Store   *sessions.Store
 	Timeout time.Duration // how long to wait for a session; 3m if unset
 	Poll    time.Duration // how often to look; 1s if unset
+	// RestoreTimeout is how long a session woken from a snapshot may take to
+	// run, counted from when its pod got a node (or from the wake, while it
+	// has none). After that the snapshot is given up and the session started
+	// cold. 0 never gives up.
+	RestoreTimeout time.Duration
 	// RunningTTL is how long a session seen running is taken to still be
 	// running on the same pod, without asking the cluster again. 0 asks
 	// every time.
@@ -182,6 +188,10 @@ func (w *Waker) await(ctx context.Context, id string) (sessions.Session, error) 
 		return err
 	}
 	woken := false
+	// While a woken session is on its way up: since when, whether its pod
+	// had a node then, and whether its snapshot was given up already.
+	var since time.Time
+	scheduled, cold := false, false
 	for {
 		s, err := w.Store.Get(ctx, id)
 		if err != nil {
@@ -195,7 +205,9 @@ func (w *Waker) await(ctx context.Context, id string) (sessions.Session, error) 
 		case sessions.Stopped:
 			return sessions.Session{}, ErrStopped
 		case sessions.Failed:
-			return sessions.Session{}, ErrFailed
+			if !woken || cold {
+				return sessions.Session{}, ErrFailed
+			}
 		case sessions.Asleep:
 			if !woken {
 				// Wake only undoes an idle sleep: if the user stopped the
@@ -207,7 +219,29 @@ func (w *Waker) await(ctx context.Context, id string) (sessions.Session, error) 
 				if err != nil {
 					return sessions.Session{}, ended(err)
 				}
-				woken = true
+				woken, since = true, w.clock()
+			}
+		}
+		if woken && !cold && s.State != sessions.Asleep {
+			if !scheduled && s.Node != "" {
+				scheduled, since = true, w.clock()
+			}
+			stuck := w.RestoreTimeout > 0 && w.clock().Sub(since) >= w.RestoreTimeout
+			if s.State == sessions.Failed || stuck {
+				// The snapshot may be what keeps it from starting (it only
+				// restores on the CPU it was taken on): once, start cold.
+				cold = true
+				did, err := w.Store.ColdStart(ctx, id)
+				switch {
+				case errors.Is(err, sessions.ErrStateChanged):
+					return sessions.Session{}, ErrStopped
+				case err != nil:
+					slog.Error("cold start after a failed restore", "session", id, "err", err)
+				}
+				if s.State == sessions.Failed && (!did || err != nil) {
+					return sessions.Session{}, ErrFailed
+				}
+				continue
 			}
 		}
 		// starting, stopping, or just resumed: wait.

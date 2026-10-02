@@ -5,10 +5,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -71,13 +73,121 @@ volumeClaimTemplates:
 func New(t *testing.T) (*sessions.Store, dynamic.Interface) {
 	t.Helper()
 	client := dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
-		map[schema.GroupVersionResource]string{sessions.SandboxGVR: "SandboxList"})
+		map[schema.GroupVersionResource]string{
+			sessions.SandboxGVR:         "SandboxList",
+			sessions.PodSnapshotGVR:     "PodSnapshotList",
+			sessions.SnapshotTriggerGVR: "PodSnapshotManualTriggerList",
+			sessions.ClaimGVR:           "SandboxClaimList",
+		})
 	emulateAPIServer(client)
 	store, err := sessions.NewStore(contextAware{client}, Namespace, Blueprint, PublicURL, URLs())
 	if err != nil {
 		t.Fatal(err)
 	}
 	return store, client
+}
+
+// Node and Pool are where every fake session's pod runs (see Ready).
+const (
+	Node = "gke-test-sessions-n2d-1"
+	Pool = "sessions-n2d-standard-4"
+)
+
+// GKE plays the Pod Snapshot controller of a fake cluster: it answers each
+// snapshot trigger with a ready PodSnapshot of the target pod. Its fields
+// make it misbehave; set them before the store is used.
+type GKE struct {
+	Hang     bool // triggers are never answered
+	Fail     bool // the checkpoint fails
+	NotReady bool // snapshots are made but never become ready
+	// OnTrigger, if set, runs while a snapshot is being taken.
+	OnTrigger func()
+
+	client *dynfake.FakeDynamicClient
+	mu     sync.Mutex
+	n      int
+}
+
+// NewWithSnapshots is New with Pod Snapshots enabled on the store, a node
+// (Node, in pool Pool) for sessions to run on, and a GKE to take snapshots.
+func NewWithSnapshots(t *testing.T, o sessions.SnapshotOptions) (*sessions.Store, dynamic.Interface, *GKE) {
+	t.Helper()
+	store, client := New(t)
+	fake := client.(*dynfake.FakeDynamicClient)
+	node := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1", "kind": "Node",
+		"metadata": map[string]any{"name": Node, "labels": map[string]any{sessions.LabelPool: Pool}},
+	}}
+	if err := fake.Tracker().Add(node); err != nil {
+		t.Fatal(err)
+	}
+	gke := &GKE{client: fake}
+	fake.PrependReactor("create", sessions.SnapshotTriggerGVR.Resource, func(action k8stesting.Action) (bool, runtime.Object, error) {
+		trigger := action.(k8stesting.CreateAction).GetObject().(*unstructured.Unstructured)
+		gke.answer(trigger)
+		return false, nil, nil // stored as answered
+	})
+	if o.Poll == 0 {
+		o.Poll = time.Millisecond
+	}
+	store.EnableSnapshots(contextAware{client}, Namespace, o)
+	return store, client, gke
+}
+
+func (g *GKE) answer(trigger *unstructured.Unstructured) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.OnTrigger != nil {
+		g.OnTrigger()
+	}
+	switch {
+	case g.Hang:
+		return
+	case g.Fail:
+		_ = unstructured.SetNestedSlice(trigger.Object, []any{map[string]any{
+			"type": "Triggered", "status": "False", "reason": "Failed", "message": "sandbox would not checkpoint",
+		}}, "status", "conditions")
+		return
+	}
+	g.n++
+	pod, _, _ := unstructured.NestedString(trigger.Object, "spec", "targetPod")
+	name := fmt.Sprintf("snap-%s-%d", pod, g.n)
+	ready := "True"
+	if g.NotReady {
+		ready = "False"
+	}
+	_ = g.client.Tracker().Add(Snapshot(name, pod, ready))
+	_ = unstructured.SetNestedSlice(trigger.Object, []any{map[string]any{
+		"type": "Triggered", "status": "True", "reason": "Complete",
+	}}, "status", "conditions")
+	_ = unstructured.SetNestedField(trigger.Object, name, "status", "snapshotCreated", "name")
+}
+
+// Snapshot is a PodSnapshot of the pod of session id, as GKE makes it.
+func Snapshot(name, id, ready string) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": sessions.PodSnapshotGVR.GroupVersion().String(), "kind": "PodSnapshot",
+		"metadata": map[string]any{
+			"name": name, "namespace": Namespace,
+			"annotations": map[string]any{"podsnapshot.gke.io/origin-pod": id},
+		},
+		"status": map[string]any{"conditions": []any{map[string]any{"type": "Ready", "status": ready}}},
+	}}
+}
+
+// Snapshots lists the names of the PodSnapshots in the fake cluster.
+func Snapshots(t *testing.T, client dynamic.Interface) []string {
+	t.Helper()
+	list, err := client.Resource(sessions.PodSnapshotGVR).Namespace(Namespace).List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := []string{}
+	for _, item := range list.Items {
+		names = append(names, item.GetName())
+	}
+	sort.Strings(names)
+	return names
 }
 
 // contextAware makes the store's requests fail once their context is done,
@@ -264,6 +374,7 @@ func TrySetStatus(client dynamic.Interface, id string, status map[string]any) er
 func Ready(podIP string) map[string]any {
 	return map[string]any{
 		"podIPs":     []any{podIP},
+		"nodeName":   Node,
 		"conditions": []any{map[string]any{"type": "Ready", "status": "True", "reason": "DependenciesReady"}},
 	}
 }
@@ -273,4 +384,89 @@ func Suspended() map[string]any {
 	return map[string]any{
 		"conditions": []any{map[string]any{"type": "Suspended", "status": "True", "reason": "PodTerminated"}},
 	}
+}
+
+// WarmPoolName is the SandboxWarmPool the fake claim controller serves.
+const WarmPoolName = "s"
+
+// PlayClaimController answers every new SandboxClaim the way Agent Sandbox's
+// claim controller does. A claim is bound to the next of warm, a Sandbox the
+// pool made earlier and that keeps its own name; once warm runs out, to a new
+// Sandbox named after the claim (a cold start from the template). The claim
+// becomes the Sandbox's controlling owner and names it in its status.
+func PlayClaimController(t *testing.T, client dynamic.Interface, warm ...string) {
+	t.Helper()
+	fake := client.(*dynfake.FakeDynamicClient)
+	tracker := fake.Tracker()
+	for _, name := range warm {
+		pooled := &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": sessions.SandboxGVR.GroupVersion().String(),
+			"kind":       "Sandbox",
+			"metadata": map[string]any{
+				"name": name, "namespace": Namespace,
+				"creationTimestamp": "2026-10-01T00:00:00Z",
+				"labels":            map[string]any{"agents.x-k8s.io/warm-pool-sandbox": "pool"},
+			},
+			"spec": map[string]any{},
+		}}
+		if err := tracker.Create(sessions.SandboxGVR, pooled, Namespace); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var mu sync.Mutex
+	fake.PrependReactor("create", sessions.ClaimGVR.Resource, func(action k8stesting.Action) (bool, runtime.Object, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		claim := action.(k8stesting.CreateAction).GetObject().(*unstructured.Unstructured).DeepCopy()
+		claim.SetNamespace(Namespace)
+		claim.SetUID(types.UID("uid-" + claim.GetName()))
+		name := claim.GetName()
+		if len(warm) > 0 {
+			name, warm = warm[0], warm[1:]
+		} else {
+			cold := &unstructured.Unstructured{Object: map[string]any{
+				"apiVersion": sessions.SandboxGVR.GroupVersion().String(),
+				"kind":       "Sandbox",
+				"metadata":   map[string]any{"name": name, "namespace": Namespace},
+				"spec":       map[string]any{},
+			}}
+			if err := tracker.Create(sessions.SandboxGVR, cold, Namespace); err != nil {
+				return true, nil, err
+			}
+		}
+		obj, err := tracker.Get(sessions.SandboxGVR, Namespace, name)
+		if err != nil {
+			return true, nil, err
+		}
+		sandbox := obj.(*unstructured.Unstructured).DeepCopy()
+		controller := true
+		sandbox.SetOwnerReferences([]metav1.OwnerReference{{
+			APIVersion: sessions.ClaimGVR.GroupVersion().String(), Kind: "SandboxClaim",
+			Name: claim.GetName(), UID: claim.GetUID(), Controller: &controller,
+		}})
+		labels := sandbox.GetLabels()
+		delete(labels, "agents.x-k8s.io/warm-pool-sandbox")
+		sandbox.SetLabels(labels)
+		bumpResourceVersion(sandbox)
+		if err := tracker.Update(sessions.SandboxGVR, sandbox, Namespace); err != nil {
+			return true, nil, err
+		}
+		if err := unstructured.SetNestedField(claim.Object, name, "status", "sandbox", "name"); err != nil {
+			return true, nil, err
+		}
+		if err := tracker.Create(sessions.ClaimGVR, claim, Namespace); err != nil {
+			return true, nil, err
+		}
+		return true, claim, nil
+	})
+}
+
+// Claims lists the SandboxClaims in the fake cluster.
+func Claims(t *testing.T, client dynamic.Interface) []unstructured.Unstructured {
+	t.Helper()
+	list, err := client.Resource(sessions.ClaimGVR).Namespace(Namespace).List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return list.Items
 }

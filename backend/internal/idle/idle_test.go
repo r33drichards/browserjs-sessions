@@ -158,3 +158,22 @@ func TestReset(t *testing.T) {
 		t.Errorf("Idle = %v, want [b]", got)
 	}
 }
+
+func TestStillIdle(t *testing.T) {
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	tr := New(15*time.Minute, func() time.Time { return now })
+	tr.Touch("a")
+	if tr.StillIdle("a") || tr.StillIdle("unknown") {
+		t.Error("a session just used, or never seen, reported idle")
+	}
+	now = now.Add(16 * time.Minute)
+	if !tr.StillIdle("a") {
+		t.Error("an unused session reported in use")
+	}
+	done := tr.Open("a")
+	now = now.Add(16 * time.Minute)
+	if tr.StillIdle("a") {
+		t.Error("a session with a viewer reported idle")
+	}
+	done()
+}

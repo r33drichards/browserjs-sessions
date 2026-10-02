@@ -107,6 +107,14 @@ a {
   width: 100%;
   overflow: hidden;
 }
+.wf-clipboard {
+  margin-top: 12px;
+  padding: 12px 16px;
+}
+.wf-note {
+  color: var(--pencil);
+  font-size: 13px;
+}
 .wf-mono {
   font-family: ui-monospace, Menlo, monospace;
   font-size: 13px;

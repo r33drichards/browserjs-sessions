@@ -9,7 +9,7 @@
 #
 # With --full, POD=<name> (and POD_NAMESPACE, default browserjs-sessions) adds
 # one pod's description and logs; SANDBOX=<session id> adds one Sandbox, its
-# pod and its disk.
+# pod, its disk and its Pod Snapshots.
 set -uo pipefail
 
 NS=browserjs-sessions
@@ -33,7 +33,7 @@ echo "The backend needs \`sandboxes.agents.x-k8s.io\` to serve \`v1beta1\`."
 printf '```\n'
 kubectl get crd -o json 2>&1 | jq -r '
   .items[] | select(.metadata.name | test("sandbox|agents\\.x-k8s\\.io|podsnapshot"; "i")) |
-  "\(.metadata.name)  served=\([.spec.versions[] | select(.served) | .name] | join(","))  stored=\(.status.storedVersions | join(","))"' 2>&1
+  "\(.metadata.name)  scope=\(.spec.scope)  served=\([.spec.versions[] | select(.served) | .name] | join(","))  stored=\(.status.storedVersions | join(","))"' 2>&1
 printf '```\n'
 
 section "Agent Sandbox admission policies"
@@ -50,13 +50,65 @@ show kubectl -n "$NS" get certificate,certificaterequest,order,challenge -o wide
 show kubectl get clusterissuers -o wide
 
 section "Sessions"
-show kubectl -n "$NS" get sandboxes.agents.x-k8s.io -o wide
+# launch-type says how each started: "warm" from the pool, "cold" otherwise.
+show kubectl -n "$NS" get sandboxes.agents.x-k8s.io -o wide -L agents.x-k8s.io/launch-type
 show kubectl -n "$NS" get pvc
+
+section "Pod Snapshots"
+cat <<'TEXT'
+An idle session sleeps to a snapshot and wakes from it (deploy/gke/snapshots.yaml).
+Healthy: the storage config and the policy are Ready; a sleeping session
+(MODE Suspended, STOPPED-BY idle) has a SNAPSHOT, a POOL and the same pool as
+its PIN, and that PodSnapshot is listed below as Ready; a session stopped by
+its user, or never put to sleep, has none. There is at most one PodSnapshot
+a session, and no trigger older than a few minutes.
+TEXT
+# One of the two may be cluster-scoped; -A lists both either way.
+show kubectl get podsnapshotstorageconfigs.podsnapshot.gke.io,podsnapshotpolicies.podsnapshot.gke.io -A -o wide
+show kubectl -n "$NS" get sandboxes.agents.x-k8s.io -o 'custom-columns=NAME:.metadata.name,MODE:.spec.operatingMode,STOPPED-BY:.metadata.annotations.browserjs\.dev/stopped-by,SNAPSHOT:.metadata.annotations.browserjs\.dev/snapshot,POOL:.metadata.annotations.browserjs\.dev/snapshot-pool,PIN:.spec.podTemplate.spec.nodeSelector.browserjs\.com/pool,NODE:.status.nodeName'
+show kubectl -n "$NS" get podsnapshots.podsnapshot.gke.io -o 'custom-columns=NAME:.metadata.name,POD:.metadata.annotations.podsnapshot\.gke\.io/origin-pod,READY:.status.conditions[?(@.type=="Ready")].status,REASON:.status.conditions[?(@.type=="Ready")].reason,POLICY:.spec.policyName,LAST-RESTORE:.status.lastAccessTime,CREATED:.metadata.creationTimestamp'
+show kubectl -n "$NS" get podsnapshotmanualtriggers.podsnapshot.gke.io -o wide
+# Which running session pods came up from a snapshot, and from which.
+echo "Session pods with a PodRestored condition (a pod not listed cold started):"
+printf '```\n'
+kubectl -n "$NS" get pods -l app=browserjs-session -o json 2>&1 | jq -r '
+  .items[] | . as $pod | .status.conditions[]? | select(.type == "PodRestored") |
+  "\($pod.metadata.name)  node=\($pod.spec.nodeName)  PodRestored=\(.status)  reason=\(.reason // "")  \(.message // "")"' 2>&1
+printf '```\n'
+
+section "Warm pool"
+echo "Sessions started ahead of time (deploy/gke/warmpool.yaml). A Sandbox owned by the"
+echo "SandboxWarmPool is waiting; one owned by a SandboxClaim is somebody's session."
+for kind in sandboxwarmpools sandboxtemplates sandboxclaims; do
+  show kubectl -n "$NS" get "$kind.extensions.agents.x-k8s.io" -o wide
+done
+printf '```\n'
+kubectl -n "$NS" get sandboxes.agents.x-k8s.io -o json 2>&1 | jq -r '
+  .items[] | "\(.metadata.name)  owner=\((.metadata.ownerReferences // [])[0] | if . then "\(.kind)/\(.name)" else "none (made by the backend)" end)  session=\(if .metadata.labels["browserjs.dev/owner"] then "yes" else "no" end)  made=\(.metadata.creationTimestamp)  adopted=\(.metadata.annotations["browserjs.dev/created"] // "-")"' 2>&1
+printf '```\n'
+
+# Where the session pods are, waiting ones included, and whether the cluster
+# autoscaler may evict them to remove their node.
+show kubectl -n "$NS" get pods -l app=browserjs-session -o 'custom-columns=NAME:.metadata.name,NODE:.spec.nodeName,PHASE:.status.phase,CLAIM:.metadata.labels.agents\.x-k8s\.io/claim-uid,SAFE-TO-EVICT:.metadata.annotations.cluster-autoscaler\.kubernetes\.io/safe-to-evict'
 
 [ -n "$full" ] || exit 0
 
+section "Warm pool in full"
+show kubectl -n "$NS" get sandboxwarmpools.extensions.agents.x-k8s.io,sandboxtemplates.extensions.agents.x-k8s.io,sandboxclaims.extensions.agents.x-k8s.io -o yaml
+# What the served v1beta1 schemas accept: the manifests and the backend's
+# claims are written against upstream's types, which the managed add-on may
+# not match field for field.
+echo "Fields of the v1beta1 specs, as this cluster serves them:"
+printf '```\n'
+kubectl get crd -o json 2>&1 | jq -r '
+  .items[] | select(.spec.group == "extensions.agents.x-k8s.io") | . as $crd |
+  .spec.versions[] | select(.name == "v1beta1") |
+  "\($crd.spec.names.kind).spec: \(.schema.openAPIV3Schema.properties.spec.properties // {} | keys | join(", "))",
+  "\($crd.spec.names.kind).status: \(.schema.openAPIV3Schema.properties.status.properties // {} | keys | join(", "))"' 2>&1
+printf '```\n'
+
 section "Nodes"
-show kubectl get nodes -o wide -L sandbox.gke.io/runtime,cloud.google.com/gke-nodepool,topology.kubernetes.io/zone
+show kubectl get nodes -o wide -L sandbox.gke.io/runtime,cloud.google.com/gke-nodepool,browserjs.com/pool,cloud.google.com/machine-family,topology.kubernetes.io/zone
 show kubectl get runtimeclasses,storageclasses
 # What each node has, what is reserved on it (requests) and what is in use.
 show kubectl describe nodes
@@ -66,10 +118,20 @@ show kubectl -n kube-system get pods -l k8s-app=kube-dns -o wide
 
 section "Admission policies in full"
 for kind in validatingadmissionpolicy validatingadmissionpolicybinding; do
-  for name in $(kubectl get "$kind" -o name 2>/dev/null | grep -i sandbox); do
+  for name in $(kubectl get "$kind" -o name 2>/dev/null | grep -i -E 'sandbox|snapshot'); do
     show kubectl get "$name" -o yaml
   done
 done
+
+section "Pod Snapshots in full"
+# Conditions say why a storage config, policy or snapshot is not ready.
+show kubectl get podsnapshotstorageconfigs.podsnapshot.gke.io,podsnapshotpolicies.podsnapshot.gke.io -A -o yaml
+show kubectl -n "$NS" get podsnapshots.podsnapshot.gke.io,podsnapshotmanualtriggers.podsnapshot.gke.io -o yaml
+# "Successfully checkpointed the pod to PodSnapshot", and failures.
+show kubectl -n "$NS" get events --field-selector reason=GKEPodSnapshotting --sort-by=.lastTimestamp
+# GKE's own side: the per-node agent that writes and reads snapshots.
+show kubectl -n gke-managed-pod-snapshots get pods -o wide
+show kubectl -n gke-managed-pod-snapshots logs -l k8s-app=pod-snapshot-agent --all-containers --prefix --tail=50
 
 section "Events"
 for ns in "${namespaces[@]}"; do
@@ -108,8 +170,20 @@ fi
 if [ -n "${SANDBOX:-}" ]; then
   section "Sandbox $SANDBOX"
   show kubectl -n "$NS" get sandboxes.agents.x-k8s.io "$SANDBOX" -o yaml
+  claim="$(kubectl -n "$NS" get sandboxes.agents.x-k8s.io "$SANDBOX" \
+    -o jsonpath='{.metadata.ownerReferences[?(@.kind=="SandboxClaim")].name}' 2>/dev/null)"
+  [ -z "$claim" ] || show kubectl -n "$NS" get sandboxclaims.extensions.agents.x-k8s.io "$claim" -o yaml
   show kubectl -n "$NS" describe pod "$SANDBOX"
   show kubectl -n "$NS" logs "$SANDBOX" --all-containers --prefix --tail="${TAIL:-200}"
   show kubectl -n "$NS" get pvc -o wide
+  # Its snapshots (named by the pod they were taken of), whether its pod was
+  # restored from one (the PodRestored condition), and what happened to it.
+  printf '```\n'
+  kubectl -n "$NS" get podsnapshots.podsnapshot.gke.io -o json 2>&1 | jq --arg id "$SANDBOX" '
+    .items[] | select(.metadata.annotations["podsnapshot.gke.io/origin-pod"] == $id) |
+    {name: .metadata.name, labels: .metadata.labels, annotations: .metadata.annotations, spec, status}' 2>&1
+  printf '```\n'
+  show kubectl -n "$NS" get pod "$SANDBOX" -o 'jsonpath={range .status.conditions[*]}{.type}={.status} {.reason} {.message}{"\n"}{end}'
+  show kubectl -n "$NS" get events --field-selector "involvedObject.name=$SANDBOX" --sort-by=.lastTimestamp
 fi
 exit 0
