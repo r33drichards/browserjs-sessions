@@ -1,17 +1,13 @@
 # HTTP API
 
-The web app uses this API. It is on the app's host,
-`https://app.computeruse.site`.
+There are two APIs with the same session object.
 
-::: warning
-This API is authenticated by the sign-in cookie of the app, so it is not
-meant for scripts, and it may change without notice. An API for scripts, on
-`https://api.computeruse.site` with API tokens, is coming and is not enabled
-yet. See [Live, coming and planned](/reference/status).
-:::
+| | Host | Signs in with | Status |
+| --- | --- | --- | --- |
+| The app's API | `https://app.computeruse.site/api` | The app's sign-in cookie | Live. For the app, not for scripts; it may change |
+| The API for code | `https://api.computeruse.site/v1` | An API token | Coming, not yet enabled |
 
-Requests and answers are JSON. An error is `{"error": "<message>"}` with a
-matching status code.
+Requests and answers are JSON. An error is `{"error": "<message>"}`.
 
 ## The session object
 
@@ -26,34 +22,47 @@ matching status code.
 }
 ```
 
-`state` is one of the [session states](/reference/session-states).
-`message` is added when there is something to say about `starting` or
-`failed`.
+`state` is one of the [lifecycle states](/reference/lifecycle). `message`
+is added when there is something to say about `starting` or `failed`. An ID
+is `s-` and five or ten lower-case characters.
 
-## Endpoints
+## Sessions
+
+Paths are under `/api` on the app's host and under `/v1` on the API host.
 
 | Method and path | Does | Answers |
 | --- | --- | --- |
-| `GET /api/me` | Who is signed in | `200` `{email, name, admin}` |
-| `GET /api/sessions` | Lists your sessions | `200` array of sessions |
-| `POST /api/sessions` | Creates a session. Body `{"name": "..."}`; the name is optional | `201` session. `409` at the session limit. `400` for a bad name |
-| `GET /api/sessions/{id}` | One session | `200` session |
-| `PATCH /api/sessions/{id}` | Renames and/or stops or resumes. Body `{"name": "...", "action": "stop" \| "resume"}`; both optional | `200` session. `400` for a bad name or action |
-| `DELETE /api/sessions/{id}` | Deletes the session and its disk | `204` |
-| `POST /api/sessions/{id}/vnc-ticket` | A one-time ticket for the live view | `200` `{ticket, url}` |
-| `GET /api/sessions/{id}/files` | Lists the desktop's Downloads folder | `200` `{files: [{name, size, modified}], max_bytes}`. `409` if the session is not running |
-| `GET /api/sessions/{id}/files/{name}` | Downloads a file, always as an attachment | `200` the bytes |
-| `PUT /api/sessions/{id}/files/{name}` | Uploads a file; the body is the bytes | `2xx` `{name}`, the name it was stored under. `413` too large. `507` disk full |
+| `GET /me` | Who is calling | `200` |
+| `GET /sessions` | Lists your sessions | `200` array |
+| `POST /sessions` | Creates one. Body `{"name": "..."}`, optional | `201` session. `409` at the limit. `400` for a bad name |
+| `GET /sessions/{id}` | Reads one | `200` session |
+| `PATCH /sessions/{id}` | Renames, stops or resumes. Body `{"name": "...", "action": "stop" \| "resume"}`, both optional | `200` session. `400` for a bad name or action |
+| `DELETE /sessions/{id}` | Deletes it and its disk | `204` |
+
+A session that is not yours answers `404`, like one that does not exist.
+`resume` on a sleeping session wakes it.
+
+## Screen and files (the app's API only)
+
+| Method and path | Does | Answers |
+| --- | --- | --- |
+| `POST /api/sessions/{id}/vnc-ticket` | A ticket for the live view: 30 seconds, one connection | `200` `{ticket, url}` |
+| `GET /api/sessions/{id}/files` | Lists the Downloads folder. Does not wake the session | `200` `{files: [{name, size, modified}], max_bytes}`. `409` if not running |
+| `GET /api/sessions/{id}/files/{name}` | Downloads a file, as an attachment | `200` |
+| `PUT /api/sessions/{id}/files/{name}` | Uploads a file; the body is the bytes | `2xx` `{name}`. `413` too large. `507` disk full |
 | `DELETE /api/sessions/{id}/files/{name}` | Deletes a file | `2xx` |
-| `POST /api/sessions/{id}/clipboard` | Puts files of the folder on the desktop's clipboard. Body `{"files": ["name", ...]}` | `2xx` |
+| `POST /api/sessions/{id}/clipboard` | Puts files on the desktop's clipboard. Body `{"files": ["name"]}` | `2xx` |
 
-## Notes
+## Policies and tokens
 
-- A session that is not yours answers `404`, the same as one that does not
-  exist.
-- A session ID is `s-` followed by five or ten lower-case characters.
-- `resume` on a sleeping session wakes it.
-- Listing files does not wake a session. Downloading, uploading and deleting
-  a file do.
-- The ticket from `vnc-ticket` is valid for 30 seconds and for one
-  connection. `url` is a websocket address on the sessions host.
+Coming, not yet enabled. On the API host, with the scopes in
+[Use it from code](/guides/use-from-code):
+
+| Method and path | Does |
+| --- | --- |
+| `GET /v1/sessions/{id}/policy` | Reads a session's policy |
+| `PUT /v1/sessions/{id}/policy` | Replaces it |
+| `DELETE /v1/sessions/{id}/policy` | Returns it to unrestricted |
+| `POST /v1/policies/validate` | Checks a policy without saving it |
+| `POST /v1/policies/evaluate` | Asks a policy about a sample call |
+| `POST /oauth/token` | Exchanges an API token for an access token (client credentials) |
