@@ -165,6 +165,61 @@ run "defaults_pomerium_nlb" {
   }
 }
 
+run "additional_domain" {
+  command = plan
+
+  variables {
+    additional_domains = ["computeruse.site"]
+  }
+
+  assert {
+    condition     = keys(google_dns_managed_zone.domains) == ["computeruse.site"] && google_dns_managed_zone.domains["computeruse.site"].dns_name == "computeruse.site." && google_dns_managed_zone.domains["computeruse.site"].name == "computeruse-site"
+    error_message = "An additional domain gets a zone of its own."
+  }
+
+  assert {
+    condition = toset([for record in google_dns_record_set.domains : record.name]) == toset([
+      "app.computeruse.site.",
+      "authenticate.computeruse.site.",
+      "dex.computeruse.site.",
+      "sessions.computeruse.site.",
+      "*.sessions.computeruse.site.",
+    ])
+    error_message = "Expected the five public names again under the additional domain."
+  }
+
+  assert {
+    condition = alltrue([
+      for record in google_dns_record_set.domains :
+      record.managed_zone == "computeruse-site" && record.type == "A" && record.ttl == 300
+    ])
+    error_message = "The additional domain's records are A records in its own zone."
+  }
+
+  assert {
+    condition     = google_dns_managed_zone.this[0].dns_name == "browserjs.com." && length(google_dns_record_set.public) == 5 && output.hostnames.app == "app.browserjs.com"
+    error_message = "An additional domain changes nothing about the domain itself."
+  }
+
+  assert {
+    condition     = length(output.additional_dns_records) == 5 && keys(output.additional_dns_name_servers) == ["computeruse.site"]
+    error_message = "The additional domain's nameservers and records must be outputs."
+  }
+}
+
+run "no_additional_domain" {
+  command = plan
+
+  variables {
+    additional_domains = []
+  }
+
+  assert {
+    condition     = length(google_dns_managed_zone.domains) == 0 && length(google_dns_record_set.domains) == 0 && output.additional_dns_name_servers == {}
+    error_message = "Without additional_domains there is one zone."
+  }
+}
+
 run "gateway_alb" {
   command = plan
 
@@ -229,7 +284,7 @@ run "federated_tokens_and_regional_cluster" {
   }
 
   assert {
-    condition     = length(google_dns_managed_zone.this) == 0 && length(google_dns_record_set.public) == 0 && output.dns_name_servers == null
+    condition     = length(google_dns_managed_zone.this) == 0 && length(google_dns_record_set.public) == 0 && output.dns_name_servers == null && length(google_dns_managed_zone.domains) == 0 && length(google_dns_record_set.domains) == 0
     error_message = "create_dns_zone = false must create no DNS resources."
   }
 

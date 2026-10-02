@@ -450,6 +450,25 @@ variable "domain" {
   }
 }
 
+variable "additional_domains" {
+  description = "Further registered domains that get a zone of their own with the same records as domain, to the same address. For moving the deployment to another domain: see docs/domain-switch.md."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for domain in var.additional_domains :
+      can(regex("^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,}$", domain))
+    ])
+    error_message = "Expected domains such as example.org (lowercase, no trailing dot)."
+  }
+
+  validation {
+    condition     = length(distinct(var.additional_domains)) == length(var.additional_domains)
+    error_message = "Each additional domain once."
+  }
+}
+
 variable "hostnames" {
   description = "Left-hand labels of the public names under domain. api is the API host, where API tokens are the credential. sessions is the host every session is under, <sessions>.<domain>/<id>, and the parent of the older per-session wildcard, *.<sessions>.<domain>."
   type = object({

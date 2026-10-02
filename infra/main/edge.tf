@@ -30,6 +30,15 @@ locals {
   edge_ip = local.edge_nlb ? google_compute_address.edge[0].address : google_compute_global_address.edge[0].address
 
   zone_name = replace(var.domain, ".", "-")
+
+  # The same names again under each of additional_domains: every public name
+  # with the domain at its end exchanged, keyed "<domain>/<key of public_names>".
+  additional_records = merge([
+    for domain in var.additional_domains : {
+      for key, name in local.public_names :
+      "${domain}/${key}" => { domain = domain, name = "${trimsuffix(name, var.domain)}${domain}" }
+    }
+  ]...)
 }
 
 # --- Address ----------------------------------------------------------------------
@@ -89,6 +98,36 @@ resource "google_dns_record_set" "public" {
   rrdatas      = [local.edge_ip]
 }
 
+# Further domains (additional_domains): a zone each, with the records of the
+# zone above, to the same address. Nothing is served under them until
+# deploy/gke names them (Pomerium's routes, the certificate, Dex); the zones
+# are there first so that a domain can be delegated, and its certificate
+# issued, before anything moves to it (docs/domain-switch.md).
+resource "google_dns_managed_zone" "domains" {
+  for_each = var.create_dns_zone ? toset(var.additional_domains) : []
+
+  name        = replace(each.value, ".", "-")
+  dns_name    = "${each.value}."
+  description = "browserjs sessions public zone"
+  visibility  = "public"
+
+  dnssec_config {
+    state = var.enable_dnssec ? "on" : "off"
+  }
+
+  depends_on = [google_project_service.this]
+}
+
+resource "google_dns_record_set" "domains" {
+  for_each = var.create_dns_zone ? local.additional_records : {}
+
+  managed_zone = google_dns_managed_zone.domains[each.value.domain].name
+  name         = "${each.value.name}."
+  type         = "A"
+  ttl          = var.dns_ttl
+  rrdatas      = [local.edge_ip]
+}
+
 # --- pomerium_nlb: cert-manager issues the certificate in the cluster ------------------
 
 # A wildcard certificate can only be proven by DNS-01: cert-manager writes a
@@ -102,7 +141,8 @@ resource "google_service_account" "cert_manager" {
 }
 
 # The permissions cert-manager's documentation lists as the least-privilege
-# alternative to roles/dns.admin.
+# alternative to roles/dns.admin. Granted on the project (below), so they
+# cover every zone in it, those of additional_domains too.
 resource "google_project_iam_custom_role" "dns01_solver" {
   count = local.edge_nlb ? 1 : 0
 
