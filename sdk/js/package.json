@@ -7,7 +7,7 @@
   "homepage": "https://computeruse.site/reference/sdk",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/r33drichards/browserjs-sessions.git",
+    "url": "git+https://github.com/r33drichards/computer-use.git",
     "directory": "sdk/js"
   },
   "keywords": ["computer-use", "mcp", "agents", "browser", "sandbox", "uniffi"],

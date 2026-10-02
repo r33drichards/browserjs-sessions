@@ -13,10 +13,10 @@ import (
 
 	petname "github.com/dustinkirkland/golang-petname"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/auth"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/authz"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/policy"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
+	"github.com/r33drichards/computer-use/backend/internal/auth"
+	"github.com/r33drichards/computer-use/backend/internal/authz"
+	"github.com/r33drichards/computer-use/backend/internal/policy"
+	"github.com/r33drichards/computer-use/backend/internal/sessions"
 )
 
 // Store is what the API needs of the session store (a *sessions.Store).

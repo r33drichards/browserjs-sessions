@@ -23,7 +23,7 @@ import (
 	dynfake "k8s.io/client-go/dynamic/fake"
 	k8stesting "k8s.io/client-go/testing"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/auth"
+	"github.com/r33drichards/computer-use/backend/internal/auth"
 )
 
 const (

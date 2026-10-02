@@ -69,8 +69,8 @@ Policies are built and not switched on yet. See
 
 ## What a desktop contains today
 
-An X display, a window manager, and Chromium. A fuller desktop with a
-terminal and a file manager is planned. The
+An XFCE desktop with Chromium, a terminal, a file manager and a text
+editor. It starts empty; the browser opens when it is first used. The
 [capabilities page](/reference/capabilities) says exactly what is there.
 
 ## Read next

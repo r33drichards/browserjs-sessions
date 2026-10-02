@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions/sessionstest"
+	"github.com/r33drichards/computer-use/backend/internal/sessions"
+	"github.com/r33drichards/computer-use/backend/internal/sessions/sessionstest"
 )
 
 // Billing's reasons for a sleep (docs/contracts/billing/enforcement.md): a

@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing/billingtest"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
+	"github.com/r33drichards/computer-use/backend/internal/billing"
+	"github.com/r33drichards/computer-use/backend/internal/billing/billingtest"
+	"github.com/r33drichards/computer-use/backend/internal/sessions"
 )
 
 // The body of payment_method_required, byte for byte.

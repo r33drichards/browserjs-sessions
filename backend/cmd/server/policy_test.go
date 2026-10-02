@@ -13,12 +13,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynfake "k8s.io/client-go/dynamic/fake"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/auth"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/config"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/idle"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/policy"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions/sessionstest"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/tokens"
+	"github.com/r33drichards/computer-use/backend/internal/auth"
+	"github.com/r33drichards/computer-use/backend/internal/config"
+	"github.com/r33drichards/computer-use/backend/internal/idle"
+	"github.com/r33drichards/computer-use/backend/internal/policy"
+	"github.com/r33drichards/computer-use/backend/internal/sessions"
+	"github.com/r33drichards/computer-use/backend/internal/sessions/sessionstest"
+	"github.com/r33drichards/computer-use/backend/internal/tokens"
 )
 
 // The whole server, as run() wires it. Without POLICY_OPERATOR_URL there is
@@ -228,5 +229,105 @@ func TestAPIHostHasNoPolicyRoutesWithPoliciesOff(t *testing.T) {
 	rec := s.bearer("GET", apiHost, "/v1/sessions/"+mine.ID, token, "")
 	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "policy") {
 		t.Errorf("a session with policies off: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// Nothing reaches a session's pod before the session's first policy is in
+// force: until then OPA denies the session everything, and a call forwarded
+// to the pod would be refused for no reason of the caller's. The call is
+// held, as for a pod that is still starting, and goes through once the
+// policy is loaded. Created cold and taken from the warm pool alike.
+func TestNothingReachesAPodBeforeItsFirstPolicyIsInForce(t *testing.T) {
+	operator := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true,"errors":[],"warnings":[]}`))
+	}))
+	defer operator.Close()
+	base := newServer(t)
+	s := &server{t: t, key: base.key}
+	store, client := sessionstest.NewWithPolicies(t)
+	s.client = client
+	store.EnablePolicies(client, sessionstest.Namespace, policy.Unrestricted())
+	store.EnableWarmPool(sessionstest.WarmPoolName, time.Second)
+	cfg := config.Config{
+		WebDir: t.TempDir(), PublicURL: sessionstest.PublicURL, SessionURLs: sessionstest.URLs(),
+		SignOutURL: "/.pomerium/sign_out", ReadyTimeout: 1500 * time.Millisecond, MaxSessionsPerUser: 5,
+		PolicyOperatorURL: operator.URL, OperatorAPIToken: "secret",
+	}
+	verifier, err := auth.NewAssertionVerifier(func(*jwt.Token) (any, error) { return &s.key.PublicKey, nil }, []string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.pod.Add(1)
+		_, _ = w.Write([]byte("pod"))
+	}))
+	defer pod.Close()
+	handler, px := newHandler(cfg, verifier, store, idle.New(15*time.Minute, time.Now))
+	px.Target = func(sessions.Session, int) string { return strings.TrimPrefix(pod.URL, "http://") }
+	s.handler = handler
+
+	state := func(id string) string {
+		t.Helper()
+		var got sessionJSON
+		rec := s.do("GET", appHost, "/api/sessions/"+id, alice, "")
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); rec.Code != http.StatusOK || err != nil {
+			t.Fatalf("GET session: %d %s", rec.Code, rec.Body)
+		}
+		return got.State
+	}
+	for _, from := range []string{"cold", "the warm pool"} {
+		if from == "the warm pool" {
+			sessionstest.PlayPolicyClaimController(t, client, "s-bcdfg")
+		}
+		rec := s.do("POST", appHost, "/api/sessions", alice, `{"name":"work"}`)
+		var created sessionJSON
+		if err := json.Unmarshal(rec.Body.Bytes(), &created); rec.Code != http.StatusCreated || err != nil {
+			t.Fatalf("%s: create: %d %s", from, rec.Code, rec.Body)
+		}
+		if from == "the warm pool" && created.ID != "s-bcdfg" {
+			t.Fatalf("session %s, want the warm Sandbox", created.ID)
+		}
+		id, mcp := created.ID, "/"+created.ID+"/mcp"
+		// Its pod runs. Its policy exists and no OPA replica has it.
+		sessionstest.SetStatus(t, client, id, sessionstest.Ready("10.0.0.7"))
+		before := s.pod.Load()
+		for _, status := range []map[string]any{nil, sessionstest.PolicyCompiled(1, true)} {
+			if status != nil {
+				sessionstest.SetPolicyStatus(t, client, id, status)
+			}
+			if got := state(id); got != "starting" {
+				t.Errorf("%s: the API says %s before the policy is in force", from, got)
+			}
+			if rec := s.do("GET", sessionsHost, mcp, alice, ""); rec.Code != http.StatusMethodNotAllowed {
+				t.Errorf("%s: the event stream before the policy is in force: %d", from, rec.Code)
+			}
+			if status == nil {
+				continue // one wait for the timeout is enough
+			}
+			rec := s.do("POST", sessionsHost, mcp, alice, `{}`)
+			if rec.Code != http.StatusGatewayTimeout || rec.Header().Get("Retry-After") == "" {
+				t.Errorf("%s: a call before the policy is in force: %d %s", from, rec.Code, rec.Body)
+			}
+		}
+		if got := s.pod.Load(); got != before {
+			t.Fatalf("%s: %d requests reached the pod before its policy was in force", from, got-before)
+		}
+
+		// A call that is waiting goes through when the policy is loaded.
+		held := make(chan *httptest.ResponseRecorder, 1)
+		go func() { held <- s.do("POST", sessionsHost, mcp, alice, `{}`) }()
+		time.Sleep(50 * time.Millisecond)
+		sessionstest.SetPolicyStatus(t, client, id, sessionstest.PolicyReady(1))
+		if rec := <-held; rec.Code != http.StatusOK || rec.Body.String() != "pod" {
+			t.Errorf("%s: the held call: %d %s", from, rec.Code, rec.Body)
+		}
+		if got := state(id); got != "running" {
+			t.Errorf("%s: the API says %s with the policy in force", from, got)
+		}
+		// An edit that is still loading does not hold calls back.
+		sessionstest.SetPolicyStatus(t, client, id, sessionstest.PolicyCompiled(2, false))
+		if rec := s.do("POST", sessionsHost, mcp, alice, `{}`); rec.Code != http.StatusOK {
+			t.Errorf("%s: a call while an edit loads: %d %s", from, rec.Code, rec.Body)
+		}
 	}
 }

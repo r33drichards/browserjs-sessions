@@ -4,14 +4,18 @@
  * Browser automation MCP server (Streamable HTTP).
  *
  * Unlike a launch-per-call server, this attaches over CDP to ONE long-lived,
- * headed Chromium (started by entrypoint.sh on Xvfb, profile on a volume), so
- * logins persist and a human can watch/drive the same browser over noVNC.
- * Tool calls run in named tabs that stay open and are reused across calls.
+ * headed Chromium (on the session's display, profile on a volume), so logins
+ * persist and a human can watch/drive the same browser over noVNC. Chromium
+ * is not running until something wants it: the first browser_execute call
+ * starts it (BROWSER_LAUNCHER), and so does the next one after somebody
+ * closed it. Tool calls run in named tabs that stay open and are reused
+ * across calls.
  *
  * Reachable only on the Railway private network; mcp-js (JWT auth + OPA
  * policy) is the public entry point.
  */
 
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -49,6 +53,44 @@ const desktop = createDesktop();
 const MAX_WAIT_MS = 30000;
 const NAV_TIMEOUT_MS = 45000;
 
+// The command that starts the session's Chromium when it is not running and
+// returns once it answers on CDP_URL (session-chromium.sh). Unset (tests, a
+// Chromium somebody else runs): a call without a browser is an error.
+const LAUNCHER = process.env.BROWSER_LAUNCHER || '';
+const LAUNCH_TIMEOUT_MS = 60000;
+
+function launchBrowser() {
+  return new Promise((resolve, reject) => {
+    const child = spawn(LAUNCHER, [], { stdio: ['ignore', 'inherit', 'inherit'] });
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error('Chromium did not start within 60 s'));
+    }, LAUNCH_TIMEOUT_MS);
+    child.once('error', (err) => {
+      clearTimeout(timer);
+      reject(new Error(`could not start Chromium: ${err.message}`));
+    });
+    child.once('exit', (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolve();
+      else reject(new Error(`could not start Chromium (${LAUNCHER} exited with ${code})`));
+    });
+  });
+}
+
+async function connectBrowser() {
+  const connect = () => puppeteer.connect({ browserURL: CDP_URL, defaultViewport: null });
+  try {
+    return await connect();
+  } catch (err) {
+    if (!LAUNCHER) throw err;
+  }
+  // Nothing answers: the session has not used its browser yet, or somebody
+  // closed it. The launcher starts one at most, however many calls ask.
+  await launchBrowser();
+  return connect();
+}
+
 let browserPromise = null;
 
 async function getBrowser() {
@@ -56,7 +98,7 @@ async function getBrowser() {
     const browser = await browserPromise.catch(() => null);
     if (browser?.connected) return browser;
   }
-  browserPromise = puppeteer.connect({ browserURL: CDP_URL, defaultViewport: null });
+  browserPromise = connectBrowser();
   const browser = await browserPromise;
   browser.once('disconnected', () => {
     browserPromise = null;
@@ -382,13 +424,11 @@ async function readBody(req) {
 // Stateless Streamable HTTP: a fresh server+transport per request.
 http
   .createServer(async (req, res) => {
+    // Healthy is this server answering. Chromium is not part of it: a session
+    // is ready before its browser was ever opened, and stays ready after
+    // somebody closed it. The next browser_execute call starts it.
     if (req.url === '/healthz') {
-      try {
-        await getBrowser();
-        res.writeHead(200).end('ok');
-      } catch (err) {
-        res.writeHead(503).end(String(err.message || err));
-      }
+      res.writeHead(200).end('ok');
       return;
     }
     if (files && (await files(req, res))) return;

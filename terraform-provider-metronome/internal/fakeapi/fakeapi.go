@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/r33drichards/browserjs-sessions/terraform-provider-metronome/internal/client"
+	"github.com/r33drichards/computer-use/terraform-provider-metronome/internal/client"
 )
 
 // Request is one request the fake received.

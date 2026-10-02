@@ -8,8 +8,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
-	"github.com/r33drichards/browserjs-sessions/terraform-provider-browserjs/internal/client"
-	"github.com/r33drichards/browserjs-sessions/terraform-provider-browserjs/internal/fakeapi"
+	"github.com/r33drichards/computer-use/terraform-provider-browserjs/internal/client"
+	"github.com/r33drichards/computer-use/terraform-provider-browserjs/internal/fakeapi"
 )
 
 const (

@@ -9,7 +9,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 
-	"github.com/r33drichards/browserjs-sessions/terraform-provider-browserjs/internal/provider"
+	"github.com/r33drichards/computer-use/terraform-provider-browserjs/internal/provider"
 )
 
 // version is set by the release build (-ldflags "-X main.version=...").

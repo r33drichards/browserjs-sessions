@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing"
+	"github.com/r33drichards/computer-use/backend/internal/billing"
 )
 
 // Stripe is billing.Stripe in maps. It holds the state an event refers to

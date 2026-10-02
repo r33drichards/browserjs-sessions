@@ -18,15 +18,17 @@ interface, dialogs such as the file chooser, other windows.
 | Part | Today |
 | --- | --- |
 | Display | One X display. 1280 by 800 at first; it follows the viewer's window, from 320 by 200 to 2560 by 1600 |
-| Window manager | openbox. Ordinary windows are maximised |
-| Applications | Chromium, always open. It restarts if closed |
+| Desktop | XFCE: a panel along the bottom with a menu, launchers and the open windows |
+| Applications | Chromium, a terminal, a file manager (Thunar), a text editor (Mousepad), an image viewer |
 | Fonts | DejaVu, Noto, colour emoji |
 | Network | The public internet |
 
-::: info Planned
-An XFCE desktop with a terminal and a file manager. Until it lands, Chromium
-is the only application and there is no terminal.
-:::
+A session starts with the desktop empty. Chromium is not running until it is
+wanted: the first `browser_execute` call starts it, and so does its launcher
+on the panel or a link opened from another program. Its window opens
+maximised. It is one profile, kept on the session's disk, however it was
+started. If you close Chromium it stays closed, and the next
+`browser_execute` call starts it again with its tabs.
 
 ## Browser: `browser_execute`
 

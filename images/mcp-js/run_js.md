@@ -132,7 +132,9 @@ after 10 minutes by default, and takes up to 16 MiB.
 ### Browser — `mcp.callTool("browser", "browser_execute", …)`
 
 A persistent, headed Chromium (already logged into sites by the operator, who
-can watch it live over VNC) is available as an upstream MCP server:
+can watch it live over VNC) is available as an upstream MCP server. A session
+starts without it running: the first call starts it (a few seconds), and a
+call after somebody closed it starts it again, with its tabs:
 
 ```js
 const r = await mcp.callTool("browser", "browser_execute", {
@@ -164,8 +166,9 @@ display, in the browser container, and you call it from here. Each operation
 is the nut.js call of the same name (`mouse.click`, `keyboard.type`,
 `screen.grab`, …):
 
-The desktop is XFCE: Chromium's window, and a panel along the bottom edge
-with an applications menu, launchers and the open windows. Besides Chromium
+The desktop is XFCE: a panel along the bottom edge with an applications
+menu, launchers and the open windows, and Chromium's window once Chromium
+was started (by a `browser_execute` call, or its launcher). Besides Chromium
 it has a terminal (`xfce4-terminal`: bash with git, curl, python3, node and
 the usual Unix tools, as an unprivileged user, with nothing to install
 packages with), a file manager (Thunar), a text editor (Mousepad) and an

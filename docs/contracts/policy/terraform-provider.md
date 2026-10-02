@@ -108,7 +108,7 @@ in `~/.terraformrc` (or `~/.tofurc`):
 ```hcl
 provider_installation {
   dev_overrides {
-    "r33drichards/browserjs" = "/path/to/browserjs-sessions/terraform-provider-browserjs"
+    "r33drichards/browserjs" = "/path/to/computer-use/terraform-provider-browserjs"
   }
   direct {}
 }

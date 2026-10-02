@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing"
+	"github.com/r33drichards/computer-use/backend/internal/billing"
 )
 
 // How long a pack bought at a time that was not recorded is looked back for

@@ -25,8 +25,7 @@ dynamic = ["version"]
 [project.urls]
 Homepage = "https://computeruse.site"
 Documentation = "https://computeruse.site/reference/sdk"
-# RENAME: the repository is about to become r33drichards/computer-use.
-Repository = "https://github.com/r33drichards/browserjs-sessions"
+Repository = "https://github.com/r33drichards/computer-use"
 
 [tool.maturin]
 # UniFFI bindings load the library with ctypes, so the wheel is

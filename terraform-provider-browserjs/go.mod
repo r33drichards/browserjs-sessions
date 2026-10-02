@@ -1,4 +1,4 @@
-module github.com/r33drichards/browserjs-sessions/terraform-provider-browserjs
+module github.com/r33drichards/computer-use/terraform-provider-browserjs
 
 go 1.26.8
 
