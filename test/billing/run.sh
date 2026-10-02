@@ -227,7 +227,6 @@ may billing-operator no create grants.browserjs.dev
 may billing-operator no patch grants.browserjs.dev
 may billing-operator yes delete grants.browserjs.dev
 may billing-operator yes create usageperiods.browserjs.dev
-may billing-operator yes list sandboxes.agents.x-k8s.io
 for account in backend billing-operator; do
   for verb in get list; do
     may "$account" no "$verb" secrets
@@ -253,8 +252,14 @@ accepts "the operator's request to patch an Account's status" \
   as billing-operator patch accounts.browserjs.dev "$ACCOUNT" --subresource=status --type=merge -p "$STATUS"
 is "a patch of the status leaves the spec alone" "alice@example.com true" \
   "$(k get accounts.browserjs.dev "$ACCOUNT" -o jsonpath='{.spec.owner} {.spec.paymentMethod.present}')"
-accepts "the operator's request to patch a Grant's status" \
-  as billing-operator patch grants.browserjs.dev g-admin --subresource=status --type=merge -p '{"status":{"state":"active","consumedMicros":1600000}}'
+# A Grant's status the operator may patch and not get (asked above), which
+# kubectl's patch cannot do: it reads first. Written here as the admin, for
+# the export further down.
+accepts "a Grant's status" \
+  k patch grants.browserjs.dev g-admin --subresource=status --type=merge -p '{"status":{"state":"active","consumedMicros":1600000}}'
+# No Sandbox CRD on this cluster, so can-i cannot be asked: the rule itself.
+is "billing-operator: get, list, watch sandboxes, and no more" "get list watch" \
+  "$(k get role billing-operator -o json | jq -r '[.rules[] | select(.resources == ["sandboxes"] and .apiGroups == ["agents.x-k8s.io"]) | .verbs[]] | join(" ")')"
 
 # --- 3. who reaches whom ---------------------------------------------------------
 step "3. NetworkPolicy"
