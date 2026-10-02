@@ -13,6 +13,20 @@ Facts about Metronome below were read from its documentation on
 2026-10-02; the ones marked **UNVERIFIED** are settled by the sandbox
 checks at the end, before code depends on them.
 
+## Per mode
+
+Everything the Account records from Metronome is under
+`spec.metronome.<environment>`: `sandbox` or `production`, each with its own
+`customerId` (immutable once set) and `credit`. The backend reads and
+writes only one of them: `sandbox` while `STRIPE_MODE` is `test` or unset,
+`production` while it is `live` (the token it is given is that
+environment's). Where this file says `spec.metronomeCustomerId` and
+`spec.credit` it means `customerId` and `credit` of that environment. The
+label that finds an Account from an alert is
+`browserjs.dev/metronome-customer-sandbox` or `-production`. Switching
+environment clears nothing and deletes no Account: the other environment's
+customer and credit stay where they are.
+
 ## Division of labour
 
 | | Makes it | With |
@@ -88,8 +102,9 @@ Account without `spec.metronomeCustomerId`:
    cu-standard-v1`, `starting_at` = now truncated to the hour,
    `usage_statement_schedule: {frequency: MONTHLY}`, `uniqueness_key:
    contract/<Account name>`. A 409 is success.
-3. Write `spec.metronomeCustomerId` and the label
-   `browserjs.dev/metronome-customer` on the Account.
+3. Write the environment's `customerId` (`spec.metronome.sandbox.customerId`
+   or `spec.metronome.production.customerId`) and the label
+   `browserjs.dev/metronome-customer-<environment>` on the Account.
 
 No session can exist before its owner's Account, so no usage event names a
 customer Metronome does not know.
@@ -200,13 +215,15 @@ micro-dollars: `micros = floor(cents x 10000)`.
 Added to `Account.spec`, written by the backend only:
 
 ```yaml
-metronomeCustomerId: <uuid>
-credit:
-  exhausted: true            # no credit left; true from creation until the first grant
-  exhaustedAt: <time>        # when it became true; absent while false
-  balanceMicros: 0           # as of checkedAt; for display when Metronome cannot be reached
-  nextExpiryAt: <time>       # the earliest end of a credit with a balance; absent with none
-  checkedAt: <time>
+metronome:
+  sandbox:                     # or production: the environment in use
+    customerId: <uuid>
+    credit:
+      exhausted: true            # no credit left; true from creation until the first grant
+      exhaustedAt: <time>        # when it became true; absent while false
+      balanceMicros: 0           # as of checkedAt; for display when Metronome cannot be reached
+      nextExpiryAt: <time>       # the earliest end of a credit with a balance; absent with none
+      checkedAt: <time>
 ```
 
 `ensureCredit(account)` is the only writer of `spec.credit`:

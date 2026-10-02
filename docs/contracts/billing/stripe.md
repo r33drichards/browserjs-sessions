@@ -26,6 +26,20 @@ Which Stripe objects exist, who makes them, which calls the backend makes,
 which events it handles and what each does. Sources for every Stripe fact
 are in section 1 of the design.
 
+## Per mode
+
+Everything the Account records from Stripe is under `spec.stripe.<mode>`,
+`test` or `live`: `customerId` (immutable once set), `paymentMethod`,
+`signupCredit` (decided once, in that mode), `subscription`,
+`autoRecharge`. The backend reads and writes only the mode `STRIPE_MODE`
+names. Where this file says `spec.stripeCustomerId`, `spec.paymentMethod`,
+`spec.signupCredit`, `spec.subscription` or `spec.autoRecharge` it means
+that field of the mode in use (`customerId` for the first), and "the
+Account whose customer is X" is looked for in that mode only. Switching
+from test to live clears nothing: an account has nothing in live yet and
+goes through the gate again; its sign-up credit is decided again there,
+for a live card, in the production ledger.
+
 ## Division of labour
 
 | | Makes it | With |
