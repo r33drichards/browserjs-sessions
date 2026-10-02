@@ -118,7 +118,9 @@ func (b *billingParts) enable(sessionAPI *api.API, px *proxy.Proxy, mux *http.Se
 	b.handlers.Register(mux)
 }
 
-// run sweeps until ctx is done.
+// run sweeps until ctx is done. It is one of the leader's passes (main.go):
+// px is the replica's own calls in flight, and the other replicas' are read
+// off the sessions.
 func (b *billingParts) run(ctx context.Context, px *proxy.Proxy) {
 	if b == nil {
 		return

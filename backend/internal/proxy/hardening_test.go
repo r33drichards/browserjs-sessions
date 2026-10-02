@@ -116,9 +116,38 @@ func testEncodedPathSegmentsAreRefused(t *testing.T, e *env) {
 	}
 }
 
-// isIdle reports whether the tracker holds a clock for id that has run out.
-// (A session the tracker has never heard of starts its period when asked.)
-func isIdle(tr *idle.Tracker, id string) bool { return len(tr.Idle([]string{id})) == 1 }
+// rule is the idle period of the tests' deployment.
+var rule = idle.Rule{After: 15 * time.Minute, Margin: idle.DefaultMargin}
+
+// now is the time by the tracker's clock.
+func (e *env) now() time.Time { return time.Now().Add(time.Duration(e.skew.Load())) }
+
+// isIdle reports whether the session's idle period has run out, by what is
+// written on the session: what the sweep of any replica would decide. What
+// this replica has yet to write (its heartbeat is due every few seconds) is
+// written first.
+func (e *env) isIdle(id string) bool {
+	e.tracker.Beat(context.Background())
+	s, err := e.store.Get(context.Background(), id)
+	return err == nil && rule.Idle(s, e.now())
+}
+
+// sweep is the idle sweep, after this replica's heartbeat.
+func (e *env) sweep() error {
+	e.tracker.Beat(context.Background())
+	return idle.Sweep(context.Background(), e.store, rule, e.now)
+}
+
+// lastActive is when the session was last used, as written on it.
+func (e *env) lastActive(t *testing.T, id string) time.Time {
+	t.Helper()
+	e.tracker.Beat(context.Background())
+	s, err := e.store.Get(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s.LastActive
+}
 
 // The upload route has no login, so it must not be a way to start pods or to
 // keep them running.
@@ -140,9 +169,8 @@ func TestUploadDoesNotWakeASleepingSession(t *testing.T) {
 	if n := len(e.seen()); n != 0 {
 		t.Errorf("the upload reached a pod (%d calls)", n)
 	}
-	e.skew.Add(int64(16 * time.Minute))
-	if isIdle(e.tracker, e.id) {
-		t.Error("an upload to a sleeping session was recorded as activity")
+	if at := e.lastActive(t, e.id); !at.IsZero() {
+		t.Errorf("an upload to a sleeping session was recorded as activity, at %s", at)
 	}
 }
 
@@ -152,9 +180,9 @@ func TestUploadToAnUnknownSessionIsNotTracked(t *testing.T) {
 	if rec := e.doAt(unknown, "PUT", "/api/artifact-uploads/"+uploadToken, "", "x"); rec.Code != http.StatusNotFound {
 		t.Errorf("upload to an unknown session: %d, want 404", rec.Code)
 	}
-	e.skew.Add(int64(16 * time.Minute))
-	if isIdle(e.tracker, unknown) {
-		t.Error("an unknown session ID entered the idle tracker")
+	e.tracker.Beat(t.Context())
+	if _, err := e.store.Get(t.Context(), unknown); !errors.Is(err, sessions.ErrNotFound) {
+		t.Errorf("an upload to an unknown session left something behind: %v", err)
 	}
 }
 
@@ -163,14 +191,13 @@ func TestUploadToAnUnknownSessionIsNotTracked(t *testing.T) {
 func TestUploadCountsAsActivityOnlyWhenThePodAcceptsIt(t *testing.T) {
 	e := newEnv(t)
 	path := "/api/artifact-uploads/" + uploadToken
-	e.tracker.Idle([]string{e.id}) // the sweeper has seen it: its period runs
 	e.skew.Add(int64(16 * time.Minute))
 
 	e.respondWith(func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "no such upload", http.StatusForbidden) })
 	if rec := e.do("PUT", path, "", "x"); rec.Code != http.StatusForbidden {
 		t.Fatalf("refused upload: %d, want the pod's 403", rec.Code)
 	}
-	if !isIdle(e.tracker, e.id) {
+	if !e.isIdle(e.id) {
 		t.Error("an upload the pod refused was recorded as activity")
 	}
 
@@ -178,7 +205,7 @@ func TestUploadCountsAsActivityOnlyWhenThePodAcceptsIt(t *testing.T) {
 	if rec := e.do("PUT", path, "", "x"); rec.Code != http.StatusOK {
 		t.Fatalf("upload: %d", rec.Code)
 	}
-	if isIdle(e.tracker, e.id) {
+	if e.isIdle(e.id) {
 		t.Error("an accepted upload was not recorded as activity")
 	}
 }
@@ -202,7 +229,7 @@ func TestInFlightMCPCallHoldsTheSessionAwake(t *testing.T) {
 	}
 
 	e.skew.Add(int64(time.Hour))
-	if err := idle.Sweep(t.Context(), e.store, e.tracker); err != nil {
+	if err := e.sweep(); err != nil {
 		t.Fatal(err)
 	}
 	if s, _ := e.store.Get(t.Context(), e.id); s.State != sessions.Running {
@@ -214,11 +241,11 @@ func TestInFlightMCPCallHoldsTheSessionAwake(t *testing.T) {
 		t.Errorf("long call: %d", got)
 	}
 	// Once it is over the idle period runs again, from the end of the call.
-	if isIdle(e.tracker, e.id) {
+	if e.isIdle(e.id) {
 		t.Error("session idle the moment its call ended")
 	}
 	e.skew.Add(int64(16 * time.Minute))
-	if !isIdle(e.tracker, e.id) {
+	if !e.isIdle(e.id) {
 		t.Error("session never goes idle after the call")
 	}
 }
@@ -359,7 +386,7 @@ func TestShutdownClosesViewerConnections(t *testing.T) {
 		t.Errorf("read after Shutdown: %v, want EOF", err)
 	}
 	e.skew.Add(int64(16 * time.Minute))
-	if !isIdle(e.tracker, e.id) {
+	if !e.isIdle(e.id) {
 		t.Error("a viewer closed by Shutdown still holds the session awake")
 	}
 

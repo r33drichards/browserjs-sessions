@@ -21,6 +21,7 @@ import (
 	"github.com/r33drichards/computer-use/backend/internal/auth"
 	"github.com/r33drichards/computer-use/backend/internal/config"
 	"github.com/r33drichards/computer-use/backend/internal/idle"
+	"github.com/r33drichards/computer-use/backend/internal/metrics"
 	"github.com/r33drichards/computer-use/backend/internal/sessions"
 	"github.com/r33drichards/computer-use/backend/internal/sessions/sessionstest"
 )
@@ -73,7 +74,7 @@ func newServer(t *testing.T) *server {
 	}))
 	t.Cleanup(pod.Close)
 	// ServeMux panics at registration if two patterns conflict.
-	handler, px := newHandler(cfg, verifier, store, idle.New(15*time.Minute, time.Now))
+	handler, px := newHandler(cfg, verifier, store, idle.New(store, "test", 15*time.Minute, time.Now))
 	px.Target = func(sessions.Session, int) string { return strings.TrimPrefix(pod.URL, "http://") }
 	s.handler = handler
 	return s
@@ -362,7 +363,7 @@ func testSessionRoutes(t *testing.T, where func(id string) (host, base string)) 
 		rec := s.do("POST", appHost, ticketPath, user, "")
 		var ticket struct{ Ticket, URL string }
 		_ = json.Unmarshal(rec.Body.Bytes(), &ticket)
-		if rec.Code != http.StatusOK || len(ticket.Ticket) != 64 || ticket.URL != "wss://"+public+"/vnc?ticket="+ticket.Ticket {
+		if rec.Code != http.StatusOK || ticket.Ticket == "" || ticket.URL != "wss://"+public+"/vnc?ticket="+ticket.Ticket {
 			t.Errorf("%s's ticket: %d %s", user, rec.Code, rec.Body)
 		}
 		rec = s.do("GET", host, base+"/vnc?ticket="+ticket.Ticket, "", "")
@@ -467,5 +468,25 @@ func TestAPIResponsesForTheUI(t *testing.T) {
 	}
 	if rec := s.do("DELETE", appHost, p, alice, ""); rec.Code != http.StatusNoContent || rec.Body.Len() != 0 {
 		t.Errorf("delete: %d %q", rec.Code, rec.Body)
+	}
+}
+
+// The metrics are on a port of their own. Nothing of them is on the port
+// Pomerium routes to, on any host, and nothing they say names a user.
+func TestMetricsAreNotOnThePublicPort(t *testing.T) {
+	s := newServer(t)
+	created := s.session(alice)
+	s.do("POST", sessionsHost, "/"+created.ID+"/mcp", alice, `{}`)
+	for _, host := range []string{appHost, sessionsHost} {
+		if rec := s.do("GET", host, "/metrics", alice, ""); strings.Contains(rec.Body.String(), "browserjs_") {
+			t.Errorf("GET /metrics on %s serves the metrics: %d", host, rec.Code)
+		}
+	}
+	rec := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	for _, secret := range []string{alice, bob, root, "example.com", "@"} {
+		if strings.Contains(rec.Body.String(), secret) {
+			t.Errorf("the metrics contain %q", secret)
+		}
 	}
 }

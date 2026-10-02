@@ -50,12 +50,13 @@ takes the token only.
 
 | ServiceAccount | Rules |
 |---|---|
-| `backend` (added) | `accounts`: get, list, create, update, patch (no `watch`: there is no informer). Lease `billing-observer`: get |
+| `backend` (added) | `accounts`: get, list, create, update, patch (no `watch`: there is no informer). Lease `billing-observer`: get. Lease `backend-leader`: get, update; `leases`: create (the election of the replica that runs the passes, [stateless-backend.md](stateless-backend.md)) |
 | `billing-operator` | `sandboxes`: get, list, watch. Lease `billing-observer`: get, update; `leases`: create. `events`: create. ClusterRole: `customresourcedefinitions` list, watch. **Nothing on Accounts** |
 | `billing-export` | `accounts`: get, list |
 
-RBAC cannot hold a `create` to a name, so the operator may create a Lease
-of any name in the namespace; it can read and update only its own.
+RBAC cannot hold a `create` to a name, so the operator and the backend may
+each create a Lease of any name in the namespace; each can read and update
+only the ones named above.
 
 ### NetworkPolicy
 

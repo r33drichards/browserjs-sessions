@@ -1,14 +1,17 @@
 // Command server is the browserjs sessions backend.
 //
-// It must run as exactly one replica (a Deployment with replicas: 1 and the
-// Recreate strategy). Two things are kept in this process's memory and are
-// not shared: the VNC tickets (internal/proxy), so a ticket issued by one
-// replica is refused by another, and the idle tracker (internal/idle), so a
-// replica would put to sleep sessions that are busy on the other.
+// It holds no state: everything it decides from is an object in the
+// cluster, so it runs as any number of replicas, of more than one version
+// at a time (docs/stateless-backend.md says where each fact lives). Every
+// replica serves requests. The periodic passes (the idle sweep, billing's
+// sweep and balance pass, Stripe's reconciles) are run by one replica at a
+// time, elected over a Lease (internal/leader).
 package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"log/slog"
 	"net"
 	"net/http"
@@ -20,6 +23,7 @@ import (
 	"time"
 
 	"k8s.io/client-go/dynamic"
+	coordinationv1 "k8s.io/client-go/kubernetes/typed/coordination/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
@@ -28,6 +32,8 @@ import (
 	"github.com/r33drichards/computer-use/backend/internal/authz"
 	"github.com/r33drichards/computer-use/backend/internal/config"
 	"github.com/r33drichards/computer-use/backend/internal/idle"
+	"github.com/r33drichards/computer-use/backend/internal/leader"
+	"github.com/r33drichards/computer-use/backend/internal/metrics"
 	"github.com/r33drichards/computer-use/backend/internal/policy"
 	"github.com/r33drichards/computer-use/backend/internal/proxy"
 	"github.com/r33drichards/computer-use/backend/internal/sessions"
@@ -50,6 +56,18 @@ func kubeConfig() (*rest.Config, error) {
 	}
 	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
 		clientcmd.NewDefaultClientConfigLoadingRules(), nil).ClientConfig()
+}
+
+// newReplica names this process among the replicas, for the marks it puts on
+// sessions (sessions.AnnInFlightPrefix) and, with the host's name, in the
+// election. A process that starts again is a new replica: what the old one
+// vouched for runs out.
+func newReplica() string {
+	b := make([]byte, 5)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	return hex.EncodeToString(b)
 }
 
 func main() {
@@ -97,18 +115,32 @@ func run() error {
 	}
 	if cfg.WarmPool != "" {
 		store.EnableWarmPool(cfg.WarmPool, cfg.WarmPoolWait)
-		if err := store.RecoverClaims(ctx); err != nil {
-			slog.Error("warm pool: claims left unfinished", "err", err)
-		}
 	}
 	verifier, err := auth.NewJWKSVerifier(ctx, cfg.PomeriumJWKSURL, cfg.AdminEmails)
 	if err != nil {
 		return err
 	}
-	slog.Warn("VNC tickets and idle tracking are per-process: run exactly one replica of this backend")
+	if len(cfg.APISigningKey) == 0 {
+		slog.Warn("API_SIGNING_KEY is not set: VNC tickets and API access tokens are signed with a key of this process, and another replica refuses them. Run one replica, or set the key")
+	}
+	leases, err := coordinationv1.NewForConfig(kube)
+	if err != nil {
+		return err
+	}
+	replica := newReplica()
+	host, _ := os.Hostname()
+	slog.Info("replica", "replica", replica, "host", host)
+	if err := serveMetrics(ctx, cfg.MetricsAddr); err != nil {
+		return err
+	}
 
-	tracker := idle.New(cfg.IdleAfter, time.Now)
-	go idle.Run(ctx, store, tracker, time.Minute)
+	// This replica's part in idleness: it writes, on each session it
+	// proxies to, when the session was used. The sweep is the leader's.
+	tracker := idle.New(store, replica, cfg.IdleAfter, time.Now)
+	go tracker.Run(ctx)
+	if err := metrics.Sessions(metrics.Registry, tracker.States); err != nil {
+		return err
+	}
 
 	// Metering and billing (BILLING): billing.go. Nil while it is off.
 	bill, err := newBilling(ctx, cfg, dyn, store)
@@ -122,7 +154,27 @@ func run() error {
 		return err
 	}
 	handler, px := newHandlerWith(cfg, verifier, store, tracker, bill)
-	bill.run(ctx, px)
+	// The periodic passes, on one replica at a time. Each keeps nothing
+	// between runs and reads what it decides from off the cluster.
+	// A replica a release is still checking (ACTIVE_FILE) does not campaign.
+	go leader.Run(ctx, leases, cfg.Namespace, host+"_"+replica, leader.DefaultTiming, leader.Active(cfg.ActiveFile), func(ctx context.Context) {
+		metrics.Leader.Set(1)
+		defer metrics.Leader.Set(0)
+		// What a backend that died in the middle of a create left undone.
+		// The leader's, so that it is done once and not by a replica that
+		// is only being checked; doing it again changes nothing.
+		if cfg.WarmPool != "" {
+			if err := store.RecoverClaims(ctx); err != nil {
+				slog.Error("warm pool: claims left unfinished", "err", err)
+			}
+		}
+		go idle.Run(ctx, store, idle.Rule{After: cfg.IdleAfter, Margin: idle.DefaultMargin, Source: tracker}, time.Minute)
+		bill.run(ctx, px)
+		if payments != nil {
+			go payments.Run(ctx)
+		}
+		<-ctx.Done()
+	})
 	// API tokens and the API host (API_URL): tokens.go.
 	if cfg.APIURL != "" {
 		tokenStore := tokens.NewStore(dyn, cfg.Namespace)
@@ -138,7 +190,10 @@ func run() error {
 	handler = bill.withWebhooks(cfg, handler)
 
 	srv := &http.Server{
-		Handler:           handler,
+		Handler: metrics.Instrument(func(r *http.Request) (string, string) {
+			path, session := px.Route(r)
+			return metrics.Classify(session, r.Method, path)
+		}, handler),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		// No read or write timeout: MCP streams and uploads run long. The
@@ -149,7 +204,38 @@ func run() error {
 		return err
 	}
 	slog.Info("listening", "addr", cfg.Addr, "namespace", cfg.Namespace)
-	return serve(ctx, srv, ln, 10*time.Second, px)
+	err = serve(ctx, srv, ln, 10*time.Second, px)
+	// What this replica knew of its sessions' last use and had not written
+	// yet (it writes every half minute) is written before it goes.
+	flush, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	tracker.Flush(flush)
+	return err
+}
+
+// serveMetrics serves /metrics at addr until ctx is done: on a port of its
+// own, which nothing routes to from outside the cluster and the
+// NetworkPolicy opens to the collector only. "off" or "" serves nothing.
+func serveMetrics(ctx context.Context, addr string) error {
+	if addr == "" || addr == "off" {
+		return nil
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	srv := &http.Server{Handler: metrics.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	go func() {
+		<-ctx.Done()
+		_ = srv.Close()
+	}()
+	go func() {
+		if err := srv.Serve(ln); err != http.ErrServerClosed {
+			slog.Error("metrics server stopped", "err", err)
+		}
+	}()
+	slog.Info("metrics", "addr", addr)
+	return nil
 }
 
 // serve answers requests on ln until ctx is done, then shuts down: viewer
@@ -200,6 +286,7 @@ func newHandlerWith(cfg config.Config, verifier auth.Verifier, store *sessions.S
 		Waker: &proxy.Waker{Store: policy.Gate(store, policies), Timeout: cfg.ReadyTimeout, RestoreTimeout: cfg.RestoreTimeout,
 			Poll: time.Second, RunningTTL: 2 * time.Second},
 		Idle:         tracker,
+		TicketKey:    proxy.TicketKey(cfg.APISigningKey),
 		URLs:         cfg.SessionURLs,
 		LegacyURLs:   cfg.LegacySessionURLs,
 		MaxFileBytes: cfg.MaxFileBytes,

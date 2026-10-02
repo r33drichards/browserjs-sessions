@@ -15,19 +15,16 @@ const (
 	purchasesEvery      = time.Hour
 )
 
-// Run reads the prices and runs both reconciles now, then keeps them going
-// until ctx is done: payment methods every 15 minutes (a missed
-// payment_method.detached must not leave sessions running for long without
-// a card), prices and purchases every hour.
+// Run runs both reconciles now, then keeps them going until ctx is done:
+// payment methods every 15 minutes (a missed payment_method.detached must
+// not leave sessions running for long without a card), purchases every
+// hour. One replica of the backend runs it at a time (internal/leader); the
+// reconciles write only what they read from Stripe, so two at once would
+// write the same.
 func (s *Service) Run(ctx context.Context) {
-	hourly := func() {
-		if err := s.RefreshPrices(ctx); err != nil {
-			slog.Error("stripe: prices not read", "err", err)
-		}
-		s.ReconcilePurchases(ctx, s.clock.Now().Add(-reconcileWindow))
-	}
+	purchased := func() { s.ReconcilePurchases(ctx, s.clock.Now().Add(-reconcileWindow)) }
 	s.ReconcilePaymentMethods(ctx)
-	hourly()
+	purchased()
 	cards := time.NewTicker(paymentMethodsEvery)
 	defer cards.Stop()
 	purchases := time.NewTicker(purchasesEvery)
@@ -39,7 +36,25 @@ func (s *Service) Run(ctx context.Context) {
 		case <-cards.C:
 			s.ReconcilePaymentMethods(ctx)
 		case <-purchases.C:
-			hourly()
+			purchased()
+		}
+	}
+}
+
+// KeepPrices reads the prices again every hour until ctx is done. Every
+// replica runs it: the prices are what each offers for sale, read from
+// Stripe and kept by nobody else.
+func (s *Service) KeepPrices(ctx context.Context) {
+	tick := time.NewTicker(purchasesEvery)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			if err := s.RefreshPrices(ctx); err != nil {
+				slog.Error("stripe: prices not read", "err", err)
+			}
 		}
 	}
 }

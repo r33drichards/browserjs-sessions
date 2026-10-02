@@ -35,7 +35,7 @@ files and the MCP endpoint all check for the owner. To anyone else the
 session answers as if it did not exist. Knowing the MCP URL is not enough.
 
 Two narrow things work without sign-in: the screen's connection, with a
-ticket the app gets for the owner (30 seconds, one use), and the agent's
+ticket the app gets for the owner (10 seconds), and the agent's
 upload URL (10 minutes, one use, one file).
 
 The service's operators can see and manage all sessions. Do not put in a

@@ -283,7 +283,7 @@ func TestBillingOffIsToday(t *testing.T) {
 	px := &proxy.Proxy{
 		Verifier: assertion{}, Authz: owners,
 		Waker: &proxy.Waker{Store: store, Timeout: 100 * time.Millisecond, Poll: 5 * time.Millisecond},
-		Idle:  idle.New(15*time.Minute, time.Now), URLs: urls,
+		Idle:  idle.New(store, "test", 15*time.Minute, time.Now), URLs: urls,
 	}
 	mux := http.NewServeMux()
 	a := api.New(store, owners, urls, 2) // no EnableBilling: BILLING is unset

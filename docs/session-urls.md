@@ -8,7 +8,7 @@ cluster. Claims are marked **VERIFIED** (read in the cited source) or
 | | URL |
 |---|---|
 | MCP endpoint (what the UI shows, what a client is given) | `https://sessions.computeruse.site/<id>/mcp` |
-| Screen (websocket, one-time ticket from the app's API) | `wss://sessions.computeruse.site/<id>/vnc?ticket=<ticket>` |
+| Screen (websocket, short-lived ticket from the app's API) | `wss://sessions.computeruse.site/<id>/vnc?ticket=<ticket>` |
 | Upload (one-time, issued by mcp-js's `get_artifact_upload_url`) | `https://sessions.computeruse.site/<id>/api/artifact-uploads/<token>` |
 | OAuth protected-resource metadata (Pomerium's) | `https://sessions.computeruse.site/.well-known/oauth-protected-resource/<id>/mcp` |
 | OAuth authorization server metadata (Pomerium's) | `https://sessions.computeruse.site/.well-known/oauth-authorization-server` |

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	petname "github.com/dustinkirkland/golang-petname"
 
@@ -26,7 +27,7 @@ type Store interface {
 	List(ctx context.Context, owner string) ([]sessions.Session, error)
 	ListAll(ctx context.Context) ([]sessions.Session, error)
 	Update(ctx context.Context, id string, name *string, action string) error
-	Sleep(ctx context.Context, id, stoppedBy string, stillWanted func() bool) error
+	Sleep(ctx context.Context, id, stoppedBy string, stillWanted func(sessions.Session) bool) error
 	Delete(ctx context.Context, id string) error
 }
 
@@ -36,8 +37,9 @@ type API struct {
 	urls  *sessions.URLTemplate
 	cap   int
 
-	// The lock is per user. It is enough because there is one backend
-	// replica; more would need the cap enforced cluster-side.
+	// The lock is per user, and this replica's: it keeps the same user's
+	// creates here from interleaving. A create on another replica is
+	// caught after the fact, by counting again (lostRace).
 	creating keyedMutex // the cap is "list, then create"
 
 	petName func() string // names a session created without a name
@@ -254,13 +256,8 @@ func (a *API) create(w http.ResponseWriter, r *http.Request, u auth.User) {
 		return
 	}
 	// Before anything is made, and so before any warm-pool claim.
-	if err := a.mayCreate(r.Context(), u.Subject, mine); err != nil {
-		a.refused(w, err)
-		return
-	}
-	// With billing enforced the plan's limit has been applied instead.
-	if !a.enforcing() && len(mine) >= a.cap {
-		writeError(w, http.StatusConflict, "session limit reached; delete one first")
+	if err := a.admit(r.Context(), u.Subject, mine); err != nil {
+		a.notAdmitted(w, err)
 		return
 	}
 	name := body.Name
@@ -274,8 +271,76 @@ func (a *API) create(w http.ResponseWriter, r *http.Request, u auth.User) {
 		a.storeError(w, err)
 		return
 	}
+	if err := a.lostRace(r.Context(), u.Subject, s, len(mine)); err != nil {
+		a.notAdmitted(w, err)
+		return
+	}
 	a.created(s)
 	writeJSON(w, http.StatusCreated, a.view(r.Context(), s, a.summary(r.Context(), s)))
+}
+
+// errSessionLimit is admit's refusal for a user at MAX_SESSIONS_PER_USER.
+var errSessionLimit = errors.New("session limit reached; delete one first")
+
+// admit judges one more session for owner, who has mine: nil, or why not.
+func (a *API) admit(ctx context.Context, owner string, mine []sessions.Session) error {
+	if err := a.mayCreate(ctx, owner, mine); err != nil {
+		return err
+	}
+	// With billing enforced the plan's limit has been applied instead.
+	if !a.enforcing() && len(mine) >= a.cap {
+		return errSessionLimit
+	}
+	return nil
+}
+
+func (a *API) notAdmitted(w http.ResponseWriter, err error) {
+	if errors.Is(err, errSessionLimit) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	a.refused(w, err)
+}
+
+// lostRace finds out, once s is made, whether the same user created another
+// session meanwhile through another replica of the backend, which the lock
+// in create does not reach. had is how many sessions the user had when s
+// was admitted. If there are now more than had and s, s is judged again as
+// if it came after all the others: refused, it is deleted and its caller is
+// answered as one who came second. It is nil when s stays.
+//
+// Whichever of two such creates counts second sees the other's session, so
+// the user never ends up past the limit. Both may see each other's and both
+// give way; the user then has room, and asks again.
+//
+// With one replica nobody else creates for the user while the lock is held:
+// the count is one more than before, and nothing else is asked.
+func (a *API) lostRace(ctx context.Context, owner string, s sessions.Session, had int) error {
+	now, err := a.store.List(ctx, owner)
+	if err != nil {
+		slog.Error("sessions not counted again after a create; the session stays", "session", s.ID, "err", err)
+		return nil
+	}
+	if len(now) <= had+1 {
+		return nil
+	}
+	others := make([]sessions.Session, 0, len(now))
+	for _, other := range now {
+		if other.ID != s.ID {
+			others = append(others, other)
+		}
+	}
+	refusal := a.admit(ctx, owner, others)
+	if refusal == nil {
+		return nil
+	}
+	slog.Info("a session created at the same time as another of its user's, past the limit; deleted", "session", s.ID)
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if err := a.store.Delete(cleanup, s.ID); err != nil && !errors.Is(err, sessions.ErrNotFound) {
+		slog.Error("could not delete a session created past the limit; delete it by hand", "session", s.ID, "err", err)
+	}
+	return refusal
 }
 
 func (a *API) get(w http.ResponseWriter, r *http.Request, id string) {

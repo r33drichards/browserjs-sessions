@@ -153,17 +153,29 @@ func newEnvAt(t *testing.T, legacy bool) *env {
 	}))
 	t.Cleanup(upstream.Close)
 
-	skew := &atomic.Int64{}
-	tracker := idle.New(15*time.Minute, func() time.Time { return time.Now().Add(time.Duration(skew.Load())) })
+	e.upstream, e.skew = upstream, &atomic.Int64{}
+	e.serve("test", ticketKey)
+	return e
+}
+
+// ticketKey is the key the replicas of a test deployment sign tickets with.
+var ticketKey = []byte("0123456789abcdef0123456789abcdef")
+
+// serve gives e a proxy of its own, as the replica named name: its own
+// Tracker and Waker, over the store, the pod and the clock e has.
+func (e *env) serve(name string, key []byte) {
+	tracker := idle.New(e.store, name, 15*time.Minute, e.now)
 	p := &Proxy{
 		Verifier:   textVerifier{},
-		Authz:      authz.NewOwners(store, time.Minute),
-		Waker:      &Waker{Store: store, Timeout: time.Second, Poll: 5 * time.Millisecond},
+		Authz:      authz.NewOwners(e.store, time.Minute),
+		Waker:      &Waker{Store: e.store, Timeout: time.Second, Poll: 5 * time.Millisecond},
 		Idle:       tracker,
+		TicketKey:  key,
+		now:        e.now,
 		URLs:       sessionstest.URLs(),
 		LegacyURLs: sessionstest.LegacyURLs(),
 		// Every pod port maps to the one test upstream.
-		Target: func(sessions.Session, int) string { return strings.TrimPrefix(upstream.URL, "http://") },
+		Target: func(sessions.Session, int) string { return strings.TrimPrefix(e.upstream.URL, "http://") },
 	}
 	// The app's side, as cmd/server wires it: the API behind the middleware,
 	// and everything else the UI's.
@@ -172,8 +184,17 @@ func newEnvAt(t *testing.T, legacy bool) *env {
 	app := http.NewServeMux()
 	app.Handle("/api/", auth.Middleware(p.Verifier)(api))
 	app.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "the app") })
-	e.handler, e.tracker, e.upstream, e.skew, e.proxy = p.Handler(app), tracker, upstream, skew, p
-	return e
+	e.handler, e.tracker, e.proxy = p.Handler(app), tracker, p
+}
+
+// replica is another replica of e's backend: the same cluster, pod and
+// clock, and nothing else in common with e. What the pod was asked is e's
+// to say (e.seen).
+func (e *env) replica(name string, key []byte) *env {
+	other := &env{id: e.id, host: e.host, base: e.base, calls: e.calls, store: e.store, client: e.client,
+		upstream: e.upstream, skew: e.skew}
+	other.serve(name, key)
+	return other
 }
 
 // request is a request as Pomerium hands it on: made to host, stating who
@@ -612,8 +633,8 @@ func TestVNCWebsocketKeepsSessionAwake(t *testing.T) {
 	}
 
 	e.skew.Add(int64(time.Hour))
-	if got := e.tracker.Idle([]string{e.id}); len(got) != 0 {
-		t.Errorf("session with a viewer attached reported idle: %v", got)
+	if e.isIdle(e.id) {
+		t.Error("session with a viewer attached reported idle")
 	}
 
 	// Once the viewer leaves, the idle period runs again.
@@ -621,7 +642,7 @@ func TestVNCWebsocketKeepsSessionAwake(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		e.skew.Add(int64(16 * time.Minute))
-		if got := e.tracker.Idle([]string{e.id}); len(got) == 1 {
+		if e.isIdle(e.id) {
 			break
 		}
 		if time.Now().After(deadline) {

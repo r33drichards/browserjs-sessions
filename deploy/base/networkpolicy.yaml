@@ -90,6 +90,19 @@ spec:
       ports:
         - port: 8080
           protocol: TCP
+    # The metrics port, to the collectors of Google Cloud Managed Service
+    # for Prometheus (deploy/gke/monitoring.yaml) and to nothing else. On a
+    # cluster without them nothing matches, and the port answers nobody.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gmp-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: collector
+      ports:
+        - port: 9090
+          protocol: TCP
 ---
 # OPA answers the sessions and the operator, and fetches its bundle from the
 # operator. It reaches nothing else: not the internet, not the API server.

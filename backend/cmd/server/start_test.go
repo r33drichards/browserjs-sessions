@@ -66,7 +66,7 @@ func TestStartsWithMeterAndStripeTest(t *testing.T) {
 	}
 
 	s := newServer(t)
-	handler, _ := newHandlerWith(cfg, verifierOf(t, s), store, idle.New(15*time.Minute, time.Now), bill)
+	handler, _ := newHandlerWith(cfg, verifierOf(t, s), store, idle.New(store, "test", 15*time.Minute, time.Now), bill)
 	s.handler = bill.withWebhooks(cfg, withStripe(cfg, verifierOf(t, s), payments, handler))
 
 	// The account is made in the cluster on first sight, in test mode;

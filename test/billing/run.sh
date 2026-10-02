@@ -211,6 +211,13 @@ lease billing-operator no get some-other-lease
 lease backend yes get billing-observer
 lease backend no update billing-observer
 lease backend no get some-other-lease
+# The Lease backend-leader: the backend's replicas elect, over it, the one
+# that runs the periodic passes. Nobody else has anything to do with it.
+lease backend yes get backend-leader
+lease backend yes update backend-leader
+lease backend no delete backend-leader
+lease billing-operator no get backend-leader
+lease billing-operator no update backend-leader
 
 # The same, as requests and not as questions.
 as() { # ServiceAccount, kubectl arguments

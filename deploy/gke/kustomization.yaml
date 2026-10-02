@@ -19,6 +19,11 @@ resources:
   - site.yaml
   # The Accounts' daily backup; suspended until billing is enforced.
   - billing-export.yaml
+  # The backend's metrics, collected by Managed Service for Prometheus. Off
+  # until the cluster is known to serve the PodMonitoring resource: without
+  # it the whole apply fails. docs/metrics.md says how to check, then
+  # uncomment.
+  # - monitoring.yaml
 
 # THE ONE PLACE the deployed images are chosen. Each digest is what the
 # "images" workflow printed in its run summary for the commit to deploy.
