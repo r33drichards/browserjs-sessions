@@ -2,7 +2,7 @@
 // the API host that this file starts. Nothing here talks to the real
 // service, and the token is not a real one.
 //
-//   npm run build && node --test test/
+//   npm run build && node --test test/smoke.test.mjs
 
 import assert from "node:assert/strict";
 import http from "node:http";

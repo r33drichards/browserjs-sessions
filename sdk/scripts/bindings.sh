@@ -127,7 +127,7 @@ case "$language" in
       mkdir -p "$sdk/js/prebuilds/$triple"
       cp "$library" "$sdk/js/prebuilds/$triple/"
       printf '{"name": "computeruse-%s", "version": "0.0.0", "private": true}\n' "$triple" > "$sdk/js/prebuilds/$triple/package.json"
-      (cd "$sdk/js" && npm run typecheck && npm run build && node --test test/)
+      (cd "$sdk/js" && npm run typecheck && npm run build && node --test test/smoke.test.mjs)
     fi
     ;;
 

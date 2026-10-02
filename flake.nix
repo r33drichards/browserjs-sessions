@@ -17,10 +17,10 @@
         sdk = pkgs.mkShell {
           packages = with pkgs; [
             cargo rustc clippy rustfmt maturin python3 go nodejs_22
-          ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [ pkgs.libiconv ];
+          ] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [ pkgs.libiconv ];
           # For the prebuilt Node addon of the UniFFI runtime (@ubjs/node),
           # which expects libgcc_s and libstdc++ on the loader's path.
-          LD_LIBRARY_PATH = pkgs.lib.optionalString pkgs.stdenv.isLinux
+          LD_LIBRARY_PATH = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux
             (pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib ]);
         };
       });

@@ -699,7 +699,7 @@ func uniffiCheckChecksums() {
 		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
 			return C.uniffi_computeruse_checksum_method_clientoptionsbuilder_mcp_timeout_ms()
 		})
-		if checksum != 27483 {
+		if checksum != 23421 {
 			// If this happens try cleaning and rebuilding your project
 			panic("computeruse: uniffi_computeruse_checksum_method_clientoptionsbuilder_mcp_timeout_ms: UniFFI API checksum mismatch")
 		}
@@ -744,7 +744,7 @@ func uniffiCheckChecksums() {
 		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
 			return C.uniffi_computeruse_checksum_method_clientoptionsbuilder_wake_timeout_ms()
 		})
-		if checksum != 63949 {
+		if checksum != 12944 {
 			// If this happens try cleaning and rebuilding your project
 			panic("computeruse: uniffi_computeruse_checksum_method_clientoptionsbuilder_wake_timeout_ms: UniFFI API checksum mismatch")
 		}
@@ -1719,8 +1719,9 @@ type ClientOptionsBuilderInterface interface {
 	// How many times a request is tried again after `429`, `502`, `503`,
 	// `504` or a connection that could not be made. Default 3.
 	MaxRetries(value uint32) *ClientOptionsBuilder
-	// The time limit of one MCP request, in milliseconds. Default 330 000:
-	// `run_js` may run for 300 seconds.
+	// The time limit of one MCP request, in milliseconds. Default 630 000:
+	// the service holds a call for up to 300 seconds while a session
+	// wakes, and `run_js` may then run for 300 more.
 	McpTimeoutMs(value uint64) *ClientOptionsBuilder
 	// The first pause between tries, in milliseconds; it doubles each
 	// time. Default 500. A `Retry-After` the API sends is used instead.
@@ -1733,7 +1734,7 @@ type ClientOptionsBuilderInterface interface {
 	// Added in front of the SDK's own `User-Agent`.
 	UserAgent(value string) *ClientOptionsBuilder
 	// How long an MCP call keeps trying while the session is waking
-	// (`504` with `Retry-After`), in milliseconds. Default 180 000.
+	// (`504` with `Retry-After`), in milliseconds. Default 600 000.
 	WakeTimeoutMs(value uint64) *ClientOptionsBuilder
 }
 
@@ -1810,8 +1811,9 @@ func (_self *ClientOptionsBuilder) MaxRetries(value uint32) *ClientOptionsBuilde
 	}))
 }
 
-// The time limit of one MCP request, in milliseconds. Default 330 000:
-// `run_js` may run for 300 seconds.
+// The time limit of one MCP request, in milliseconds. Default 630 000:
+// the service holds a call for up to 300 seconds while a session
+// wakes, and `run_js` may then run for 300 more.
 func (_self *ClientOptionsBuilder) McpTimeoutMs(value uint64) *ClientOptionsBuilder {
 	_pointer := _self.ffiObject.incrementPointer("*ClientOptionsBuilder")
 	defer _self.ffiObject.decrementPointer()
@@ -1864,7 +1866,7 @@ func (_self *ClientOptionsBuilder) UserAgent(value string) *ClientOptionsBuilder
 }
 
 // How long an MCP call keeps trying while the session is waking
-// (`504` with `Retry-After`), in milliseconds. Default 180 000.
+// (`504` with `Retry-After`), in milliseconds. Default 600 000.
 func (_self *ClientOptionsBuilder) WakeTimeoutMs(value uint64) *ClientOptionsBuilder {
 	_pointer := _self.ffiObject.incrementPointer("*ClientOptionsBuilder")
 	defer _self.ffiObject.decrementPointer()
@@ -3290,8 +3292,9 @@ type ClientOptions struct {
 	ExchangeToken *bool
 	// The time limit of one API request, in milliseconds. Default 60 000.
 	TimeoutMs *uint64
-	// The time limit of one MCP request, in milliseconds. Default 330 000:
-	// `run_js` may run for 300 seconds.
+	// The time limit of one MCP request, in milliseconds. Default 630 000:
+	// the service holds a call for up to 300 seconds while a session
+	// wakes, and `run_js` may then run for 300 more.
 	McpTimeoutMs *uint64
 	// How many times a request is tried again after `429`, `502`, `503`,
 	// `504` or a connection that could not be made. Default 3.
@@ -3300,7 +3303,7 @@ type ClientOptions struct {
 	// time. Default 500. A `Retry-After` the API sends is used instead.
 	RetryBaseDelayMs *uint64
 	// How long an MCP call keeps trying while the session is waking
-	// (`504` with `Retry-After`), in milliseconds. Default 180 000.
+	// (`504` with `Retry-After`), in milliseconds. Default 600 000.
 	WakeTimeoutMs *uint64
 	// Added in front of the SDK's own `User-Agent`.
 	UserAgent *string

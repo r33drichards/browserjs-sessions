@@ -121,6 +121,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: sdk/go/go.mod
+          cache: false
+
       # One cargo build makes the shared library (the wheel, npm) and the
       # static one (Go).
       - name: Build the library
@@ -200,7 +205,7 @@ jobs:
           npm ci --no-audit --no-fund
           npm run typecheck
           npm run build
-          node --test test/
+          node --test test/smoke.test.mjs
           npm pack --pack-destination "$GITHUB_WORKSPACE/dist/npm"
           tar -tzf "$GITHUB_WORKSPACE"/dist/npm/*.tgz
 
