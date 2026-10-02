@@ -409,18 +409,25 @@ caller=$!
 # not), and every change of an OPA pod's readiness, both with the time.
 k exec "$WITH" -c browser -- python3 -u -c '
 import socket, time
+n = 0
 while True:
     t = time.time()
+    n += 1
     try:
-        c = socket.create_connection(("opa.'"$NS"'.svc", 8181), timeout=1)
+        # The name first, by itself: a lookup that stalls is not a replica
+        # that does not answer.
+        address = socket.getaddrinfo("opa.'"$NS"'.svc", 8181, socket.AF_INET, socket.SOCK_STREAM)[0][4]
+        looked = time.time() - t
+        if looked > 0.5: print("%.3f lookup took %.3f s" % (t, looked))
+        c = socket.create_connection(address, timeout=1)
         c.settimeout(1)
         c.sendall(b"GET /health HTTP/1.1\r\nHost: opa\r\nConnection: close\r\n\r\n")
         ok = c.recv(64).startswith(b"HTTP/1.1 200")
-        peer = c.getpeername()[0]
         c.close()
         if not ok: print("%.3f bad answer after %.3f s" % (t, time.time() - t))
     except Exception as e:
         print("%.3f %r after %.3f s" % (t, e, time.time() - t))
+    if n % 1000 == 0: print("%.3f %d probes so far" % (t, n))
     time.sleep(0.05)
 ' >"$work/probe.log" 2>&1 &
 prober=$!
@@ -433,7 +440,13 @@ prober=$!
   done
 ) &
 watcher=$!
-sleep 2
+# First with nothing happening to OPA at all, for as long as the replacements
+# will take: a call that fails here did not fail because of one.
+stamp "quiet from here"
+sleep "${QUIET_SECONDS:-240}"
+stamp "quiet until here"
+quiet="$(jq -rs --argjson until "$(date +%s)" '[.[] | select(.at < $until)] | "\(length) calls, outcomes: \(map(.outcome) | group_by(.) | map("\(.[0]) \(length)") | join(", "))"' <"$work/during.jsonl")"
+echo "      with no replacement: $quiet"
 for i in $(seq 1 "$replacements"); do
   victim="$(k get pods -l app=opa -o json | jq -r '[.items[] | select(.metadata.deletionTimestamp == null) | select(any(.status.conditions[]?; .type == "Ready" and .status == "True"))] | sort_by(.metadata.creationTimestamp) | .[0].metadata.name')"
   stamp "$i delete $victim"
@@ -451,12 +464,13 @@ if [ "$(outcome "$got")" != ran ]; then
   # When, against the deletions, and what the agent's code and mcp-js saw.
   echo "      calls that did not run (at, seconds, seen):"
   jq -rs '.[] | select(.outcome != "ran") | "      \(.at) \(.seconds)s \(.outcome): \(.seen | .[0:200])"' <<<"$got"
-  echo "      new connections to the Service that failed (at, error):"
+  echo "      the prober (a lookup and a new connection every 50 ms): what it logged (at, what):"
   sed 's/^/      /' "$work/probe.log" | head -60
   echo "      timeline:"
   sort -n "$work/timeline" | sed 's/^/      /'
 fi
 note "" && note "### OPA pods deleted and replaced, $replacements times, while calls are made" && note "" &&
+  note "With no replacement first: $quiet. Then, with the replacements:" && note "" &&
   note "$(jq -rs '"\(length) calls, outcomes: \(map(.outcome) | group_by(.) | map("\(.[0]) \(length)") | join(", ")); slowest \(map(.seconds) | max) s"' <<<"$got")"
 
 k scale deploy/opa --replicas=0 >/dev/null
