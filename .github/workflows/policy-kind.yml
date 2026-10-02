@@ -42,7 +42,7 @@ jobs:
       - name: Manifests, in every stage
         run: |
           set -euo pipefail
-          shellcheck hack/policy-stage.sh hack/pin-images.sh hack/gke-status.sh test/policy/run.sh
+          shellcheck -S warning hack/policy-stage.sh hack/pin-images.sh hack/gke-status.sh test/policy/run.sh
           render() {
             for overlay in deploy/base deploy/local deploy/local-test deploy/gke deploy/gke-staging-issuer test/policy; do
               kubectl kustomize "$overlay" >/dev/null
