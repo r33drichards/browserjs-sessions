@@ -44,7 +44,8 @@ def wait_until(condition, seconds: float = 20.0) -> bool:
 
 @pytest.fixture
 def environment(monkeypatch, catalogue_path):
-    for name in ("BILLING", "TICK", "MAX_GAP", "BILLING_NAMESPACE", "METRONOME_URL", "METRONOME_API_TOKEN"):
+    for name in ("BILLING", "TICK", "MAX_GAP", "AWAKE_WINDOW", "KEPT_WINDOW", "BILLING_NAMESPACE", "METRONOME_URL",
+                 "METRONOME_API_TOKEN"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("BILLING_CATALOGUE", str(catalogue_path))
     monkeypatch.setattr(handlers, "METER", None)
@@ -238,6 +239,7 @@ def test_the_observer_under_kopf(cluster, environment):
     environment.setenv("BILLING", "meter")
     environment.setenv("METRONOME_API_TOKEN", "made-up-token")
     environment.setenv("TICK", "1")
+    environment.setenv("AWAKE_WINDOW", "2s")
     liveness = free_port()
     # deploy.md's command, the liveness endpoint on a free port.
     with KopfRunner(["run", "--standalone", f"--namespace={NS}", f"--liveness=http://127.0.0.1:{liveness}/healthz",

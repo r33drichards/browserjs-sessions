@@ -11,7 +11,7 @@ from billing_operator import cli
 from conftest import CONTRACTS, acct, sandbox
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
-TIMES = ["2026-10-02T10:00:00Z", "2026-10-02T10:01:00Z", "2026-10-02T11:00:00Z"]
+TIMES = ["2026-10-02T10:00:00Z", "2026-10-02T10:01:00Z", "2026-10-02T10:02:00Z", "2026-10-02T10:05:00Z"]
 T0 = 1790935200
 
 
@@ -21,19 +21,18 @@ def test_simulate_prints_the_events_of_each_tick():
     docs = list(yaml.safe_load_all(out.getvalue()))
     assert [d["tick"] for d in docs] == TIMES
     customer = "acct-7615aafcb45bcc853c4ed32cc5539842"
-    # The contract's first vector: 20 s awake since Ready, then 60 s.
-    assert docs[0]["events"] == [{"transaction_id": f"awake/s-aaaaa/{T0}", "customer_id": customer,
+    # The 20 s since Ready, in the window that ends at 10:00:00.
+    assert docs[0]["events"] == [{"transaction_id": f"awake/s-aaaaa/{T0 - 300}", "customer_id": customer,
                                   "event_type": "session.awake", "timestamp": TIMES[0],
                                   "properties": {"session_id": "s-aaaaa", "seconds": "20"}}]
-    assert docs[1]["events"][0]["properties"] == {"session_id": "s-aaaaa", "seconds": "60"}
-    assert "awake_seconds=60 disk_gb_seconds=600 events=1 sent=1" in docs[1]["pass"]
-    # 59 minutes later is beyond the gap: nothing more is counted, and the hour's disk is sent.
-    assert [(e["transaction_id"], e["properties"]["gb_seconds"]) for e in docs[2]["events"]] == [
-        (f"kept/s-aaaaa/{T0}", "300"), (f"kept/s-bbbbb/{T0}", "300")]
-    assert sorted(docs[2]["sessions"]) == ["s-aaaaa", "s-bbbbb"]  # the warm one is nobody's
+    assert docs[1]["events"] == [] and "awake_seconds=60 disk_gb_seconds=600 events=0" in docs[1]["pass"]
+    # Three minutes later is beyond the gap: the window holds the two minutes that were seen.
+    assert [(e["transaction_id"], e["timestamp"], e["properties"]) for e in docs[3]["events"]] == [
+        (f"awake/s-aaaaa/{T0}", TIMES[3], {"session_id": "s-aaaaa", "seconds": "120"})]
+    assert sorted(docs[3]["sessions"]) == ["s-aaaaa", "s-bbbbb"]  # the warm one is nobody's
 
 
-def test_simulate_takes_a_catalogue_and_a_kubectl_list(tmp_path):
+def test_simulate_takes_a_catalogue_the_windows_and_a_kubectl_list(tmp_path):
     catalogue = tmp_path / "catalogue.yaml"
     catalogue.write_text((CONTRACTS / "catalogue.yaml").read_text().replace("sessionDiskGB: 5", "sessionDiskGB: 7"))
     directory = tmp_path / "cluster"
@@ -42,16 +41,20 @@ def test_simulate_takes_a_catalogue_and_a_kubectl_list(tmp_path):
     (directory / "export.yml").write_text(yaml.safe_dump({"apiVersion": "v1", "kind": "List", "items": [sandbox("s-aaaaa")]}))
     (directory / "notes.txt").write_text("not YAML")
     out = io.StringIO()
-    assert cli.main(["simulate", "--catalogue", str(catalogue), str(directory), TIMES[0], TIMES[1]], out) == 0
+    assert cli.main(["simulate", "--catalogue", str(catalogue), "--awake-window", "60", "--kept-window", "120",
+                     str(directory), *TIMES[:3]], out) == 0
     docs = list(yaml.safe_load_all(out.getvalue()))
     assert "disk_gb_seconds=420" in docs[1]["pass"] and docs[1]["events"][0]["customer_id"] == acct()
+    assert [(e["event_type"], e["properties"]) for e in docs[2]["events"]] == [
+        ("session.awake", {"session_id": "s-aaaaa", "seconds": "60"}),
+        ("session.kept", {"session_id": "s-aaaaa", "gb_seconds": "840"})]
 
 
 def test_as_a_command():
-    done = subprocess.run([sys.executable, "-m", "billing_operator", "simulate", str(EXAMPLES), *TIMES[:2]],
+    done = subprocess.run([sys.executable, "-m", "billing_operator", "simulate", str(EXAMPLES), *TIMES],
                           capture_output=True, text=True, cwd=Path(__file__).resolve().parents[1], timeout=60)
     assert done.returncode == 0, done.stderr
-    assert f"transaction_id: awake/s-aaaaa/{T0 + 60}" in done.stdout
+    assert f"transaction_id: awake/s-aaaaa/{T0}" in done.stdout and "seconds: '120'" in done.stdout
 
 
 def test_without_a_catalogue_it_says_so(tmp_path, capsys):

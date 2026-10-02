@@ -5,12 +5,12 @@ events sent to Metronome, the Lease.
     1. read the time once
     2. list every Sandbox once
     3. the seconds function, over the observer's memory of the last tick
-    4. one session.awake event per awake session that counted seconds;
-       the GB-seconds added to the hour's sum, sent when the hour is over
-    5. deliver; after a tick that was delivered, renew the Lease
+    4. the seconds added to each session's open windows; a window that is
+       over, a session that fell asleep, a session that is gone: an event
+    5. deliver; after each window that was delivered, renew the Lease
 
 The observer reads no Account and writes nothing but the Lease. Its memory
-(each session's last sight, the hour's GB-seconds, events waiting to be
+(each session's last sight, the open windows' sums, events waiting to be
 delivered) is not a ledger: losing it loses charges and nothing else.
 """
 from __future__ import annotations
@@ -22,7 +22,7 @@ import time
 from dataclasses import dataclass
 
 from .catalogue import CatalogueFile
-from .events import HourlyDisk, awake_event
+from .events import Windows, awake_event, kept_event, window_of
 from .meter import MAX_GAP, iso, seconds
 from .observe import observe
 from .sender import Sender
@@ -39,8 +39,8 @@ class PassResult:
     now: str
     sessions: int = 0          # Sandboxes with an owner
     awake_seconds: int = 0     # counted this tick
-    disk_gb_seconds: int = 0   # counted this tick (sent with the hour)
-    events: int = 0            # made this tick
+    disk_gb_seconds: int = 0   # counted this tick
+    events: int = 0            # made this tick: windows that closed
     sent: int = 0              # delivered this tick, earlier ticks' included
     pending: int = 0           # waiting to be tried again
     dropped: int = 0           # given up or refused: free time
@@ -50,13 +50,13 @@ class PassResult:
     def line(self) -> str:
         return (f"pass now={self.now} sessions={self.sessions} awake_seconds={self.awake_seconds} "
                 f"disk_gb_seconds={self.disk_gb_seconds} events={self.events} sent={self.sent} "
-                f"pending={self.pending} dropped={self.dropped} lease={'renewed' if self.lease else 'not-renewed'} "
+                f"pending={self.pending} dropped={self.dropped} lease={'renewed' if self.lease else 'kept'} "
                 f"duration_ms={int(self.duration * 1000)}")
 
 
 class Observer:
     def __init__(self, kube, sink, catalogue: CatalogueFile, *, clock=time.time, max_gap: int = MAX_GAP,
-                 backoff: int = 60, holder: str | None = None):
+                 backoff: int = 60, holder: str | None = None, awake_window: int = 300, kept_window: int = 21600):
         self.kube = kube
         self.catalogue = catalogue
         self.clock = clock
@@ -64,7 +64,10 @@ class Observer:
         self.sender = Sender(sink, backoff=backoff)
         self.holder = holder or socket.gethostname()
         self.sessions: dict[str, dict] = {}   # {id: {"lastSeen", "awake"}} as of the last tick
-        self.disk = HourlyDisk()
+        self.awake = Windows(awake_window, awake_event)
+        self.disk = Windows(kept_window, kept_event)
+        self._window: int | None = None  # the awake window of the last tick
+        self._lease_due = True           # at start, and after each window
         self.last: PassResult | None = None
         self.beat = time.monotonic()  # the loop was last seen alive
         self.passes = 0
@@ -89,8 +92,9 @@ class Observer:
         result.sessions = len(observed)
 
         self.sessions, counted = seconds(self.sessions, observed, result.now, self.max_gap)
-        events = [awake_event(sid, customers[sid], t, secs) for sid, secs in sorted(counted.awake.items())]
-        events += self.disk.tick(t, counted.disk_gb, customers)
+        still_awake = {sid for sid, o in observed.items() if o.get("awake")}
+        events = self.awake.tick(t, counted.awake, customers, still_awake)   # one that fell asleep is sent at once
+        events += self.disk.tick(t, counted.disk_gb, customers, set(observed))
         result.awake_seconds = sum(counted.awake.values())
         result.disk_gb_seconds = sum(counted.disk_gb.values())
         result.events = len(events)
@@ -98,11 +102,16 @@ class Observer:
         self.sender.add(t, events)
         flush = await self.sender.flush(t)
         result.sent, result.pending, result.dropped = flush.sent, flush.pending, flush.dropped
-        if flush.pending == 0:
-            # The tick was delivered: the Lease says usage is reaching Metronome.
+        window = window_of(t, self.awake.size)
+        if window != self._window or events:
+            self._window, self._lease_due = window, True
+        if self._lease_due and flush.pending == 0:
+            # A window went by and all of it was delivered (or there was
+            # nothing to send): the Lease says usage is reaching Metronome.
             try:
                 await self.kube.renew_lease(t, self.holder)
                 result.lease = True
+                self._lease_due = False
             except Exception as e:  # noqa: BLE001 - the next tick renews it
                 log.error("Lease not renewed: %s: %s", type(e).__name__, e)
 

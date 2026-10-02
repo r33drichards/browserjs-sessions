@@ -78,9 +78,10 @@ async def startup(settings: kopf.OperatorSettings, **_):
     catalogue = CatalogueFile(cfg.catalogue)
     if catalogue.current() is None:
         raise kopf.PermanentError(f"no catalogue that parses at {cfg.catalogue} (BILLING_CATALOGUE)")
-    METER = Observer(make_kube(cfg), make_sink(cfg), catalogue, max_gap=cfg.max_gap, backoff=cfg.tick)
-    log.info("BILLING is %s: observing %s every %ds, gaps of up to %ds, usage to %s", cfg.billing, cfg.namespace,
-             cfg.tick, cfg.max_gap, cfg.metronome_url)
+    METER = Observer(make_kube(cfg), make_sink(cfg), catalogue, max_gap=cfg.max_gap, backoff=cfg.tick,
+                     awake_window=cfg.awake_window, kept_window=cfg.kept_window)
+    log.info("BILLING is %s: observing %s every %ds, gaps of up to %ds, awake sent every %ds, disk every %ds, to %s",
+             cfg.billing, cfg.namespace, cfg.tick, cfg.max_gap, cfg.awake_window, cfg.kept_window, cfg.metronome_url)
     loop_task = asyncio.create_task(METER.run(cfg.tick), name="billing-meter")
     _tasks[:] = [loop_task, asyncio.create_task(watchdog(METER, cfg.tick, loop_task), name="billing-watchdog")]
 
