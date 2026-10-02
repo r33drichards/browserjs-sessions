@@ -381,7 +381,9 @@ def main():
 
         def browser_execute():
             operations = [
-                {"type": "setContent", "params": {"html": "<title>canary page</title><p id=p>hello</p>"}},
+                # A page of its own, with nothing to fetch: no site out there
+                # is part of this check.
+                {"type": "navigate", "params": {"url": "data:text/html,<title>canary page</title><p id=p>hello</p>"}},
                 {"type": "evaluate", "params": {"script": "window.__canary = %s; document.title + '/' + document.getElementById('p').textContent" % json.dumps(state["marker"])}},
             ]
             out = browser(mcp, operations)
