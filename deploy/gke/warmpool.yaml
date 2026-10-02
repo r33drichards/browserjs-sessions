@@ -149,8 +149,9 @@ spec:
         - name: mcp-js
           image: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/mcp-js@sha256:984dceedf06bf2e18473807617bbc491b409b4fe43e1cea93865128719c0cf3b
           env:
-            # One-time upload URLs are made from this, so they come back
-            # through the session's own host. The pod is started before it is
+            # One-time upload URLs are made from this (mcp-js appends
+            # /api/artifact-uploads/<token>), so they come back under the
+            # session's own prefix. The pod is started before it is
             # anybody's session, but its name is already the session's ID: the
             # Sandbox's name, which adoption does not change.
             - name: SESSION_ID
@@ -158,7 +159,7 @@ spec:
                 fieldRef:
                   fieldPath: metadata.name
             - name: MCP_V8_PUBLIC_URL
-              value: "https://$(SESSION_ID).sessions.browserjs.com"
+              value: "https://sessions.browserjs.com/$(SESSION_ID)"
           ports:
             - name: mcp
               containerPort: 8080

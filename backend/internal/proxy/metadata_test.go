@@ -3,6 +3,7 @@ package proxy
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -10,8 +11,9 @@ import (
 
 // The documents are what Pomerium v0.33.3 serves on a host with an exact
 // MCP route, captured from one, with the session's host in place of that one.
+// Only the sessions' old hosts need them from the backend.
 func TestSessionHostServesOAuthMetadata(t *testing.T) {
-	e := newEnv(t)
+	e := newLegacyEnv(t)
 	base := "https://" + e.host
 	resource := map[string]any{
 		"resource":                 base + "/mcp",
@@ -64,7 +66,7 @@ func TestSessionHostServesOAuthMetadata(t *testing.T) {
 }
 
 func TestOAuthMetadataIsOnlyThoseDocuments(t *testing.T) {
-	e := newEnv(t)
+	e := newLegacyEnv(t)
 	for _, c := range []struct{ method, path string }{
 		{"POST", "/.well-known/oauth-protected-resource/mcp"},
 		{"POST", "/.well-known/oauth-authorization-server"},
@@ -85,5 +87,26 @@ func TestOAuthMetadataIsOnlyThoseDocuments(t *testing.T) {
 	}
 	if rec := e.app("GET", "/.well-known/oauth-authorization-server", "", ""); strings.Contains(rec.Body.String(), "issuer") {
 		t.Errorf("the app's host served the document: %q", rec.Body)
+	}
+}
+
+// The sessions' one host has an exact route in Pomerium, which answers the
+// documents there itself (RFC 9728: the resource's path follows the
+// well-known one). The backend has none to offer on that host.
+func TestSessionsHostHasNoOAuthMetadataOfTheBackend(t *testing.T) {
+	e := newEnv(t)
+	for _, path := range []string{
+		"/.well-known/oauth-protected-resource",
+		"/.well-known/oauth-protected-resource/" + e.id + "/mcp",
+		"/.well-known/oauth-authorization-server",
+		"/" + e.id + "/.well-known/oauth-protected-resource",
+		"/" + e.id + "/.well-known/oauth-protected-resource/mcp",
+		"/" + e.id + "/.well-known/oauth-authorization-server",
+	} {
+		rec := httptest.NewRecorder()
+		e.handler.ServeHTTP(rec, request("GET", sessionsHost, path, "", ""))
+		if rec.Code != http.StatusNotFound || strings.Contains(rec.Body.String(), "issuer") || strings.Contains(rec.Body.String(), "the app") {
+			t.Errorf("GET %s: %d %q, want 404", path, rec.Code, rec.Body)
+		}
 	}
 }

@@ -3,7 +3,11 @@
 // request, the token exchange and the MCP calls. The only thing done for it
 // is the user's part, signing in at Dex, in a headless Chrome.
 //
-//   node test/mcp-client.mjs <id>.sessions.localtest.me alice@example.com
+//   node test/mcp-client.mjs https://sessions.localtest.me/<id>/mcp alice@example.com
+//
+// The first argument is the session's MCP URL, as the UI shows it. (A bare
+// host, <id>.sessions.localtest.me, is taken for https://<host>/mcp: the
+// host a session had to itself before.)
 //
 // The client identifies itself as Claude Code does (its client ID metadata
 // document), which is what Pomerium is configured to accept. Exit status 0
@@ -20,8 +24,8 @@ const { UnauthorizedError } = await sdk("client/auth.js")
 const puppeteer = createRequire(modules)("puppeteer-core")
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0" // the local CA
 
-const [host, email] = process.argv.slice(2)
-const url = new URL(`https://${host}/mcp`)
+const [target, email] = process.argv.slice(2)
+const url = new URL(target.includes("://") ? target : `https://${target}/mcp`)
 const REDIRECT = "http://localhost:53682/callback"
 const seen = []
 const realFetch = globalThis.fetch
@@ -69,7 +73,7 @@ const provider = {
   codeVerifier: () => verifier,
 }
 
-const out = { host, user: email }
+const out = { url: url.href, user: email }
 let ok = false
 try {
   let transport = new StreamableHTTPClientTransport(url, { authProvider: provider })

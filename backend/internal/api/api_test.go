@@ -133,7 +133,7 @@ func TestCreateListAndCap(t *testing.T) {
 	if created.Name != "one" || created.Owner != "alice@example.com" {
 		t.Errorf("created = %+v", created)
 	}
-	if want := "https://" + created.ID + ".sessions.example.com/mcp"; created.MCPURL != want {
+	if want := "https://sessions.example.com/" + created.ID + "/mcp"; created.MCPURL != want {
 		t.Errorf("mcp_url = %q, want %q", created.MCPURL, want)
 	}
 	// Creating is all it takes to own the session.
@@ -159,7 +159,7 @@ func TestCreateListAndCap(t *testing.T) {
 		t.Errorf("alice sees %d sessions, want 2", len(mine))
 	}
 	for _, s := range mine {
-		if s.MCPURL != "https://"+s.ID+".sessions.example.com/mcp" || s.Owner != "alice@example.com" {
+		if s.MCPURL != "https://sessions.example.com/"+s.ID+"/mcp" || s.Owner != "alice@example.com" {
 			t.Errorf("listed session = %+v", s)
 		}
 	}
@@ -184,7 +184,7 @@ func TestSessionJSON(t *testing.T) {
 	id, _ := got["id"].(string)
 	for field, want := range map[string]any{
 		"name": "one", "owner": "alice@example.com", "state": "starting",
-		"mcp_url": "https://" + id + ".sessions.example.com/mcp",
+		"mcp_url": "https://sessions.example.com/" + id + "/mcp",
 	} {
 		if got[field] != want {
 			t.Errorf("%s = %v, want %v (body %s)", field, got[field], want, rec.Body)
@@ -195,7 +195,7 @@ func TestSessionJSON(t *testing.T) {
 	}
 	for _, c := range []struct{ method, body string }{{"GET", ""}, {"PATCH", `{"name":"two"}`}} {
 		got := decode[map[string]any](t, f.do(alice, c.method, "/api/sessions/"+id, c.body))
-		if got["mcp_url"] != "https://"+id+".sessions.example.com/mcp" {
+		if got["mcp_url"] != "https://sessions.example.com/"+id+"/mcp" {
 			t.Errorf("%s: mcp_url = %v", c.method, got["mcp_url"])
 		}
 	}

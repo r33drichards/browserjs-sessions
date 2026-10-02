@@ -11,6 +11,10 @@ spec:
             - name: PUBLIC_URL
               value: https://app.localtest.me
             - name: SESSION_URL_TEMPLATE
+              value: https://sessions.localtest.me/{id}
+            # DEPRECATED: the host each session had before, still served
+            # (as in deploy/gke, so that the tests here cover it).
+            - name: LEGACY_SESSION_URL_TEMPLATE
               value: https://{id}.sessions.localtest.me
             # *.localtest.me is 127.0.0.1 inside the cluster too, so the keys
             # are fetched from Pomerium's Service; its certificate is signed

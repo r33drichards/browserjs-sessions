@@ -68,7 +68,7 @@ spec:
             - name: PUBLIC_URL
               value: https://app.example.com
             - name: SESSION_URL_TEMPLATE
-              value: https://{id}.sessions.example.com
+              value: https://sessions.example.com/{id}
             # Pomerium serves its signing keys on every host it fronts.
             - name: POMERIUM_JWKS_URL
               value: https://app.example.com/.well-known/pomerium/jwks.json

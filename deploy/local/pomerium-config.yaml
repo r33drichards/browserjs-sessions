@@ -27,14 +27,17 @@ mcp_allowed_client_id_domains:
 timeout_read: 5m
 
 routes:
-  # Session hosts. The backend tells the sessions apart by Host, so every
-  # route keeps the caller's.
+  # Sessions: one host for all of them, each under its ID
+  # (https://sessions.localtest.me/<id>/...). The backend tells the sessions'
+  # host from the app's by Host, so every route keeps the caller's, and the
+  # session by the first segment of the path. Each route matches whole
+  # paths; nothing else on this host reaches the backend.
 
   # mcp-js's one-time upload URL: the token in the path is the credential,
   # checked by the session's pod.
   - name: session-upload
-    from: https://*.sessions.localtest.me
-    prefix: /api/artifact-uploads/
+    from: https://sessions.localtest.me
+    regex: '^/s-[a-z0-9]+/api/artifact-uploads/[0-9a-f]+$'
     to: http://backend
     allow_public_unauthenticated_access: true
     preserve_host_header: true
@@ -43,30 +46,25 @@ routes:
   # The session's screen, a websocket: the ticket in the query is the
   # credential, checked by the backend.
   - name: session-vnc
-    from: https://*.sessions.localtest.me
-    path: /vnc
+    from: https://sessions.localtest.me
+    regex: '^/s-[a-z0-9]+/vnc$'
     to: http://backend
     allow_public_unauthenticated_access: true
     allow_websockets: true
     preserve_host_header: true
 
-  # OAuth discovery for the MCP endpoint. Pomerium v0.33.3 serves these two
-  # documents itself only on hosts with an exact route, not on wildcard
-  # hosts, so the backend answers them (backend/internal/proxy/metadata.go).
-  # Remove this route when Pomerium does.
-  - name: session-oauth-metadata
-    from: https://*.sessions.localtest.me
-    prefix: /.well-known/oauth-
-    to: http://backend
-    allow_public_unauthenticated_access: true
-    preserve_host_header: true
-
   # The session's MCP endpoint. Pomerium signs the MCP client's user in and
   # says who it is; the backend decides whether the session is theirs. The
   # list of who may sign in is shared with the app's route below.
+  #
+  # Because this host is exact (no wildcard), Pomerium also answers the
+  # OAuth discovery for it: /.well-known/oauth-authorization-server, and
+  # /.well-known/oauth-protected-resource/<id>/mcp, which names
+  # https://sessions.localtest.me/<id>/mcp as the resource. Its 401 points an
+  # MCP client there.
   - name: session-mcp
-    from: https://*.sessions.localtest.me
-    prefix: /mcp
+    from: https://sessions.localtest.me
+    regex: '^/s-[a-z0-9]+/mcp(/.*)?$'
     to: http://backend
     mcp:
       server:
@@ -85,6 +83,50 @@ routes:
                 is: rwendt1337@gmail.com
             - email:
                 is: browserjs06@gmail.com
+    pass_identity_headers: true
+    preserve_host_header: true
+
+  # DEPRECATED: a host per session (https://<id>.sessions.localtest.me/...),
+  # where sessions were before. Kept so that the MCP URLs and upload URLs
+  # already handed out go on working; no new URL leads here. To retire them,
+  # delete these four routes, LEGACY_SESSION_URL_TEMPLATE on the backend,
+  # backend/internal/proxy/metadata.go, and the wildcard name from the
+  # certificate and from DNS (docs/gke-deployment.md, "Session URLs").
+
+  - name: legacy-session-upload
+    from: https://*.sessions.localtest.me
+    prefix: /api/artifact-uploads/
+    to: http://backend
+    allow_public_unauthenticated_access: true
+    preserve_host_header: true
+    timeout: 5m
+
+  - name: legacy-session-vnc
+    from: https://*.sessions.localtest.me
+    path: /vnc
+    to: http://backend
+    allow_public_unauthenticated_access: true
+    allow_websockets: true
+    preserve_host_header: true
+
+  # OAuth discovery for the MCP endpoint. Pomerium v0.33.3 serves these two
+  # documents itself only on hosts with an exact route, not on wildcard
+  # hosts, so the backend answers them (backend/internal/proxy/metadata.go).
+  - name: legacy-session-oauth-metadata
+    from: https://*.sessions.localtest.me
+    prefix: /.well-known/oauth-
+    to: http://backend
+    allow_public_unauthenticated_access: true
+    preserve_host_header: true
+
+  - name: legacy-session-mcp
+    from: https://*.sessions.localtest.me
+    prefix: /mcp
+    to: http://backend
+    mcp:
+      server:
+        max_request_bytes: 1048576
+    policy: *allowed
     pass_identity_headers: true
     preserve_host_header: true
 

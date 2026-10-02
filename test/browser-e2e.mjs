@@ -71,7 +71,7 @@ try {
   await page.waitForFunction(() => document.body.innerText.includes("running"), { timeout: 120000 })
   record("create a session in the UI", true, `${sid} running in the UI after ${((Date.now() - t0) / 1000).toFixed(1)}s`)
 
-  // The screen is drawn on a canvas, over a websocket to the session's host.
+  // The screen is drawn on a canvas, over a websocket to the sessions' host.
   try {
   await page.waitForSelector("canvas", { timeout: 60000 })
   await page.waitForFunction(() => { const c = document.querySelector("canvas"); return c && c.width >= 1000 }, { timeout: 60000 })
@@ -140,20 +140,33 @@ try {
   // The routes with their own credentials are not behind the list, or any sign-in.
   {
     process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0" // the local CA
-    const host = `https://${sid}.sessions.localtest.me`
-    const put = await fetch(host + "/api/artifact-uploads/" + "0".repeat(64), { method: "PUT", body: "x" })
-    const vnc = await fetch(host + "/vnc")
-    const doc = await fetch(host + "/.well-known/oauth-authorization-server")
-    const mcp = await fetch(host + "/mcp", { method: "POST" })
+    const origin = "https://sessions.localtest.me"
+    const base = `${origin}/${sid}`
+    const put = await fetch(base + "/api/artifact-uploads/" + "0".repeat(64), { method: "PUT", body: "x" })
+    const vnc = await fetch(base + "/vnc")
+    const doc = await fetch(origin + "/.well-known/oauth-authorization-server")
+    const mcp = await fetch(base + "/mcp", { method: "POST" })
     record("upload, VNC and discovery routes need no sign-in; MCP does", put.status === 404 && !(await put.text()).includes("<html") && vnc.status === 426 && doc.status === 200 && mcp.status === 401,
       `no cookie: PUT upload with an unknown token ${put.status} (the backend's), GET /vnc ${vnc.status}, discovery ${doc.status}, POST /mcp ${mcp.status}`)
+    // Pomerium answers the discovery for the sessions' host itself: its 401
+    // names the session's metadata, which names the session's MCP URL.
+    const challenge = mcp.headers.get("www-authenticate") ?? ""
+    const prmURL = `${origin}/.well-known/oauth-protected-resource/${sid}/mcp`
+    const prm = await fetch(prmURL)
+    const resource = prm.status === 200 ? (await prm.json()) : {}
+    record("discovery: the 401 names the session's metadata, and that the session's MCP URL", challenge.includes(`resource_metadata="${prmURL}"`) && resource.resource === base + "/mcp" && resource.authorization_servers?.[0] === origin,
+      `WWW-Authenticate: ${challenge}; ${prmURL} -> ${prm.status} ${JSON.stringify(resource)}`)
+    // Nothing else is on that host.
+    const other = await Promise.all(["/", "/api/me", `/${sid}`, `/${sid}/api/artifacts`, "/mcp"].map(p => fetch(origin + p).then(r => r.status)))
+    record("the sessions' host has nothing but sessions", other.every(s => s === 404), `/, /api/me, /<id>, /<id>/api/artifacts, /mcp -> ${other.join(", ")}`)
   }
 
-  // A real MCP client on the session's host (test/mcp-client.mjs): the owner
-  // gets in, someone else on the list gets a token and then the backend's 404.
+  // A real MCP client on the session's MCP URL (test/mcp-client.mjs): the
+  // owner gets in, someone else on the list gets a token and then the
+  // backend's 404.
   {
-    const client = email => {
-      const run = require("node:child_process").spawnSync(process.execPath, [ROOT + "/test/mcp-client.mjs", `${sid}.sessions.localtest.me`, email], { encoding: "utf8" })
+    const client = (email, target = `https://sessions.localtest.me/${sid}/mcp`) => {
+      const run = require("node:child_process").spawnSync(process.execPath, [ROOT + "/test/mcp-client.mjs", target, email], { encoding: "utf8" })
       let out = {}
       try { out = JSON.parse(run.stdout) } catch {}
       return { status: run.status, out }
@@ -162,8 +175,12 @@ try {
     record("mcp client: discovery, sign-in, initialize, tools/list, run_js", owner.status === 0,
       `tools ${JSON.stringify(owner.out.tools)}; run_js ${owner.out.run_js}; ${(owner.out.requests ?? []).slice(0, 4).join(", ")}${owner.out.error ? "; error " + owner.out.error : ""}`)
     const stranger = client("bob@example.com")
-    record("mcp client: another user is told the session does not exist", stranger.status === 1 && !!stranger.out.token && (stranger.out.requests ?? []).at(-1) === "POST /mcp 404",
+    record("mcp client: another user is told the session does not exist", stranger.status === 1 && !!stranger.out.token && (stranger.out.requests ?? []).at(-1) === `POST /${sid}/mcp 404`,
       `bob: token ${stranger.out.token ? "issued" : "none"}; ${(stranger.out.requests ?? []).at(-1)}; ${stranger.out.error ?? ""}`.trim())
+    // DEPRECATED: the host the session had to itself before still works.
+    const legacy = client("alice@example.com", `${sid}.sessions.localtest.me`)
+    record("mcp client: the session's old host still works", legacy.status === 0,
+      `tools ${JSON.stringify(legacy.out.tools)}; ${(legacy.out.requests ?? []).slice(0, 4).join(", ")}${legacy.out.error ? "; error " + legacy.out.error : ""}`)
   }
 
   // Clean up as alice, unless KEEP=1 (to point test/mcp-oauth.mjs at the session).

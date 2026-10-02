@@ -421,7 +421,8 @@ itself.
 `type: LoadBalancer` gives Pomerium a regional external passthrough Network
 Load Balancer on a reserved regional address; Pomerium terminates TLS with one
 cert-manager certificate (Let's Encrypt, DNS-01 through Cloud DNS) covering the
-three hosts and `*.sessions.browserjs.com`. Why:
+four hosts and `*.sessions.browserjs.com` (the wildcard is for the old
+per-session hosts, deprecated: [session-urls.md](session-urls.md)). Why:
 
 1. It is the topology Pomerium documents and ships for GKE.
 2. Pomerium is the OAuth authorization server for MCP clients and the

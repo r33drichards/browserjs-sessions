@@ -5,19 +5,22 @@ import (
 	"net/http"
 )
 
-// OAuth discovery for a session's MCP endpoint.
+// OAuth discovery for a session's MCP endpoint, on a host per session.
 //
-// This is a workaround. Pomerium is the OAuth server for MCP clients on a
-// session's host, and normally serves these two documents itself. Pomerium
-// v0.33.3 serves them only on hosts that have an exact route: session hosts
-// are matched by a wildcard route, and for those it answers 404 (hosts with
-// a "*" are left out of the virtual hosts that get the documents, see
+// This is a workaround, for the sessions' old hosts only. Pomerium is the
+// OAuth server for MCP clients, and serves these two documents itself on a
+// host that has an exact route, as the sessions' one host has: there the
+// backend has nothing to add. Pomerium v0.33.3 does not serve them on hosts
+// matched by a wildcard route, and answers 404 (hosts with a "*" are left
+// out of the virtual hosts that get the documents, see
 // config/envoyconfig/route_configurations.go at that tag). Everything the
-// documents point to works on a wildcard host. So the backend answers them,
-// with what Pomerium itself says on an exact-route host, behind a public
-// route for /.well-known/oauth-. Remove both once Pomerium serves them.
+// documents point to works on a wildcard host. So for those the backend
+// answers them, with what Pomerium itself says on an exact-route host, behind
+// a public route for /.well-known/oauth-. Remove this file and that route
+// with the old hosts.
 
-// oauthMetadata registers the two documents on the session hosts' mux.
+// oauthMetadata registers the two documents on the mux of a session's own
+// host.
 func (p *Proxy) oauthMetadata(mux *http.ServeMux) {
 	// RFC 9728: the resource's path may follow the well-known one. Clients
 	// ask for either spelling; the resource is the MCP endpoint in both.
@@ -35,17 +38,18 @@ func writeMetadata(w http.ResponseWriter, doc any) {
 }
 
 func (p *Proxy) protectedResource(w http.ResponseWriter, r *http.Request) {
-	id := sessionID(r)
+	rt := routeOf(r)
 	writeMetadata(w, map[string]any{
-		"resource":                 p.URLs.MCP(id),
-		"authorization_servers":    []string{p.URLs.Base(id)},
+		"resource":                 rt.urls.MCP(rt.id),
+		"authorization_servers":    []string{rt.urls.Origin(rt.id)},
 		"bearer_methods_supported": []string{"header"},
 		"resource_name":            "Pomerium",
 	})
 }
 
 func (p *Proxy) authorizationServer(w http.ResponseWriter, r *http.Request) {
-	base := p.URLs.Base(sessionID(r))
+	rt := routeOf(r)
+	base := rt.urls.Origin(rt.id)
 	writeMetadata(w, map[string]any{
 		"issuer":                                     base,
 		"authorization_endpoint":                     base + "/.pomerium/mcp/authorize",

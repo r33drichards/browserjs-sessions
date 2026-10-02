@@ -1,5 +1,5 @@
 # Production, on the GKE cluster infra/main makes: the app on
-# app.browserjs.com, sessions on <id>.sessions.browserjs.com, Pomerium on the
+# app.browserjs.com, sessions on sessions.browserjs.com/<id>, Pomerium on the
 # reserved address behind a passthrough load balancer, certificates from
 # Let's Encrypt. Applied by .github/workflows/deploy.yml; the procedure is
 # docs/gke-deployment.md.

@@ -148,7 +148,7 @@ func serve(ctx context.Context, srv *http.Server, ln net.Listener, grace time.Du
 }
 
 // newHandler builds the server's whole route table. Requests arrive through
-// Pomerium, for the app's host or for a session's; the proxy tells them
+// Pomerium, for the app's host or for the sessions'; the proxy tells them
 // apart and serves the sessions' itself.
 func newHandler(cfg config.Config, verifier auth.Verifier, store *sessions.Store, tracker *idle.Tracker) (http.Handler, *proxy.Proxy) {
 	owners := authz.NewOwners(store, ownerTTL)
@@ -159,6 +159,7 @@ func newHandler(cfg config.Config, verifier auth.Verifier, store *sessions.Store
 			Poll: time.Second, RunningTTL: 2 * time.Second},
 		Idle:         tracker,
 		URLs:         cfg.SessionURLs,
+		LegacyURLs:   cfg.LegacySessionURLs,
 		MaxFileBytes: cfg.MaxFileBytes,
 	}
 
@@ -171,9 +172,9 @@ func newHandler(cfg config.Config, verifier auth.Verifier, store *sessions.Store
 	apiHandler := auth.Middleware(verifier)(apiMux)
 	app.Handle("/api/", apiHandler)
 	app.Handle("/api", apiHandler) // or the mux redirects it to /api/
-	// The app's host has no OAuth metadata (a session's host has its own, see
-	// proxy/metadata.go). A client probing here must be told there is none,
-	// not handed the UI.
+	// The app's host has no OAuth metadata (the sessions' host has, from
+	// Pomerium). A client probing here must be told there is none, not handed
+	// the UI.
 	app.Handle("/.well-known/", http.NotFoundHandler())
 	app.Handle("/", webHandler(cfg))
 	return px.Handler(noAPIRedirects(app)), px

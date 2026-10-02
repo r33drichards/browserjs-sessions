@@ -69,6 +69,10 @@ kubectl apply -f deploy/base/namespace.yaml
 # A throwaway CA and one certificate for every local name. Never committed.
 tls="$LOCAL_DIR/tls"
 new_certificate=""
+# A certificate from before the sessions had one host does not name it.
+if [ -f "$tls/tls.crt" ] && ! openssl x509 -in "$tls/tls.crt" -noout -text | grep -q 'DNS:sessions\.localtest\.me'; then
+  rm -f "$tls/tls.crt"
+fi
 if [ ! -f "$tls/tls.crt" ]; then
   new_certificate=1
   mkdir -p "$tls"
@@ -79,7 +83,7 @@ if [ ! -f "$tls/tls.crt" ]; then
   openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
     -subj "/CN=localtest.me" -keyout "$tls/tls.key" -out "$tls/tls.csr" 2>/dev/null
   printf 'subjectAltName=%s\nextendedKeyUsage=serverAuth\nkeyUsage=critical,digitalSignature\nbasicConstraints=critical,CA:FALSE\nauthorityKeyIdentifier=keyid\n' \
-    "DNS:app.localtest.me,DNS:authenticate.localtest.me,DNS:*.sessions.localtest.me,DNS:pomerium.$NS.svc.cluster.local,DNS:pomerium.$NS.svc" >"$tls/ext.cnf"
+    "DNS:app.localtest.me,DNS:authenticate.localtest.me,DNS:sessions.localtest.me,DNS:*.sessions.localtest.me,DNS:pomerium.$NS.svc.cluster.local,DNS:pomerium.$NS.svc" >"$tls/ext.cnf"
   openssl x509 -req -in "$tls/tls.csr" -CA "$tls/ca.crt" -CAkey "$tls/ca.key" -CAcreateserial \
     -days 365 -extfile "$tls/ext.cnf" -out "$tls/tls.crt" 2>/dev/null
   chmod 600 "$tls"/*.key
@@ -144,7 +148,7 @@ cat <<EOF
 Up.
   App:        https://app.localtest.me      (test users alice@example.com, bob@example.com,
                                              admin@example.com; password "test")
-  Sessions:   https://<id>.sessions.localtest.me/mcp
+  Sessions:   https://sessions.localtest.me/<id>/mcp
   Dex:        http://localhost:5556/dex
   CA:         $tls/ca.crt   (the browser will warn unless you trust it;
                              MCP clients: NODE_EXTRA_CA_CERTS=$tls/ca.crt)

@@ -12,12 +12,17 @@ locals {
     sessions     = "${var.hostnames.sessions}.${var.domain}"
   }
 
-  # Names on the certificate and in DNS. The session hosts are one wildcard.
+  # Names on the certificate and in DNS. Every session is under one host,
+  # sessions.<domain>/<id>. The wildcard is where sessions were before, a
+  # host each, kept while URLs handed out then are still in use: remove the
+  # "sessions" entry (and rename nothing: a new key would replace a record)
+  # once deploy/gke has dropped its legacy-session-* routes.
   public_names = {
-    app          = local.fqdn.app
-    authenticate = local.fqdn.authenticate
-    dex          = local.fqdn.dex
-    sessions     = "*.${local.fqdn.sessions}"
+    app           = local.fqdn.app
+    authenticate  = local.fqdn.authenticate
+    dex           = local.fqdn.dex
+    sessions_host = local.fqdn.sessions
+    sessions      = "*.${local.fqdn.sessions}"
   }
 
   edge_ip = local.edge_nlb ? google_compute_address.edge[0].address : google_compute_global_address.edge[0].address

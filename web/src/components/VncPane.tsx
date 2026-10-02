@@ -55,7 +55,7 @@ export function VncPane({ sessionId, controls }: { sessionId: string; controls?:
       const live = () => !stopped && !paused && mine === generation && screenRef.current
       if (!live()) return
       try {
-        // The session lives on its own host; the backend says where.
+        // The screen is on the sessions' host; the backend says where.
         const { url } = await api.vncTicket(sessionId)
         const target = live()
         if (!target) return

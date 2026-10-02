@@ -10,7 +10,7 @@ function fakeFetch(status: number, body: unknown) {
   )
 }
 
-const session = { id: "s-aaaaaaaaaa", name: "a", owner: "u@example.com", state: "running", created: "2026-10-01T00:00:00Z", mcp_url: "https://s-aaaaaaaaaa.example.com/mcp" }
+const session = { id: "s-aaaaaaaaaa", name: "a", owner: "u@example.com", state: "running", created: "2026-10-01T00:00:00Z", mcp_url: "https://sessions.example.com/s-aaaaaaaaaa/mcp" }
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -20,7 +20,7 @@ describe("api", () => {
     const api = createApi(fetch)
     const list = await api.listSessions()
     expect(list[0].id).toBe("s-aaaaaaaaaa")
-    expect(list[0].mcp_url).toBe("https://s-aaaaaaaaaa.example.com/mcp")
+    expect(list[0].mcp_url).toBe("https://sessions.example.com/s-aaaaaaaaaa/mcp")
     const [url, init] = fetch.mock.calls[0] as [string, RequestInit]
     expect(url).toBe("/api/sessions")
     const headers = new Headers(init.headers)

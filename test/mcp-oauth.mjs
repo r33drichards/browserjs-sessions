@@ -1,7 +1,11 @@
 // Walks Pomerium's MCP sign-in by hand, as Claude Code's client would, on
 // the local cluster:
 //
-//   node test/mcp-oauth.mjs <id>.sessions.localtest.me alice@example.com
+//   node test/mcp-oauth.mjs https://sessions.localtest.me/<id>/mcp alice@example.com
+//
+// The first argument is the session's MCP URL, as the UI shows it. (A bare
+// host, <id>.sessions.localtest.me, is taken for https://<host>/mcp: the
+// host a session had to itself before.)
 //
 // discovery -> authorize (PKCE, Claude Code's client ID document, loopback
 // redirect) -> sign in at Dex in a headless Chrome -> token -> MCP
@@ -17,8 +21,9 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const require = createRequire(ROOT + "/images/browser/browser/")
 const puppeteer = require("puppeteer-core")
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"
-const [host, email] = process.argv.slice(2)
-const MCP = `https://${host}/mcp`
+const [target, email] = process.argv.slice(2)
+const MCP = target.includes("://") ? target : `https://${target}/mcp`
+const ORIGIN = new URL(MCP).origin
 const CLIENT = "https://claude.ai/oauth/claude-code-client-metadata"
 const REDIRECT = "http://localhost:53682/callback"
 const out = {}
@@ -27,7 +32,7 @@ const parse = async r => { const t = await r.text(); const d = t.split("\n").fil
 
 let r, meta
 if (process.env.SKIP_DISCOVERY) {
-  meta = { authorization_endpoint: `https://${host}/.pomerium/mcp/authorize`, token_endpoint: `https://${host}/.pomerium/mcp/token` }
+  meta = { authorization_endpoint: `${ORIGIN}/.pomerium/mcp/authorize`, token_endpoint: `${ORIGIN}/.pomerium/mcp/token` }
   out.protected_resource = { body: { resource: MCP } }
   out.discovery = "skipped: endpoints supplied by hand"
 } else {

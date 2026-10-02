@@ -17,10 +17,17 @@ DOMAIN="${DOMAIN:-browserjs.com}"
 APP="app.$DOMAIN"
 AUTHENTICATE="authenticate.$DOMAIN"
 DEX="dex.$DOMAIN"
+# Every session is under this host, by its ID.
+SESSIONS="sessions.$DOMAIN"
 # A well-formed session ID that (almost certainly) names no session, new each
-# run: it also shows that the wildcard covers a host nobody has asked for.
+# run.
 ID="s-$(LC_ALL=C tr -dc 'a-z2-7' </dev/urandom | head -c 10)"
-SESSION="$ID.sessions.$DOMAIN"
+SESSION="https://$SESSIONS/$ID"
+# DEPRECATED: the host a session had to itself before. Checked while
+# deploy/gke still has its legacy-session-* routes; LEGACY=0 skips it. A new
+# ID each run also shows that the wildcard covers a host nobody has asked for.
+LEGACY="${LEGACY:-1}"
+LEGACY_SESSION="$ID.sessions.$DOMAIN"
 # Under the session domain, but not the form of a session ID.
 MALFORMED="not-a-session.sessions.$DOMAIN"
 
@@ -47,13 +54,15 @@ location() { fetch -o /dev/null -w '%{redirect_url}' "$@" 2>/dev/null; }
 # A JSON document without its whitespace, so a grep need not know its layout.
 compact() { tr -d ' \n\r\t'; }
 
-echo "Deployment: $DOMAIN   session host used: $SESSION"
+echo "Deployment: $DOMAIN   session used: $SESSION"
 echo
 
 # --- certificates ------------------------------------------------------------
 # curl verifies the chain and that the certificate names the host, so success
-# is the proof; the session host shows that the wildcard is on it.
-for host in "$APP" "$AUTHENTICATE" "$DEX" "$SESSION"; do
+# is the proof; the old session host shows that the wildcard is on it.
+hosts=("$APP" "$AUTHENTICATE" "$DEX" "$SESSIONS")
+[ "$LEGACY" = 0 ] || hosts+=("$LEGACY_SESSION")
+for host in "${hosts[@]}"; do
   if error="$(curl -sS --max-time 20 -o /dev/null "https://$host/" 2>&1)"; then
     pass "certificate is valid for $host"
   else
@@ -104,35 +113,66 @@ else
   pass "Dex's sign-in page offers no password login"
 fi
 
-# --- session hosts -----------------------------------------------------------
-is "OAuth metadata on a malformed session host is 404" 404 \
-  "$(status "https://$MALFORMED/.well-known/oauth-protected-resource")"
-metadata="$(fetch "https://$SESSION/.well-known/oauth-protected-resource" 2>/dev/null | compact)"
+# --- sessions ----------------------------------------------------------------
+# Pomerium itself answers OAuth discovery on the sessions' host. RFC 9728: the
+# resource's path follows the well-known one.
+metadata="$(fetch "https://$SESSIONS/.well-known/oauth-protected-resource/$ID/mcp" 2>/dev/null | compact)"
 case "$metadata" in
-  *"\"resource\":\"https://$SESSION/mcp\""*"\"authorization_servers\":[\"https://$SESSION\"]"* | \
-    *"\"authorization_servers\":[\"https://$SESSION\"]"*"\"resource\":\"https://$SESSION/mcp\""*)
-    pass "OAuth metadata on a well-formed session host names its MCP endpoint and itself"
+  *"\"resource\":\"$SESSION/mcp\""*"\"authorization_servers\":[\"https://$SESSIONS\"]"* | \
+    *"\"authorization_servers\":[\"https://$SESSIONS\"]"*"\"resource\":\"$SESSION/mcp\""*)
+    pass "OAuth metadata for a session names its MCP endpoint and the sessions' host"
     ;;
-  *) fail "OAuth metadata on a well-formed session host names its MCP endpoint and itself" "got: ${metadata:0:300}" ;;
+  *) fail "OAuth metadata for a session names its MCP endpoint and the sessions' host" "got: ${metadata:0:300}" ;;
 esac
-server="$(fetch "https://$SESSION/.well-known/oauth-authorization-server" 2>/dev/null | compact)"
+server="$(fetch "https://$SESSIONS/.well-known/oauth-authorization-server" 2>/dev/null | compact)"
 case "$server" in
-  *"\"token_endpoint\":\"https://$SESSION/.pomerium/mcp/token\""*) pass "authorization server metadata points at Pomerium's MCP token endpoint" ;;
+  *"\"token_endpoint\":\"https://$SESSIONS/.pomerium/mcp/token\""*) pass "authorization server metadata points at Pomerium's MCP token endpoint" ;;
   *) fail "authorization server metadata points at Pomerium's MCP token endpoint" "got: ${server:0:300}" ;;
 esac
 
-is "MCP without a token is 401" 401 \
-  "$(status -X POST -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
-    -d '{"jsonrpc":"2.0","id":1,"method":"ping"}' "https://$SESSION/mcp")"
+mcp_post() {
+  fetch -X POST -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+    -d '{"jsonrpc":"2.0","id":1,"method":"ping"}' "$@" 2>/dev/null
+}
+is "MCP without a token is 401" 401 "$(mcp_post -o /dev/null -w '%{http_code}' "$SESSION/mcp")"
+# The 401 tells an MCP client where the session's metadata is.
+challenge="$(mcp_post -o /dev/null -D - "$SESSION/mcp" | tr -d '\r' | grep -i '^www-authenticate:' || true)"
+case "$challenge" in
+  *"resource_metadata=\"https://$SESSIONS/.well-known/oauth-protected-resource/$ID/mcp\""*)
+    pass "the 401 points at the session's own protected-resource metadata"
+    ;;
+  *) fail "the 401 points at the session's own protected-resource metadata" "got: ${challenge:-no WWW-Authenticate header}" ;;
+esac
 
 # The upload route has no sign-in: a session that does not exist is refused
 # by the backend, not sent to sign in.
-upload="https://$SESSION/api/artifact-uploads/smoke-test-token"
+upload="$SESSION/api/artifact-uploads/$(printf '0%.0s' $(seq 64))"
 is "upload to a session that does not exist is 404" 404 "$(status -X PUT --data-binary smoke "$upload")"
 to="$(location -X PUT --data-binary smoke "$upload")"
 is "upload to a session that does not exist is not redirected to sign in" "" "$to"
 
-is "the screen route refuses a plain GET (426), without sign-in" 426 "$(status "https://$SESSION/vnc")"
+is "the screen route refuses a plain GET (426), without sign-in" 426 "$(status "$SESSION/vnc")"
+
+# Nothing else is on the sessions' host: Pomerium has no route for it.
+for path in / /api/me "/$ID" "/$ID/" "/$ID/api/artifacts" /mcp; do
+  is "https://$SESSIONS$path is 404" 404 "$(status "https://$SESSIONS$path")"
+done
+
+# --- DEPRECATED: a host per session --------------------------------------------
+if [ "$LEGACY" != 0 ]; then
+  is "old hosts: OAuth metadata on a malformed session host is 404" 404 \
+    "$(status "https://$MALFORMED/.well-known/oauth-protected-resource")"
+  metadata="$(fetch "https://$LEGACY_SESSION/.well-known/oauth-protected-resource" 2>/dev/null | compact)"
+  case "$metadata" in
+    *"\"resource\":\"https://$LEGACY_SESSION/mcp\""*"\"authorization_servers\":[\"https://$LEGACY_SESSION\"]"* | \
+      *"\"authorization_servers\":[\"https://$LEGACY_SESSION\"]"*"\"resource\":\"https://$LEGACY_SESSION/mcp\""*)
+      pass "old hosts: OAuth metadata names the host's MCP endpoint and itself"
+      ;;
+    *) fail "old hosts: OAuth metadata names the host's MCP endpoint and itself" "got: ${metadata:0:300}" ;;
+  esac
+  is "old hosts: MCP without a token is 401" 401 "$(mcp_post -o /dev/null -w '%{http_code}' "https://$LEGACY_SESSION/mcp")"
+  is "old hosts: the screen route refuses a plain GET (426), without sign-in" 426 "$(status "https://$LEGACY_SESSION/vnc")"
+fi
 
 echo
 echo "$passed passed, $failed failed"

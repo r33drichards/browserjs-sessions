@@ -29,7 +29,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOCAL = os.path.join(ROOT, ".local")
 NS = "browserjs-sessions"
 APP_HOST = "app.localtest.me"
-SESSION_DOMAIN = "sessions.localtest.me"
+SESSIONS_HOST = "sessions.localtest.me"  # every session is under it, by its ID
 ALICE, BOB, ADMIN = "alice@example.com", "bob@example.com", "admin@example.com"
 IDLE_AFTER = "30s"  # for the idle checks; the sweep runs once a minute
 
@@ -215,7 +215,18 @@ def api(method, path, user, body=None):
 
 
 def session_host(sid):
-    return "%s.%s" % (sid, SESSION_DOMAIN)
+    """The host a session is asked at: the same for all of them."""
+    return SESSIONS_HOST
+
+
+def session_path(sid, path):
+    """path of session sid on that host."""
+    return "/%s%s" % (sid, path)
+
+
+def legacy_host(sid):
+    """The host a session had to itself before, and still answers at."""
+    return "%s.%s" % (sid, SESSIONS_HOST)
 
 
 def wait_state(sid, want, user=ALICE, timeout=240):
@@ -237,13 +248,13 @@ class MCP:
     """A minimal MCP client (Streamable HTTP) for one session, as one user."""
 
     def __init__(self, sid, user=ALICE):
-        self.host, self.user, self.session, self.ids = session_host(sid), user, None, 0
+        self.host, self.path, self.user, self.session, self.ids = session_host(sid), session_path(sid, "/mcp"), user, None, 0
 
     def post(self, message, timeout=120):
         headers = {"Accept": "application/json, text/event-stream"}
         if self.session:
             headers["Mcp-Session-Id"] = self.session
-        status, resp_headers, raw = request("POST", self.host, "/mcp", user=self.user, body=message,
+        status, resp_headers, raw = request("POST", self.host, self.path, user=self.user, body=message,
                                             headers=headers, timeout=timeout)
         if resp_headers.get("Mcp-Session-Id"):
             self.session = resp_headers["Mcp-Session-Id"]
@@ -384,7 +395,7 @@ class Run:
         status, s = api("POST", "/api/sessions", ALICE, {"name": "integration"})
         expect(status == 201, "create: %s %s" % (status, s))
         self.sid = s["id"]
-        expect(s["owner"] == ALICE and s["mcp_url"] == "https://%s/mcp" % session_host(self.sid), "session: %s" % s)
+        expect(s["owner"] == ALICE and s["mcp_url"] == "https://%s/%s/mcp" % (SESSIONS_HOST, self.sid), "session: %s" % s)
         took = wait_state(self.sid, "running")
         self.timings["start"] = took
         return "%s running %.1fs after create; mcp_url %s" % (self.sid, took, s["mcp_url"])
@@ -440,7 +451,7 @@ class Run:
         return "tab default navigated to https://example.com/, document.title 'Example Domain'"
 
     def mcp_refusals(self):
-        host = session_host(self.sid)
+        host, mcp = session_host(self.sid), session_path(self.sid, "/mcp")
         init = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
             "protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "x", "version": "0"}}}
         seen = {}
@@ -448,19 +459,61 @@ class Run:
                           ("for the app host", {"assertion": SIGNER.assertion(ALICE, APP_HOST)}),
                           ("expired", {"assertion": SIGNER.assertion(ALICE, host, lifetime=-600)})):
             for method in ("POST", "GET", "DELETE"):
-                status, headers, _ = request(method, host, "/mcp", body=init if method == "POST" else None, **kw)
+                status, headers, _ = request(method, host, mcp, body=init if method == "POST" else None, **kw)
                 expect(status == 403, "%s, assertion %s: %d" % (method, label, status))
                 expect("WWW-Authenticate" not in headers, "a challenge was sent")
             seen[label] = 403
-        status, _, _ = request("POST", host, "/mcp", user=BOB, body=init)
+        status, _, _ = request("POST", host, mcp, user=BOB, body=init)
         expect(status == 404, "stranger: %d" % status)
-        status, _, _ = request("POST", host, "/mcp", user=ADMIN, body=init,
+        status, _, _ = request("POST", host, mcp, user=ADMIN, body=init,
                                headers={"Accept": "application/json, text/event-stream"})
         expect(status == 200, "admin: %d" % status)
         return "no/garbage/other-host/expired assertion 403 (POST, GET, DELETE; never 401); stranger 404; admin 200"
 
+    def session_paths(self):
+        host = session_host(self.sid)
+        init = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "x", "version": "0"}}}
+        stream = {"Accept": "application/json, text/event-stream"}
+        # The sessions' host has sessions and nothing else.
+        for path in ("/", "/mcp", "/api/me", "/api/sessions", "/s/%s/mcp" % self.sid, "/%sx/mcp" % self.sid,
+                     session_path(self.sid, ""), session_path(self.sid, "/"), session_path(self.sid, "/api/artifacts")):
+            status, _, raw = request("POST", host, path, user=ALICE, body=init, headers=stream)
+            expect(status == 404 and b"<html" not in raw.lower(), "POST %s: %d" % (path, status))
+        # No redirect leads out of the session's prefix, and a browser cannot
+        # open a session route as a page.
+        for path in ("//mcp", "/mcp//x", "/mcp/../mcp"):
+            status, headers, _ = request("POST", host, session_path(self.sid, path), user=ALICE, body=init, headers=stream)
+            expect(status == 404 and "Location" not in headers, "POST %s: %d" % (path, status))
+        status, _, _ = request("GET", host, session_path(self.sid, "/mcp"), user=ALICE,
+                               headers={"Accept": "text/html", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"})
+        expect(status == 403, "a browser navigating to the MCP endpoint: %d" % status)
+        return "nothing but sessions on the sessions' host (404); unclean paths 404, not redirected; a navigation 403"
+
+    def legacy_host(self):
+        """The host the session would have had to itself before still answers."""
+        host = legacy_host(self.sid)
+        init = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "x", "version": "0"}}}
+        stream = {"Accept": "application/json, text/event-stream"}
+        status, _, raw = request("POST", host, "/mcp", user=ALICE, body=init, headers=stream)
+        expect(status == 200, "owner at the old host: %d %s" % (status, raw[:100]))
+        status, _, _ = request("POST", host, "/mcp", user=BOB, body=init, headers=stream)
+        expect(status == 404, "stranger at the old host: %d" % status)
+        # An assertion is for one host: the sessions' is not the old one's.
+        status, _, _ = request("POST", host, "/mcp", body=init, headers=stream,
+                               assertion=SIGNER.assertion(ALICE, SESSIONS_HOST))
+        expect(status == 403, "the sessions' host's assertion at the old host: %d" % status)
+        status, _, raw = request("GET", host, "/.well-known/oauth-protected-resource/mcp")
+        doc = json.loads(raw) if status == 200 else {}
+        expect(doc.get("resource") == "https://%s/mcp" % host and doc.get("authorization_servers") == ["https://%s" % host],
+               "OAuth metadata at the old host: %d %s" % (status, raw[:200]))
+        status, _, _ = request("GET", session_host(self.sid), "/.well-known/oauth-protected-resource" + session_path(self.sid, "/mcp"))
+        expect(status == 404, "the backend answered OAuth metadata for the sessions' host (Pomerium's to answer): %d" % status)
+        return "owner 200, stranger 404, another host's assertion 403; its OAuth metadata names itself; none from the backend for the sessions' host"
+
     def mcp_stream_running(self):
-        conn, resp = open_request("GET", session_host(self.sid), "/mcp", user=ALICE, timeout=20, headers={
+        conn, resp = open_request("GET", session_host(self.sid), session_path(self.sid, "/mcp"), user=ALICE, timeout=20, headers={
             "Accept": "text/event-stream", "Mcp-Session-Id": self.mcp.session or ""})
         try:
             ctype = resp.headers.get("Content-Type", "")
@@ -485,8 +538,9 @@ class Run:
         text = self.mcp.tool("get_artifact_upload_url", {"key": self.upload_key, "mime_type": "text/plain"})
         grant = json.loads(text)
         url = grant["url"]
-        prefix = "https://%s/api/artifact-uploads/" % host
-        expect(url.startswith(prefix), "upload URL %s is not on the session host" % url)
+        uploads = session_path(self.sid, "/api/artifact-uploads/")
+        prefix = "https://%s%s" % (host, uploads)
+        expect(url.startswith(prefix), "upload URL %s is not under the session's own prefix" % url)
         path = url[len("https://" + host):]
         status, _, raw = request("PUT", host, path, body=self.upload_body, headers={"Content-Type": "text/plain"})
         expect(status // 100 == 2, "PUT: %d %s" % (status, raw[:200]))
@@ -497,12 +551,12 @@ class Run:
             console.log(f === null ? "MISSING" : f.mime_type + "|" + new TextDecoder().decode(f.bytes));
         """ % json.dumps(self.upload_key))
         expect(self.upload_body.decode() in out, "artifact.get: %s" % out[:300])
-        bad, _, _ = request("PUT", host, "/api/artifact-uploads/" + "0" * 64, body=b"x")
+        bad, _, _ = request("PUT", host, uploads + "0" * 64, body=b"x")
         expect(bad // 100 == 4, "PUT with an unknown token: %d" % bad)
         # Refused on its declared size, before any of the body is sent.
         conn = connect(30)
         try:
-            conn.putrequest("PUT", "/api/artifact-uploads/" + "0" * 64, skip_host=True)
+            conn.putrequest("PUT", uploads + "0" * 64, skip_host=True)
             conn.putheader("Host", host)
             conn.putheader("Content-Length", str(17 << 20))
             conn.endheaders()
@@ -510,7 +564,7 @@ class Run:
         finally:
             conn.close()
         expect(big == 413, "17 MiB PUT: %d" % big)
-        return "URL on the session host; PUT with no credentials %d, again %d; artifact.get returns the bytes; unknown token %d; 17 MiB 413" % (
+        return "URL under the session's prefix on the sessions' host; PUT with no credentials %d, again %d; artifact.get returns the bytes; unknown token %d; 17 MiB 413" % (
             status, again, bad)
 
     # VNC
@@ -519,7 +573,7 @@ class Run:
         host = session_host(self.sid)
         status, t = api("POST", "/api/sessions/%s/vnc-ticket" % self.sid, ALICE)
         expect(status == 200, "vnc-ticket: %s %s" % (status, t))
-        prefix = "wss://%s/vnc?ticket=" % host
+        prefix = "wss://%s%s?ticket=" % (host, session_path(self.sid, "/vnc"))
         expect(t["url"].startswith(prefix), "ticket URL: %s" % t["url"])
         path = t["url"][len("wss://" + host):]
         plain, headers, _ = request("GET", host, path)
@@ -529,7 +583,7 @@ class Run:
         expect(frame.startswith(b"RFB 003.008"), "first frame: %r" % frame[:20])
         reused, _ = websocket(host, path)
         expect(" 401 " in reused, "ticket used twice: %s" % reused)
-        none, _ = websocket(host, "/vnc")
+        none, _ = websocket(host, session_path(self.sid, "/vnc"))
         expect(" 401 " in none, "no ticket: %s" % none)
         return "plain GET 426; upgrade with ticket '%s', first frame %r; ticket again 401; no ticket 401" % (
             line, frame[:12])
@@ -558,10 +612,11 @@ class Run:
         # For up to 2 s after it last saw the pod, the proxy still takes it to
         # be there; a call in that window is a 502, not the 409.
         time.sleep(2.5)
-        status, _, raw = request("POST", host, "/mcp", user=ALICE, body={"jsonrpc": "2.0", "id": 1, "method": "ping"},
+        mcp = session_path(self.sid, "/mcp")
+        status, _, raw = request("POST", host, mcp, user=ALICE, body={"jsonrpc": "2.0", "id": 1, "method": "ping"},
                                  headers={"Accept": "application/json, text/event-stream"})
         expect(status == 409, "MCP POST while stopped: %d %s" % (status, raw[:100]))
-        status, headers, _ = request("GET", host, "/mcp", user=ALICE, headers={"Accept": "text/event-stream"})
+        status, headers, _ = request("GET", host, mcp, user=ALICE, headers={"Accept": "text/event-stream"})
         expect(status == 405 and headers.get("Allow") == "POST, DELETE", "GET /mcp while stopped: %d" % status)
         time.sleep(3)
         _, s = api("GET", "/api/sessions/" + self.sid, ALICE)
@@ -605,7 +660,7 @@ class Run:
         self.mcp.initialize()  # the last use of the session
         used = time.time()
         # A client that keeps its event stream open the whole time.
-        self.stream = open_request("GET", session_host(self.sid), "/mcp", user=ALICE, timeout=600, headers={
+        self.stream = open_request("GET", session_host(self.sid), session_path(self.sid, "/mcp"), user=ALICE, timeout=600, headers={
             "Accept": "text/event-stream", "Mcp-Session-Id": self.mcp.session or ""})
         expect(self.stream[1].status == 200, "GET /mcp: %d" % self.stream[1].status)
         wait_state(self.sid, "asleep", timeout=300)
@@ -620,7 +675,7 @@ class Run:
         except Exception:
             pass
         host = session_host(self.sid)
-        status, headers, _ = request("GET", host, "/mcp", user=ALICE, headers={"Accept": "text/event-stream"})
+        status, headers, _ = request("GET", host, session_path(self.sid, "/mcp"), user=ALICE, headers={"Accept": "text/event-stream"})
         expect(status == 405 and headers.get("Allow") == "POST, DELETE", "GET /mcp while asleep: %d" % status)
         time.sleep(8)
         _, s = api("GET", "/api/sessions/" + self.sid, ALICE)
@@ -665,7 +720,7 @@ class Run:
         took = time.time() - start
         self.timings["delete"] = took
         time.sleep(2.5)  # the proxy remembers a session's owner for 2s
-        status, _, _ = request("POST", session_host(self.sid), "/mcp", user=ALICE, body={
+        status, _, _ = request("POST", session_host(self.sid), session_path(self.sid, "/mcp"), user=ALICE, body={
             "jsonrpc": "2.0", "id": 1, "method": "ping"})
         expect(status == 404, "MCP on the deleted session: %d" % status)
         sid, self.sid = self.sid, None
@@ -683,9 +738,11 @@ class Run:
             check("mcp: run_js", self.mcp_run_js)
             check("mcp: run_js drives the browser", self.mcp_browser)
             check("mcp: GET /mcp on a running session streams", self.mcp_stream_running)
-            check("upload: one-time URL on the session host", self.upload)
+            check("upload: one-time URL under the session's prefix", self.upload)
             check("memory: write a file", self.remember)
         check("mcp: refused without a good assertion (403, not 401)", self.mcp_refusals)
+        check("paths: only sessions on the sessions' host, no redirects, no pages", self.session_paths)
+        check("legacy: the session's old host still answers", self.legacy_host)
         check("vnc: ticket, websocket upgrade, RFB banner", self.vnc)
         if check("stop: stopped, MCP 409, GET /mcp 405", self.stop) and check("resume: running again", self.resume):
             check("resume: the tab is where it was", self.restored_tab)
