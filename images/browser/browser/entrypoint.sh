@@ -125,7 +125,7 @@ trap 'cleanup; exit 143' TERM INT
 # Xvnc is the X server and the VNC server in one. Unlike x11vnc on Xvfb it
 # honours a viewer's request to resize the desktop (SetDesktopSize), which is
 # how the screen follows the viewer's window; openbox then refits the
-# maximised Chromium window. The size only changes when a viewer asks, so it
+# maximised Chromium window (see openbox-rc.xml). The size only changes when a viewer asks, so it
 # stays put while nobody is connected (and across a snapshot and restore).
 #
 # No VNC password, as before: it listens on loopback only and websockify is
@@ -140,8 +140,19 @@ for _ in $(seq 1 50); do
   sleep 0.1
 done
 
-openbox --sm-disable &
+# The config is what maximises Chromium's windows, so that they follow the
+# desktop's size.
+openbox --sm-disable ${OPENBOX_RC:+--config-file "$OPENBOX_RC"} &
 pids+=($!)
+
+# The desktop's size now, as Chromium wants it ("W,H"): a viewer may have
+# resized it since the start. openbox maximises the window anyway; this is
+# the size it gets before that.
+desktop_size() {
+  local size
+  size="$(xdpyinfo -display :99 2>/dev/null | sed -n 's/^ *dimensions: *\([0-9]*\)x\([0-9]*\) pixels.*/\1,\2/p' | head -n 1)"
+  echo "${size:-$SCREEN_W,$SCREEN_H}"
+}
 
 # Keep Chromium alive: if someone closes the last window over VNC or it
 # crashes, bring it back with the same profile.
@@ -175,7 +186,7 @@ pids+=($!)
       --remote-debugging-address=127.0.0.1 \
       --remote-debugging-port=9222 \
       --window-position=0,0 \
-      --window-size="$SCREEN_W,$SCREEN_H" \
+      --window-size="$(desktop_size)" \
       --force-device-scale-factor=1 \
       --start-maximized \
       $RESTORE_FLAG \
