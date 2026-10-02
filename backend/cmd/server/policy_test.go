@@ -262,7 +262,7 @@ func TestNothingReachesAPodBeforeItsFirstPolicyIsInForce(t *testing.T) {
 		_, _ = w.Write([]byte("pod"))
 	}))
 	defer pod.Close()
-	handler, px := newHandler(cfg, verifier, store, idle.New(15*time.Minute, time.Now))
+	handler, px := newHandler(cfg, verifier, store, idle.New(store, "test", 15*time.Minute, time.Now))
 	px.Target = func(sessions.Session, int) string { return strings.TrimPrefix(pod.URL, "http://") }
 	s.handler = handler
 

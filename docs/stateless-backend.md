@@ -49,9 +49,8 @@ Each of these is rebuilt from the cluster or lost at no cost.
 | `billing.Enforcer.starts` (`WAKES_PER_HOUR`), `auth.FailureLimiter`, Stripe webhook's failure limiter | rate limiters | **weaker**: each replica counts what it saw, so the worst case is N times the limit. They already reset at every restart |
 | `tokens.Handlers.creating` | lock around "count, then create" for API tokens | **weaker**: two creates by one user through two replicas at the same moment can pass the token cap by one |
 | `stripe.Service.locks` | orders two reads of Stripe for one account | **weaker**: two webhooks for one account at two replicas can write in either order; the 15-minute reconcile puts it right |
+| `policy.Gated.inForce`: sessions whose first policy was seen in force | cache of a fact on the SessionPolicy that never reverts | each replica reads it once per session |
 | `policy.Watch`: follows a new session's policy into force | goroutine of the replica that created the session | if that replica dies in those seconds nobody deletes a session whose policy was refused; true of one replica too |
-
-The policy gate of PR #119 is not on `main` and was not looked at.
 
 ## Idleness
 
