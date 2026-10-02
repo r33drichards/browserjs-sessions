@@ -11,9 +11,10 @@ spec:
       containers:
         - name: backend
           env:
-            # Standby until the rollout says this pod is the active one
-            # (backend/cmd/server/active.go): the pod's labels, as a file
-            # the kubelet keeps current.
+            # It campaigns for the passes (the Lease backend-leader) only
+            # while the rollout says this pod is the active one
+            # (backend/internal/leader): the pod's labels, as a file the
+            # kubelet keeps current.
             - name: ACTIVE_FILE
               value: /etc/podinfo/labels
           volumeMounts:

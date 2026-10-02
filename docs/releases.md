@@ -15,19 +15,25 @@ environment, no service mesh.
 | **session images** (browser, mcp-js) | **one canary session** on the new digests before the warm pool gets them | the backend's `canary` create option, the deploy workflow |
 | operators, OPA, Pomerium, Dex, CRDs, routes | applied, then the canary against the whole, then back to the last good commit if it fails | the deploy workflow |
 
-**Why the backend is blue-green and not weighted.** Weighted means two
-backends answering users at once, and this backend cannot: a VNC ticket is
-in the memory of the process that issued it (the next request, the
-websocket, would land on the other one and be refused), and so is idle
-tracking (the one that runs the sweep would put to sleep the sessions that
-are busy on the other). No router fixes that; it needs those two kept
-outside the process (signed tickets, activity on the Sandbox), which is
-backend work of its own. Blue-green needs much less: the second backend
-must only **do nothing unasked** while it is checked, which it now does
-(`backend/cmd/server/active.go`: the idle sweep, the warm pool's claim
-recovery and billing's sweeps start when the pod's label
-`browserjs.dev/role` says `active`). The cut-over itself is what a restart
-has always been (tickets and idle clocks start again), without the gap.
+**Why the backend is blue-green and not weighted.** Until the stateless
+backend, a VNC ticket was in the memory of the process that issued it and so
+was idle tracking: two backends answering users at once would refuse each
+other's tickets and put to sleep sessions busy on the other. The stateless
+backend keeps both outside the process (signed tickets, activity on the
+Sandbox), but its **first** release replaces a backend that does not, and
+must not overlap with it; blue-green gives exactly that. From then on a
+weighted backend is possible (below), and blue-green stays until that is
+chosen and tried.
+
+What blue-green needs of the backend is that the second one **does nothing
+unasked** while it is checked. The backend's unasked work (the idle sweep,
+the warm pool's claim recovery, billing's and Stripe's passes) runs only on
+the replica that holds the Lease `backend-leader`, and a replica campaigns
+for it only while its pod's label `browserjs.dev/role` says `active`
+(`ACTIVE_FILE`, `backend/internal/leader`). Argo Rollouts writes that label:
+`preview` on the pod being checked, `active` after the switch. The old pod
+gives the Lease up within 15 seconds of losing the label, or when it stops,
+and the new one takes it within 15 seconds more.
 
 **Why the site's weights need no router.** Its four pods are behind one
 Service, which Pomerium sends every visitor to; one new pod among four is a
@@ -271,7 +277,8 @@ ConfigMap's name, a `rollout restart`) makes the Rollout:
    real session, created, driven, restricted, slept, woken and deleted
    through the new backend;
 3. passed: switch the Service `backend` to the new pod and relabel it
-   `active` (it then starts its sweeps); the old pod goes 30 seconds later,
+   `active` (it then takes the Lease and the passes); the old pod goes 30
+   seconds later,
    so calls in flight on it can finish. Viewers reconnect and tickets are
    issued anew, as at any restart;
 4. failed, or the pod not ready within ten minutes: remove the new pod.
