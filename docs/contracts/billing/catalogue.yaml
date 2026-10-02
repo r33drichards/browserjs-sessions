@@ -1,0 +1,76 @@
+# What is sold, and what each thing gives. The ONE source: the Stripe setup
+# command makes Stripe's Products and Prices from it, the backend embeds it
+# (it never takes an entitlement from Stripe), the UI and the site get it
+# from GET /api/billing/catalogue. Amounts are in US cents. Proposed numbers:
+# the arithmetic is section 7 of the design; changing one is a contract change.
+version: 1
+currency: usd
+
+# What an account with no subscription has. "free" has never bought a pack;
+# "payg" has purchased hours left. Not Stripe objects.
+tiers:
+  free:
+    name: Free
+    monthlyGrantHours: 3        # calendar month, UTC; no card; does not roll over
+    maxSessions: 1
+    maxAwake: 1
+    idleDeleteDays: 14          # a session unused this long is deleted, disk and all
+  payg:
+    name: Pay as you go
+    monthlyGrantHours: 3        # the free allowance still arrives
+    maxSessions: 3
+    maxAwake: 2
+    idleDeleteDays: 60
+
+# Subscriptions. One Stripe Product each (the Customer Portal can only switch
+# between Products), one monthly Price each.
+plans:
+  - key: starter
+    name: Starter
+    productId: cu_plan_starter
+    lookupKey: cu_starter_monthly_v1
+    amount: 500
+    hours: 40
+    maxSessions: 3
+    maxAwake: 2
+    enabled: true
+  - key: pro
+    name: Pro
+    productId: cu_plan_pro
+    lookupKey: cu_pro_monthly_v1
+    amount: 2000
+    hours: 180
+    maxSessions: 10
+    maxAwake: 4
+    enabled: true
+  - key: scale
+    name: Scale
+    productId: cu_plan_scale
+    lookupKey: cu_scale_monthly_v1
+    amount: 10000
+    hours: 1000
+    maxSessions: 25
+    maxAwake: 8
+    # Not sold until the project's CPU quota is raised: eight awake sessions
+    # of one account would be most of today's eleven places.
+    enabled: false
+
+# Packs: one-off payments. They are both "pay as you go" (for someone with no
+# subscription) and "top-up" (for a subscriber who ran out): one mechanism.
+packs:
+  - key: hours-20
+    name: 20 hours
+    productId: cu_pack_hours
+    lookupKey: cu_hours_20_v1
+    amount: 500
+    hours: 20
+    validDays: 365
+    enabled: true
+  - key: hours-100
+    name: 100 hours
+    productId: cu_pack_hours
+    lookupKey: cu_hours_100_v1
+    amount: 2000
+    hours: 100
+    validDays: 365
+    enabled: true

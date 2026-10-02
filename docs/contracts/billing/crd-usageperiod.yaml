@@ -1,0 +1,97 @@
+# The closed book of one account's one period: written once by the billing
+# operator when the period ends, never changed, kept 13 months. The current
+# period is in Account.status.period; this is its copy for the record.
+# Contract: docs/contracts/billing/README.md. Track B copies this file to
+# deploy/base/crd-usageperiod.yaml unchanged.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: usageperiods.browserjs.dev
+spec:
+  group: browserjs.dev
+  scope: Namespaced
+  names:
+    kind: UsagePeriod
+    listKind: UsagePeriodList
+    plural: usageperiods
+    singular: usageperiod
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      additionalPrinterColumns:
+        - name: Account
+          type: string
+          jsonPath: .spec.account
+        - name: Start
+          type: date
+          jsonPath: .spec.start
+        - name: Plan
+          type: string
+          jsonPath: .spec.plan
+        - name: Used (s)
+          type: integer
+          jsonPath: .spec.usedSeconds
+        - name: Allowance (s)
+          type: integer
+          jsonPath: .spec.allowanceSeconds
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: ["spec"]
+          x-kubernetes-validations:
+            - rule: self.spec == oldSelf.spec
+              message: a closed period is immutable
+          properties:
+            spec:
+              type: object
+              required: ["account", "start", "end", "usedSeconds"]
+              properties:
+                account:
+                  type: string
+                  pattern: "^acct-[0-9a-f]{32}$"
+                start:
+                  type: string
+                  format: date-time
+                end:
+                  type: string
+                  format: date-time
+                plan:
+                  type: string
+                allowanceSeconds:
+                  type: integer
+                  format: int64
+                usedSeconds:
+                  type: integer
+                  format: int64
+                purchasedSecondsUsed:
+                  description: The part of usedSeconds that packs paid for.
+                  type: integer
+                  format: int64
+                overdraftSeconds:
+                  type: integer
+                  format: int64
+                days:
+                  type: array
+                  maxItems: 32
+                  items:
+                    type: object
+                    required: ["date", "seconds"]
+                    properties:
+                      date:
+                        type: string
+                      seconds:
+                        type: integer
+                        format: int64
+                sessions:
+                  type: array
+                  maxItems: 200
+                  items:
+                    type: object
+                    required: ["id", "seconds"]
+                    properties:
+                      id:
+                        type: string
+                      seconds:
+                        type: integer
+                        format: int64

@@ -1,0 +1,279 @@
+# One per user of the product: who they are to Stripe, and the ledger of
+# their hours. Created by the backend the first time a signed-in user is
+# seen; spec is the backend's, status is the billing operator's alone.
+# Contract: docs/contracts/billing/README.md. Track B copies this file to
+# deploy/base/crd-account.yaml unchanged.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: accounts.browserjs.dev
+spec:
+  group: browserjs.dev
+  scope: Namespaced
+  names:
+    kind: Account
+    listKind: AccountList
+    plural: accounts
+    singular: account
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Owner
+          type: string
+          jsonPath: .spec.owner
+        - name: Plan
+          type: string
+          jsonPath: .status.plan
+        - name: Level
+          type: string
+          jsonPath: .status.level
+        - name: Balance (s)
+          type: integer
+          jsonPath: .status.balanceSeconds
+        - name: Used (s)
+          type: integer
+          jsonPath: .status.period.usedSeconds
+        - name: Period end
+          type: date
+          jsonPath: .status.period.end
+        - name: Observed
+          type: date
+          jsonPath: .status.meter.observedAt
+          priority: 1
+        - name: Blocked
+          type: string
+          jsonPath: .spec.blocked.reason
+          priority: 1
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: ["spec"]
+          x-kubernetes-validations:
+            - rule: self.metadata.name == 'acct-' + self.spec.ownerHash
+              message: an Account is named acct-<spec.ownerHash>
+          properties:
+            spec:
+              type: object
+              required: ["owner", "ownerHash"]
+              x-kubernetes-validations:
+                - rule: self.owner == oldSelf.owner && self.ownerHash == oldSelf.ownerHash
+                  message: owner and ownerHash cannot be changed
+                - rule: "!has(oldSelf.stripeCustomerId) || (has(self.stripeCustomerId) && self.stripeCustomerId == oldSelf.stripeCustomerId)"
+                  message: stripeCustomerId cannot be changed once set
+              properties:
+                owner:
+                  description: The user's email address, lower case, as on their sessions (browserjs.dev/owner-id).
+                  type: string
+                  maxLength: 320
+                ownerHash:
+                  description: sessions.OwnerLabel(owner), the value of the label browserjs.dev/owner on the user's sessions.
+                  type: string
+                  pattern: "^[0-9a-f]{32}$"
+                stripeCustomerId:
+                  description: The Stripe Customer, made at the first checkout. Absent until then.
+                  type: string
+                  pattern: "^cus_[A-Za-z0-9]+$"
+                subscription:
+                  description: >-
+                    What the backend last read from Stripe about the user's one
+                    subscription. Absent for a user who never subscribed. Always
+                    written from a fresh read of the Subscription, never from an
+                    event's payload.
+                  type: object
+                  required: ["id", "status", "priceLookupKey"]
+                  properties:
+                    id:
+                      type: string
+                      pattern: "^sub_[A-Za-z0-9]+$"
+                    status:
+                      type: string
+                      enum: ["incomplete", "incomplete_expired", "trialing", "active", "past_due", "canceled", "unpaid", "paused"]
+                    priceLookupKey:
+                      description: The lookup_key of the subscription's one price (catalogue.yaml).
+                      type: string
+                    currentPeriodStart:
+                      type: string
+                      format: date-time
+                    currentPeriodEnd:
+                      type: string
+                      format: date-time
+                    cancelAt:
+                      description: When the subscription ends, if the user cancelled. Absent otherwise.
+                      type: string
+                      format: date-time
+                    readAt:
+                      description: When the backend read this from Stripe.
+                      type: string
+                      format: date-time
+                exempt:
+                  description: Metered, never refused, never stopped. For admins and guests of the house; set by hand or from BILLING_EXEMPT_EMAILS.
+                  type: boolean
+                blocked:
+                  description: Present, the user can do nothing and their sessions are put to sleep. Set by an admin, or by the backend on a dispute.
+                  type: object
+                  required: ["reason"]
+                  properties:
+                    reason:
+                      type: string
+                      enum: ["dispute", "abuse", "admin"]
+                    note:
+                      type: string
+                      maxLength: 256
+                    since:
+                      type: string
+                      format: date-time
+                termsAcceptedAt:
+                  description: When the user accepted the terms (stage 4). Absent, the UI asks before anything else.
+                  type: string
+                  format: date-time
+                termsVersion:
+                  type: string
+                  maxLength: 32
+                deletedAt:
+                  description: The user deleted their account. Only owner, ownerHash and this are kept, for 35 days, so that signing up again in the same month gives no second free allowance.
+                  type: string
+                  format: date-time
+            status:
+              description: Written by the billing operator only, one whole update per tick (metering.md).
+              type: object
+              properties:
+                plan:
+                  description: The key of the plan in catalogue.yaml that sets the user's limits now.
+                  type: string
+                level:
+                  description: ok, low (20 % of the allowance or 30 minutes left), exhausted (nothing left).
+                  type: string
+                  enum: ["ok", "low", "exhausted"]
+                balanceSeconds:
+                  description: Awake seconds the user can still use now, over every live grant.
+                  type: integer
+                  format: int64
+                  minimum: 0
+                purchasedSeconds:
+                  description: The part of balanceSeconds that came from packs.
+                  type: integer
+                  format: int64
+                  minimum: 0
+                period:
+                  description: The period usage is shown for. A subscriber's is Stripe's billing period; anyone else's the calendar month, UTC.
+                  type: object
+                  properties:
+                    start:
+                      type: string
+                      format: date-time
+                    end:
+                      type: string
+                      format: date-time
+                    allowanceSeconds:
+                      description: The seconds of the period's free or plan grant.
+                      type: integer
+                      format: int64
+                    usedSeconds:
+                      description: Awake seconds metered in the period, whatever paid for them.
+                      type: integer
+                      format: int64
+                    days:
+                      description: usedSeconds by UTC day, for the chart. At most 32 entries.
+                      type: array
+                      maxItems: 32
+                      items:
+                        type: object
+                        required: ["date", "seconds"]
+                        properties:
+                          date:
+                            type: string
+                            pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+                          seconds:
+                            type: integer
+                            format: int64
+                    sessions:
+                      description: usedSeconds by session, including sessions since deleted. At most 200 entries; the smallest are merged into "other".
+                      type: array
+                      maxItems: 200
+                      items:
+                        type: object
+                        required: ["id", "seconds"]
+                        properties:
+                          id:
+                            type: string
+                          seconds:
+                            type: integer
+                            format: int64
+                exhaustedAt:
+                  description: When the balance reached zero; absent while there is a balance. The backend puts the user's sessions to sleep BILLING_GRACE after this.
+                  type: string
+                  format: date-time
+                overdraftSeconds:
+                  description: Seconds used with no grant to cover them (the grace, and any slowness in stopping). Counted, never charged.
+                  type: integer
+                  format: int64
+                meter:
+                  description: The meter's working state (metering.md). Nothing outside the operator reads it except observedAt.
+                  type: object
+                  properties:
+                    observedAt:
+                      description: The time of the last tick. Older than BILLING_STALE_AFTER, the ledger is stale (enforcement.md).
+                      type: string
+                      format: date-time
+                    usedSeconds:
+                      description: Every second ever metered for the account.
+                      type: integer
+                      format: int64
+                    sessions:
+                      description: The sessions that were billable at the last tick.
+                      type: array
+                      maxItems: 200
+                      x-kubernetes-list-type: map
+                      x-kubernetes-list-map-keys: ["id"]
+                      items:
+                        type: object
+                        required: ["id", "lastSeen"]
+                        properties:
+                          id:
+                            type: string
+                          lastSeen:
+                            type: string
+                            format: date-time
+                    consumed:
+                      description: Seconds taken from each grant that is still live or expired within 35 days. At most 200 entries.
+                      type: array
+                      maxItems: 200
+                      x-kubernetes-list-type: map
+                      x-kubernetes-list-map-keys: ["grant"]
+                      items:
+                        type: object
+                        required: ["grant", "seconds"]
+                        properties:
+                          grant:
+                            type: string
+                          seconds:
+                            type: integer
+                            format: int64
+                conditions:
+                  type: array
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys: ["type"]
+                  items:
+                    type: object
+                    required: ["type", "status"]
+                    properties:
+                      type:
+                        description: "Metered: the operator has this account in its ledger. PaymentFailed: the subscription is past_due or unpaid."
+                        type: string
+                      status:
+                        type: string
+                        enum: ["True", "False", "Unknown"]
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                      observedGeneration:
+                        type: integer
+                        format: int64
+                      lastTransitionTime:
+                        type: string
+                        format: date-time

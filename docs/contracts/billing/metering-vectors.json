@@ -1,0 +1,955 @@
+[
+  {
+    "name": "steady: three ticks a minute apart bill two minutes plus the start",
+    "why": "The first sight of a run bills from Ready (20 s earlier); each later tick bills the gap.",
+    "grants": [
+      {
+        "name": "g-free-2026-10",
+        "source": "free",
+        "seconds": 10800,
+        "validFrom": "2026-10-01T00:00:00Z",
+        "expiresAt": "2026-11-01T00:00:00Z"
+      }
+    ],
+    "ticks": [
+      {
+        "now": "2026-10-02T10:00:00Z",
+        "observed": {
+          "s-aaaaa": {
+            "billable": true,
+            "readySince": "2026-10-02T09:59:40Z"
+          }
+        }
+      },
+      {
+        "now": "2026-10-02T10:01:00Z",
+        "observed": {
+          "s-aaaaa": {
+            "billable": true,
+            "readySince": "2026-10-02T09:59:40Z"
+          }
+        }
+      },
+      {
+        "now": "2026-10-02T10:02:00Z",
+        "observed": {
+          "s-aaaaa": {
+            "billable": true,
+            "readySince": "2026-10-02T09:59:40Z"
+          }
+        }
+      }
+    ],
+    "expect": [
+      {
+        "credited": {
+          "s-aaaaa": 20
+        },
+        "balanceSeconds": 10780,
+        "allowanceSeconds": 10800,
+        "level": "ok",
+        "overdraftSeconds": 0,
+        "exhaustedAt": null
+      },
+      {
+        "credited": {
+          "s-aaaaa": 60
+        },
+        "balanceSeconds": 10720,
+        "allowanceSeconds": 10800,
+        "level": "ok",
+        "overdraftSeconds": 0,
+        "exhaustedAt": null
+      },
+      {
+        "credited": {
+          "s-aaaaa": 60
+        },
+        "balanceSeconds": 10660,
+        "allowanceSeconds": 10800,
+        "level": "ok",
+        "overdraftSeconds": 0,
+        "exhaustedAt": null
+      }
+    ]
+  },
+  {
+    "name": "tail: the time after the last billable sight is free",
+    "why": "Seen awake at 10:01, asleep at 10:02: the up to 60 s in between are not billed.",
+    "grants": [
+      {
+        "name": "g-free-2026-10",
+        "source": "free",
+        "seconds": 10800,
+        "validFrom": "2026-10-01T00:00:00Z",
+        "expiresAt": "2026-11-01T00:00:00Z"
+      }
+    ],
+    "state": {
+      "sessions": {
+        "s-aaaaa": {
+          "lastSeen": "2026-10-02T10:00:00Z"
+        }
+      }
+    },
+    "ticks": [
+      {
+        "now": "2026-10-02T10:01:00Z",
+        "observed": {
+          "s-aaaaa": {
+            "billable": true,
+            "readySince": "2026-10-02T09:00:00Z"
+          }
+        }
+      },
+      {
+        "now": "2026-10-02T10:02:00Z",
+        "observed": {
+          "s-aaaaa": {
+            "billable": false,
+            "readySince": null
+          }
+        }
+      },
+      {
+        "now": "2026-10-02T10:03:00Z",
+        "observed": {
+          "s-aaaaa": {
+            "billable": false,
+            "readySince": null
+          }
+        }
+      }
+    ],
+    "expect": [
+      {
+        "credited": {
+          "s-aaaaa": 60
+        },
+        "balanceSeconds": 10740,
+        "allowanceSeconds": 10800,
+        "level": "ok",
+        "overdraftSeconds": 0,
+        "exhaustedAt": null
+      },
+      {
+        "credited": {},
+        "balanceSeconds": 10740,
+        "allowanceSeconds": 10800,
+        "level": "ok",
+        "overdraftSeconds": 0,
+        "exhaustedAt": null
+      },
+      {
+        "credited": {},
+        "balanceSeconds": 10740,
+        "allowanceSeconds": 10800,
+        "level": "ok",
+        "overdraftSeconds": 0,
+        "exhaustedAt": null
+      }
+    ]
+  },
+  {
+    "name": "starting and stopping are not billable",
+    "why": "Not Ready (pending for a node, restoring) and Suspended-but-not-yet-down are observed as not billable.",
+    "grants": [
+      {
+        "name": "g-free-2026-10",
+        "source": "free",
+        "seconds": 10800,
+        "validFrom": "2026-10-01T00:00:00Z",
+        "expiresAt": "2026-11-01T00:00:00Z"
+      }
+    ],
+    "ticks": [
+      {
+        "now": "2026-10-02T10:00:00Z",
+        "observed": {
+          "s-aaaaa": {
+            "billable": false,
+            "readySince": null
+          }
+        }
+      },
+      {
+        "now": "2026-10-02T10:01:00Z",
+        "observed": {
+          "s-aaaaa": {
+            "billable": false,
+            "readySince": null
+          }
+        }
+      },
+      {
+        "now": "2026-10-02T10:02:00Z",
+        "observed": {
+          "s-aaaaa": {
+            "billable": true,
+            "readySince": "2026-10-02T10:01:30Z"
+          }
+        }
+      }
+    ],
+    "expect": [
+      {
+        "credited": {},
+        "balanceSeconds": 10800,
+        "allowanceSeconds": 10800,
+        "level": "ok",
+        "overdraftSeconds": 0,
+        "exhaustedAt": null
+      },
+      {
+        "credited": {},
+        "balanceSeconds": 10800,
+        "allowanceSeconds": 10800,
+        "level": "ok",
+        "overdraftSeconds": 0,
+        "exhaustedAt": null
+      },
+      {
+        "credited": {
+          "s-aaaaa": 30
+        },
+        "balanceSeconds": 10770,
+        "allowanceSeconds": 10800,
+        "level": "ok",
+        "overdraftSeconds": 0,
+        "exhaustedAt": null
+      }
+    ]
+  },
+  {
+    "name": "meter away for ten minutes: the gap is free",
+    "why": "A gap over 150 s is not billed, and Ready was long ago, so the first tick back bills nothing.",
+    "grants": [
+      {
+        "name": "g-free-2026-10",
+        "source": "free",
+        "seconds": 10800,
+        "validFrom": "2026-10-01T00:00:00Z",
+        "expiresAt": "2026-11-01T00:00:00Z"
+      }
+    ],
+    "state": {
+      "sessions": {
+        "s-aaaaa": {
+          "lastSeen": "2026-10-02T10:00:00Z"
+        }
+      }
+    },
+    "ticks": [
+      {
+        "now": "2026-10-02T10:10:00Z",
+        "observed": {
+          "s-aaaaa": {
+            "billable": true,
+            "readySince": "2026-10-02T09:00:00Z"
+          }
+        }
+      },
+      {
+        "now": "2026-10-02T10:11:00Z",
+        "observed": {
+          "s-aaaaa": {
+            "billable": true,
+            "readySince": "2026-10-02T09:00:00Z"
+          }
+        }
+      }
+    ],
+    "expect": [
+      {
+        "credited": {},
+        "balanceSeconds": 10800,
+        "allowanceSeconds": 10800,
+        "level": "ok",
+        "overdraftSeconds": 0,
+        "exhaustedAt": null
+      },
+      {
+        "credited": {
+          "s-aaaaa": 60
+        },
+        "balanceSeconds": 10740,
+        "allowanceSeconds": 10800,
+        "level": "ok",
+        "overdraftSeconds": 0,
+        "exhaustedAt": null
+      }
+    ]
+  },
+  {
+    "name": "late tick within the gap limit is billed in full",
+    "why": "A tick 140 s after the last (a slow pass) bills 140 s.",
+    "grants": [
+      {
+        "name": "g-free-2026-10",
+        "source": "free",
+        "seconds": 10800,
+        "validFrom": "2026-10-01T00:00:00Z",
+        "expiresAt": "2026-11-01T00:00:00Z"
+      }
+    ],
+    "state": {
+      "sessions": {
+        "s-aaaaa": {
+          "lastSeen": "2026-10-02T10:00:00Z"
+        }
+      }
+    },
+    "ticks": [
+      {
+        "now": "2026-10-02T10:02:20Z",
+        "observed": {
+          "s-aaaaa": {
+            "billable": true,
+            "readySince": "2026-10-02T09:00:00Z"
+          }
+        }
+      }
+    ],
+    "expect": [
+      {
+        "credited": {
+          "s-aaaaa": 140
+        },
+        "balanceSeconds": 10660,
+        "allowanceSeconds": 10800,
+        "level": "ok",
+        "overdraftSeconds": 0,
+        "exhaustedAt": null
+      }
+    ]
+  },
+  {
+    "name": "clock steps backwards: nothing is billed",
+    "why": "now is before lastSeen; the gap is not positive and Ready is not recent.",
+    "grants": [
+      {
+        "name": "g-free-2026-10",
+        "source": "free",
+        "seconds": 10800,
+        "validFrom": "2026-10-01T00:00:00Z",
+        "expiresAt": "2026-11-01T00:00:00Z"
+      }
+    ],
+    "state": {
+      "sessions": {
+        "s-aaaaa": {
+          "lastSeen": "2026-10-02T10:05:00Z"
+        }
+      }
+    },
+    "ticks": [
+      {
+        "now": "2026-10-02T10:04:00Z",
+        "observed": {
+          "s-aaaaa": {
+            "billable": true,
+            "readySince": "2026-10-02T09:00:00Z"
+          }
+        }
+      },
+      {
+        "now": "2026-10-02T10:05:00Z",
+        "observed": {
+          "s-aaaaa": {
+            "billable": true,
+            "readySince": "2026-10-02T09:00:00Z"
+          }
+        }
+      }
+    ],
+    "expect": [
+      {
+        "credited": {},
+        "balanceSeconds": 10800,
+        "allowanceSeconds": 10800,
+        "level": "ok",
+        "overdraftSeconds": 0,
+        "exhaustedAt": null
+      },
+      {
+        "credited": {
+          "s-aaaaa": 60
+        },
+        "balanceSeconds": 10740,
+        "allowanceSeconds": 10800,
+        "level": "ok",
+        "overdraftSeconds": 0,
+        "exhaustedAt": null
+      }
+    ]
+  },
+  {
+    "name": "readySince in the future is ignored",
+    "why": "The Sandbox controller's clock is ahead of the meter's: no credit on first sight.",
+    "grants": [
+      {
+        "name": "g-free-2026-10",
+        "source": "free",
+        "seconds": 10800,
+        "validFrom": "2026-10-01T00:00:00Z",
+        "expiresAt": "2026-11-01T00:00:00Z"
+      }
+    ],
+    "ticks": [
+      {
+        "now": "2026-10-02T10:00:00Z",
+        "observed": {
+          "s-aaaaa": {
+            "billable": true,
+            "readySince": "2026-10-02T10:00:05Z"
+          }
+        }
+      },
+      {
+        "now": "2026-10-02T10:01:00Z",
+        "observed": {
+          "s-aaaaa": {
+            "billable": true,
+            "readySince": "2026-10-02T10:00:05Z"
+          }
+        }
+      }
+    ],
+    "expect": [
+      {
+        "credited": {},
+        "balanceSeconds": 10800,
+        "allowanceSeconds": 10800,
+        "level": "ok",
+        "overdraftSeconds": 0,
+        "exhaustedAt": null
+      },
+      {
+        "credited": {
+          "s-aaaaa": 60
+        },
+        "balanceSeconds": 10740,
+        "allowanceSeconds": 10800,
+        "level": "ok",
+        "overdraftSeconds": 0,
+        "exhaustedAt": null
+      }
+    ]
+  },
+  {
+    "name": "a run that begins and ends between two ticks is free",
+    "why": "Never seen billable: the cost of sampling, accepted (wakes are rate limited instead).",
+    "grants": [
+      {
+        "name": "g-free-2026-10",
+        "source": "free",
+        "seconds": 10800,
+        "validFrom": "2026-10-01T00:00:00Z",
+        "expiresAt": "2026-11-01T00:00:00Z"
+      }
+    ],
+    "ticks": [
+      {
+        "now": "2026-10-02T10:00:00Z",
+        "observed": {
+          "s-aaaaa": {
+            "billable": false,
+            "readySince": null
+          }
+        }
+      },
+      {
+        "now": "2026-10-02T10:01:00Z",
+        "observed": {
+          "s-aaaaa": {
+            "billable": false,
+            "readySince": null
+          }
+        }
+      }
+    ],
+    "expect": [
+      {
+        "credited": {},
+        "balanceSeconds": 10800,
+        "allowanceSeconds": 10800,
+        "level": "ok",
+        "overdraftSeconds": 0,
+        "exhaustedAt": null
+      },
+      {
+        "credited": {},
+        "balanceSeconds": 10800,
+        "allowanceSeconds": 10800,
+        "level": "ok",
+        "overdraftSeconds": 0,
+        "exhaustedAt": null
+      }
+    ]
+  },
+  {
+    "name": "two sessions awake at once use hours twice as fast",
+    "why": "Awake time is per session, summed over the account.",
+    "grants": [
+      {
+        "name": "g-free-2026-10",
+        "source": "free",
+        "seconds": 10800,
+        "validFrom": "2026-10-01T00:00:00Z",
+        "expiresAt": "2026-11-01T00:00:00Z"
+      }
+    ],
+    "state": {
+      "sessions": {
+        "s-aaaaa": {
+          "lastSeen": "2026-10-02T10:00:00Z"
+        },
+        "s-bbbbb": {
+          "lastSeen": "2026-10-02T10:00:00Z"
+        }
+      }
+    },
+    "ticks": [
+      {
+        "now": "2026-10-02T10:01:00Z",
+        "observed": {
+          "s-aaaaa": {
+            "billable": true,
+            "readySince": "2026-10-02T09:00:00Z"
+          },
+          "s-bbbbb": {
+            "billable": true,
+            "readySince": "2026-10-02T09:00:00Z"
+          }
+        }
+      }
+    ],
+    "expect": [
+      {
+        "credited": {
+          "s-aaaaa": 60,
+          "s-bbbbb": 60
+        },
+        "balanceSeconds": 10680,
+        "allowanceSeconds": 10800,
+        "level": "ok",
+        "overdraftSeconds": 0,
+        "exhaustedAt": null
+      }
+    ]
+  },
+  {
+    "name": "deleted session: dropped from the meter, tail free",
+    "why": "A session that no longer exists is simply not in the observation.",
+    "grants": [
+      {
+        "name": "g-free-2026-10",
+        "source": "free",
+        "seconds": 10800,
+        "validFrom": "2026-10-01T00:00:00Z",
+        "expiresAt": "2026-11-01T00:00:00Z"
+      }
+    ],
+    "state": {
+      "sessions": {
+        "s-aaaaa": {
+          "lastSeen": "2026-10-02T10:00:00Z"
+        }
+      }
+    },
+    "ticks": [
+      {
+        "now": "2026-10-02T10:01:00Z",
+        "observed": {}
+      }
+    ],
+    "expect": [
+      {
+        "credited": {},
+        "balanceSeconds": 10800,
+        "allowanceSeconds": 10800,
+        "level": "ok",
+        "overdraftSeconds": 0,
+        "exhaustedAt": null
+      }
+    ]
+  },
+  {
+    "name": "order: the grant that expires first is used first, then purchased hours",
+    "why": "90 s left of the plan grant, 120 s used: 90 from the plan, 30 from the pack.",
+    "grants": [
+      {
+        "name": "g-plan-oct",
+        "source": "plan",
+        "seconds": 144000,
+        "validFrom": "2026-10-05T12:00:00Z",
+        "expiresAt": "2026-11-05T12:00:00Z"
+      },
+      {
+        "name": "g-pack-1",
+        "source": "purchase",
+        "seconds": 72000,
+        "validFrom": "2026-10-01T00:00:00Z",
+        "expiresAt": "2027-10-01T00:00:00Z"
+      }
+    ],
+    "state": {
+      "sessions": {
+        "s-aaaaa": {
+          "lastSeen": "2026-10-10T10:00:00Z"
+        },
+        "s-bbbbb": {
+          "lastSeen": "2026-10-10T10:00:00Z"
+        }
+      },
+      "consumed": {
+        "g-plan-oct": 143910
+      },
+      "usedSeconds": 143910
+    },
+    "ticks": [
+      {
+        "now": "2026-10-10T10:01:00Z",
+        "observed": {
+          "s-aaaaa": {
+            "billable": true,
+            "readySince": "2026-10-10T09:00:00Z"
+          },
+          "s-bbbbb": {
+            "billable": true,
+            "readySince": "2026-10-10T09:00:00Z"
+          }
+        }
+      }
+    ],
+    "expect": [
+      {
+        "credited": {
+          "s-aaaaa": 60,
+          "s-bbbbb": 60
+        },
+        "balanceSeconds": 71970,
+        "allowanceSeconds": 144000,
+        "level": "ok",
+        "overdraftSeconds": 0,
+        "exhaustedAt": null
+      }
+    ]
+  },
+  {
+    "name": "low at 20 percent of the allowance, exhausted at zero, overdraft not owed",
+    "why": "Free grant of 3 h with 60 s left; the second tick uses more than is left.",
+    "grants": [
+      {
+        "name": "g-free-2026-10",
+        "source": "free",
+        "seconds": 10800,
+        "validFrom": "2026-10-01T00:00:00Z",
+        "expiresAt": "2026-11-01T00:00:00Z"
+      }
+    ],
+    "state": {
+      "sessions": {
+        "s-aaaaa": {
+          "lastSeen": "2026-10-02T10:00:00Z"
+        }
+      },
+      "consumed": {
+        "g-free-2026-10": 10680
+      },
+      "usedSeconds": 10680
+    },
+    "ticks": [
+      {
+        "now": "2026-10-02T10:00:30Z",
+        "observed": {
+          "s-aaaaa": {
+            "billable": true,
+            "readySince": "2026-10-02T09:00:00Z"
+          }
+        }
+      },
+      {
+        "now": "2026-10-02T10:01:30Z",
+        "observed": {
+          "s-aaaaa": {
+            "billable": true,
+            "readySince": "2026-10-02T09:00:00Z"
+          }
+        }
+      },
+      {
+        "now": "2026-10-02T10:02:30Z",
+        "observed": {
+          "s-aaaaa": {
+            "billable": true,
+            "readySince": "2026-10-02T09:00:00Z"
+          }
+        }
+      }
+    ],
+    "expect": [
+      {
+        "credited": {
+          "s-aaaaa": 30
+        },
+        "balanceSeconds": 90,
+        "allowanceSeconds": 10800,
+        "level": "low",
+        "overdraftSeconds": 0,
+        "exhaustedAt": null
+      },
+      {
+        "credited": {
+          "s-aaaaa": 60
+        },
+        "balanceSeconds": 30,
+        "allowanceSeconds": 10800,
+        "level": "low",
+        "overdraftSeconds": 0,
+        "exhaustedAt": null
+      },
+      {
+        "credited": {
+          "s-aaaaa": 60
+        },
+        "balanceSeconds": 0,
+        "allowanceSeconds": 10800,
+        "level": "exhausted",
+        "overdraftSeconds": 30,
+        "exhaustedAt": "2026-10-02T10:02:30Z"
+      }
+    ]
+  },
+  {
+    "name": "a purchase clears exhausted",
+    "why": "A Grant that appears between two ticks is counted at the next; exhaustedAt goes.",
+    "grants": [
+      {
+        "name": "g-free-2026-10",
+        "source": "free",
+        "seconds": 10800,
+        "validFrom": "2026-10-01T00:00:00Z",
+        "expiresAt": "2026-11-01T00:00:00Z"
+      },
+      {
+        "name": "g-pack-2",
+        "source": "purchase",
+        "seconds": 72000,
+        "validFrom": "2026-10-02T10:01:10Z",
+        "expiresAt": "2027-10-02T10:01:10Z"
+      }
+    ],
+    "state": {
+      "consumed": {
+        "g-free-2026-10": 10800
+      },
+      "usedSeconds": 10800,
+      "exhaustedAt": "2026-10-02T10:01:00Z"
+    },
+    "ticks": [
+      {
+        "now": "2026-10-02T10:02:00Z",
+        "observed": {
+          "s-aaaaa": {
+            "billable": false,
+            "readySince": null
+          }
+        }
+      }
+    ],
+    "expect": [
+      {
+        "credited": {},
+        "balanceSeconds": 72000,
+        "allowanceSeconds": 10800,
+        "level": "ok",
+        "overdraftSeconds": 0,
+        "exhaustedAt": null
+      }
+    ]
+  },
+  {
+    "name": "month boundary for a free account: the interval across midnight goes to the new grant",
+    "why": "Grants are judged at the tick's time: at 00:00:30 October's grant has expired and November's counts.",
+    "grants": [
+      {
+        "name": "g-free-2026-10",
+        "source": "free",
+        "seconds": 10800,
+        "validFrom": "2026-10-01T00:00:00Z",
+        "expiresAt": "2026-11-01T00:00:00Z"
+      },
+      {
+        "name": "g-free-2026-11",
+        "source": "free",
+        "seconds": 10800,
+        "validFrom": "2026-11-01T00:00:00Z",
+        "expiresAt": "2026-12-01T00:00:00Z"
+      }
+    ],
+    "state": {
+      "sessions": {
+        "s-aaaaa": {
+          "lastSeen": "2026-10-31T23:59:30Z"
+        }
+      },
+      "consumed": {
+        "g-free-2026-10": 10000
+      },
+      "usedSeconds": 10000
+    },
+    "ticks": [
+      {
+        "now": "2026-11-01T00:00:30Z",
+        "observed": {
+          "s-aaaaa": {
+            "billable": true,
+            "readySince": "2026-10-31T23:00:00Z"
+          }
+        }
+      }
+    ],
+    "expect": [
+      {
+        "credited": {
+          "s-aaaaa": 60
+        },
+        "balanceSeconds": 10740,
+        "allowanceSeconds": 10800,
+        "level": "ok",
+        "overdraftSeconds": 0,
+        "exhaustedAt": null
+      }
+    ]
+  },
+  {
+    "name": "unused plan hours do not roll over, purchased hours do",
+    "why": "After the period ends the plan grant no longer counts; the pack still does.",
+    "grants": [
+      {
+        "name": "g-plan-oct",
+        "source": "plan",
+        "seconds": 144000,
+        "validFrom": "2026-10-05T12:00:00Z",
+        "expiresAt": "2026-11-05T12:00:00Z"
+      },
+      {
+        "name": "g-pack-1",
+        "source": "purchase",
+        "seconds": 72000,
+        "validFrom": "2026-10-01T00:00:00Z",
+        "expiresAt": "2027-10-01T00:00:00Z"
+      }
+    ],
+    "state": {
+      "consumed": {
+        "g-plan-oct": 3600
+      },
+      "usedSeconds": 3600
+    },
+    "ticks": [
+      {
+        "now": "2026-11-05T12:00:00Z",
+        "observed": {}
+      }
+    ],
+    "expect": [
+      {
+        "credited": {},
+        "balanceSeconds": 72000,
+        "allowanceSeconds": 0,
+        "level": "ok",
+        "overdraftSeconds": 0,
+        "exhaustedAt": null
+      }
+    ]
+  },
+  {
+    "name": "a revoked grant (refund) stops counting",
+    "why": "The pack was refunded: its remaining hours go, what was used of it is not clawed back.",
+    "grants": [
+      {
+        "name": "g-free-2026-10",
+        "source": "free",
+        "seconds": 10800,
+        "validFrom": "2026-10-01T00:00:00Z",
+        "expiresAt": "2026-11-01T00:00:00Z"
+      },
+      {
+        "name": "g-pack-1",
+        "source": "purchase",
+        "seconds": 72000,
+        "validFrom": "2026-10-01T00:00:00Z",
+        "expiresAt": "2027-10-01T00:00:00Z",
+        "revoked": true
+      }
+    ],
+    "state": {
+      "consumed": {
+        "g-free-2026-10": 10800,
+        "g-pack-1": 600
+      },
+      "usedSeconds": 11400
+    },
+    "ticks": [
+      {
+        "now": "2026-10-02T10:00:00Z",
+        "observed": {}
+      }
+    ],
+    "expect": [
+      {
+        "credited": {},
+        "balanceSeconds": 0,
+        "allowanceSeconds": 10800,
+        "level": "exhausted",
+        "overdraftSeconds": 0,
+        "exhaustedAt": "2026-10-02T10:00:00Z"
+      }
+    ]
+  },
+  {
+    "name": "upgrade: the new plan grant supersedes the old one",
+    "why": "The Starter grant is revoked when the Pro grant for the new period is made; the balance is the Pro grant alone.",
+    "grants": [
+      {
+        "name": "g-plan-starter",
+        "source": "plan",
+        "seconds": 144000,
+        "validFrom": "2026-10-05T12:00:00Z",
+        "expiresAt": "2026-11-05T12:00:00Z",
+        "revoked": true
+      },
+      {
+        "name": "g-plan-pro",
+        "source": "plan",
+        "seconds": 648000,
+        "validFrom": "2026-10-10T08:00:00Z",
+        "expiresAt": "2026-11-10T08:00:00Z"
+      }
+    ],
+    "state": {
+      "consumed": {
+        "g-plan-starter": 36000
+      },
+      "usedSeconds": 36000
+    },
+    "ticks": [
+      {
+        "now": "2026-10-10T08:01:00Z",
+        "observed": {}
+      }
+    ],
+    "expect": [
+      {
+        "credited": {},
+        "balanceSeconds": 648000,
+        "allowanceSeconds": 648000,
+        "level": "ok",
+        "overdraftSeconds": 0,
+        "exhaustedAt": null
+      }
+    ]
+  }
+]

@@ -1,0 +1,351 @@
+# The backend's HTTP API additions for metering and billing. A fragment in
+# the manner of docs/contracts/policy/backend-api.yaml: paths are under /api
+# on the app host (cookie, through Pomerium) and, where marked, under /v1 on
+# the API host (API token). None of these routes exists while BILLING is off.
+openapi: 3.0.3
+info:
+  title: computeruse backend, billing additions
+  version: 0.1.0
+  description: |
+    Who may call what:
+
+    - Cookie (the UI): everything except the webhook.
+    - API token: `GET /v1/billing` and `GET /v1/billing/usage` only, with
+      any scope. Buying, the portal and deleting the account are for a
+      person at the UI: a token gets 403 `ui_only`.
+    - The webhook is called by Stripe alone, on the API host, and is not
+      under /v1.
+
+    The account is always the caller's own. Admins have no route to another
+    user's billing; they use kubectl.
+
+    Changes to existing responses, only while BILLING is not off:
+    - a session (`GET /api/sessions`, `GET /api/sessions/{id}`) gains
+      `stoppedBy` (`user`, `idle`, `billing`) when it is asleep or stopped,
+      and `deleteAfter` (date-time) when it is due for deletion;
+    - `POST /api/sessions`, `PATCH /api/sessions/{id}` and proxied requests
+      can answer with the `Error` below (enforcement.md).
+paths:
+  /api/billing:
+    get:
+      summary: The caller's plan, hours and limits. Also GET /v1/billing.
+      description: |
+        Makes the Account if the caller has none (subject to the sign-up
+        limits when OPEN_SIGNUP is on). `ledger` is `pending` until the
+        operator has written a status, `stale` when it is older than
+        BILLING_STALE_AFTER; the numbers are then the last known.
+      responses:
+        "200":
+          description: The account.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Billing" }
+        "403":
+          description: account_blocked, or sign-ups are paused (signups_paused).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/billing/usage:
+    get:
+      summary: Usage by day and by session. Also GET /v1/billing/usage.
+      parameters:
+        - name: period
+          in: query
+          description: Start of a closed period, as listed in `periods`. Absent, the current period.
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: The period's usage.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Usage" }
+        "404":
+          description: No such period.
+  /api/billing/catalogue:
+    get:
+      summary: What can be bought, from catalogue.yaml, enabled items only. Needs no Account.
+      responses:
+        "200":
+          description: The catalogue.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Catalogue" }
+  /api/billing/checkout:
+    post:
+      summary: Start a Stripe Checkout for a plan or a pack.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [item]
+              properties:
+                item:
+                  description: A lookupKey of the catalogue.
+                  type: string
+      responses:
+        "200":
+          description: Where to send the browser.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [url]
+                properties:
+                  url: { type: string, format: uri }
+        "400":
+          description: unknown_item (not in the catalogue, or not enabled).
+        "403":
+          description: ui_only, account_blocked.
+        "409":
+          description: already_subscribed (a plan was asked for and the account has a subscription; change it in the portal).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "502":
+          description: stripe_unavailable. Nothing was charged.
+        "503":
+          description: payments_off (STRIPE_MODE is unset).
+  /api/billing/checkout/{id}:
+    get:
+      summary: What became of a Checkout the caller started; fulfils it if it is paid.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, pattern: "^cs_[A-Za-z0-9_]+$" }
+      responses:
+        "200":
+          description: The state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    description: |
+                      `open`: not paid yet. `paid`: paid, and the Grant exists
+                      (its hours are in `GET /api/billing` at the next tick).
+                      `expired`: abandoned.
+                    type: string
+                    enum: [open, paid, expired]
+                  item: { type: string }
+        "404":
+          description: Not a Checkout of the caller's account.
+  /api/billing/portal:
+    post:
+      summary: Open Stripe's Customer Portal (card, invoices, change or cancel plan).
+      responses:
+        "200":
+          description: Where to send the browser. The link is short-lived.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [url]
+                properties:
+                  url: { type: string, format: uri }
+        "409":
+          description: no_customer (the account has never bought anything).
+        "502":
+          description: stripe_unavailable.
+  /api/billing/terms:
+    post:
+      summary: Record that the caller accepts the terms (stage 4).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version]
+              properties:
+                version: { type: string }
+      responses:
+        "204":
+          description: Recorded.
+        "409":
+          description: Not the current version.
+  /api/account:
+    delete:
+      summary: Delete the caller's account and everything in it.
+      description: |
+        Deletes every session (disk and snapshots), every API token, cancels
+        the subscription at once with no refund, revokes every Grant, and
+        leaves the Account with `deletedAt` for 35 days. Not undoable. The
+        body must repeat the caller's email address.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirm]
+              properties:
+                confirm: { type: string, description: The caller's email address. }
+      responses:
+        "204":
+          description: Deleted; the UI signs the user out.
+        "400":
+          description: confirm does not match.
+        "502":
+          description: stripe_unavailable; nothing was deleted.
+  /stripe/webhook:
+    post:
+      summary: Stripe's events. API host only. stripe.md says what each does.
+      parameters:
+        - name: Stripe-Signature
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: Handled, or ignored.
+        "400":
+          description: Bad signature, too old, or the wrong mode. No body.
+        "500":
+          description: Could not be handled now; Stripe retries.
+components:
+  schemas:
+    Error:
+      type: object
+      required: [error, code]
+      properties:
+        error: { type: string, description: A sentence for a person. }
+        code:
+          type: string
+          enum: [out_of_hours, session_limit, awake_limit, at_capacity, rate_limited,
+                 metering_unavailable, account_blocked, terms_required, signups_paused,
+                 already_subscribed, no_customer, unknown_item, ui_only,
+                 stripe_unavailable, payments_off]
+        billingUrl: { type: string, format: uri }
+        limit: { type: integer, description: The N of session_limit and awake_limit. }
+    Billing:
+      type: object
+      required: [mode, ledger, plan, level, balanceSeconds, period, limits, payments]
+      properties:
+        mode:
+          type: string
+          enum: [meter, enforce]
+        ledger:
+          type: string
+          enum: [ok, pending, stale]
+        exempt: { type: boolean }
+        plan:
+          type: object
+          required: [key, name]
+          properties:
+            key: { type: string, description: "free, payg, or a plan's key" }
+            name: { type: string }
+            amount: { type: integer, description: US cents a month; absent for free and payg. }
+            hours: { type: integer, description: Hours the period's grant gives. }
+        subscription:
+          description: Absent without one.
+          type: object
+          required: [status]
+          properties:
+            status:
+              type: string
+              enum: [incomplete, incomplete_expired, trialing, active, past_due, canceled, unpaid, paused]
+            renewsAt: { type: string, format: date-time, description: Absent when cancelsAt is set. }
+            cancelsAt: { type: string, format: date-time }
+        level:
+          type: string
+          enum: [ok, low, exhausted]
+        balanceSeconds: { type: integer, format: int64 }
+        purchasedSeconds: { type: integer, format: int64 }
+        purchasedExpiresAt:
+          description: When the purchased hours that expire first do.
+          type: string
+          format: date-time
+        exhaustedAt: { type: string, format: date-time }
+        sleepAt:
+          description: exhaustedAt + BILLING_GRACE, while sessions are still running on no hours.
+          type: string
+          format: date-time
+        period:
+          type: object
+          required: [start, end, allowanceSeconds, usedSeconds]
+          properties:
+            start: { type: string, format: date-time }
+            end: { type: string, format: date-time }
+            allowanceSeconds: { type: integer, format: int64 }
+            usedSeconds: { type: integer, format: int64 }
+        limits:
+          type: object
+          required: [maxSessions, maxAwake]
+          properties:
+            maxSessions: { type: integer }
+            maxAwake: { type: integer }
+            idleDeleteDays: { type: integer }
+        payments:
+          description: "`off`: nothing can be bought (STRIPE_MODE unset). `test`: test mode, the UI says so."
+          type: string
+          enum: ["off", test, live]
+        hasCustomer: { type: boolean, description: Whether the portal can be opened. }
+        termsRequired: { type: string, description: The version to accept, when one must be. }
+    Usage:
+      type: object
+      required: [start, end, usedSeconds, days, sessions, periods]
+      properties:
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+        plan: { type: string }
+        allowanceSeconds: { type: integer, format: int64 }
+        usedSeconds: { type: integer, format: int64 }
+        days:
+          type: array
+          items:
+            type: object
+            required: [date, seconds]
+            properties:
+              date: { type: string, format: date }
+              seconds: { type: integer, format: int64 }
+        sessions:
+          type: array
+          items:
+            type: object
+            required: [id, seconds]
+            properties:
+              id: { type: string }
+              name: { type: string, description: Absent for a deleted session. }
+              seconds: { type: integer, format: int64 }
+        periods:
+          description: Starts of the closed periods that can be asked for, newest first.
+          type: array
+          items: { type: string, format: date-time }
+    Catalogue:
+      type: object
+      required: [currency, free, plans, packs]
+      properties:
+        currency: { type: string }
+        free:
+          type: object
+          properties:
+            hours: { type: integer }
+            maxSessions: { type: integer }
+        plans:
+          type: array
+          items: { $ref: "#/components/schemas/Item" }
+        packs:
+          type: array
+          items: { $ref: "#/components/schemas/Item" }
+    Item:
+      type: object
+      required: [key, name, lookupKey, amount, hours]
+      properties:
+        key: { type: string }
+        name: { type: string }
+        lookupKey: { type: string }
+        amount: { type: integer, description: US cents. }
+        hours: { type: integer }
+        maxSessions: { type: integer }
+        maxAwake: { type: integer }
+        validDays: { type: integer }
