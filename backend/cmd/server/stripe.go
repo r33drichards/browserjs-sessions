@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/auth"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing"
-	bstripe "github.com/r33drichards/browserjs-sessions/backend/internal/billing/stripe"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/config"
+	"github.com/r33drichards/computer-use/backend/internal/auth"
+	"github.com/r33drichards/computer-use/backend/internal/billing"
+	bstripe "github.com/r33drichards/computer-use/backend/internal/billing/stripe"
+	"github.com/r33drichards/computer-use/backend/internal/config"
 )
 
 // The pause between two accounts of a reconcile: far below Stripe's rate

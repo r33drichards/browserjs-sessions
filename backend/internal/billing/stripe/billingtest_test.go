@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/auth"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing/billingtest"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing/stripe"
+	"github.com/r33drichards/computer-use/backend/internal/auth"
+	"github.com/r33drichards/computer-use/backend/internal/billing"
+	"github.com/r33drichards/computer-use/backend/internal/billing/billingtest"
+	"github.com/r33drichards/computer-use/backend/internal/billing/stripe"
 )
 
 // The Stripe half of the card gate (testing.md, scenario 1: b1 to b3, c1,

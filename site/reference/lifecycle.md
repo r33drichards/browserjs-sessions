@@ -31,7 +31,7 @@ states. The app shows the state; the API returns it as `state`.
 | Who causes it | You, with **Sleep**, or the service when idle | You, with **Stop** |
 | Snapshot of the running desktop | Taken; this takes a few seconds | Not taken |
 | Wakes on an agent's call | Yes | No |
-| Comes back with | The screen and processes as they were | A fresh start from the disk; tabs reload |
+| Comes back with | The screen and processes as they were | A fresh start from the disk: an empty desktop; tabs reload when the browser is next opened |
 | The app says | `asleep` | `stopped: starts fresh` |
 
 A sleep you ask for and an idle sleep are the same thing: both wake on the

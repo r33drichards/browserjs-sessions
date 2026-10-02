@@ -16,12 +16,13 @@ Google or GitHub. You see the **Sessions** list.
 3. Choose **Create**.
 
 The session's page opens. Within seconds its state is
-<span class="wf-state">running</span> and the page shows the desktop, with a
-Chromium window on it.
+<span class="wf-state">running</span> and the page shows the desktop: a
+wallpaper, and a panel along the bottom edge. No window is open yet.
 
 ## 3. Use the desktop yourself
 
-Click into the screen and open a website. This is a real desktop, and it is
+Click the browser's icon on the panel: Chromium opens. Click into it and
+open a website. This is a real desktop, and it is
 the one the agent will use.
 
 ## 4. Copy the MCP URL
@@ -55,7 +56,8 @@ Keep the session's page open so you can watch. Ask Claude:
 
 > Using the desktop connector, open example.com and tell me the page's title.
 
-Claude calls `run_js` once. On the screen, Chromium goes to the page. Claude
+Claude calls `run_js` once. On the screen, Chromium goes to the page (if
+you had not opened Chromium, the call opens it first). Claude
 answers with the title.
 
 ## 7. Leave it

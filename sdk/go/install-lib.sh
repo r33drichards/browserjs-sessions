@@ -6,8 +6,7 @@
 # Then: CGO_LDFLAGS="-L<directory>" go build ./...
 set -eu
 
-# RENAME: the repository is about to become r33drichards/computer-use.
-REPO="r33drichards/browserjs-sessions"
+REPO="r33drichards/computer-use"
 
 version="${1:?usage: install-lib.sh <version> [directory]}"
 directory="${2:-./lib}"

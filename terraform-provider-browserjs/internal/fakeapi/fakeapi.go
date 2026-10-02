@@ -21,7 +21,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/r33drichards/browserjs-sessions/terraform-provider-browserjs/internal/client"
+	"github.com/r33drichards/computer-use/terraform-provider-browserjs/internal/client"
 )
 
 // Unrestricted is the policy a new session has, and a reset one returns to:

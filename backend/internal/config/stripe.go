@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing/stripe"
+	"github.com/r33drichards/computer-use/backend/internal/billing"
+	"github.com/r33drichards/computer-use/backend/internal/billing/stripe"
 )
 
 // Secret is a value that is never printed: formatted or logged, it is

@@ -4,8 +4,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/r33drichards/browserjs-sessions/terraform-provider-metronome/internal/client"
-	"github.com/r33drichards/browserjs-sessions/terraform-provider-metronome/internal/fakeapi"
+	"github.com/r33drichards/computer-use/terraform-provider-metronome/internal/client"
+	"github.com/r33drichards/computer-use/terraform-provider-metronome/internal/fakeapi"
 )
 
 // bare is a provider that has not been configured, with no environment.

@@ -16,8 +16,8 @@ import (
 	dynfake "k8s.io/client-go/dynamic/fake"
 	k8stesting "k8s.io/client-go/testing"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions/sessionstest"
+	"github.com/r33drichards/computer-use/backend/internal/sessions"
+	"github.com/r33drichards/computer-use/backend/internal/sessions/sessionstest"
 )
 
 func TestEnsureAwake(t *testing.T) {

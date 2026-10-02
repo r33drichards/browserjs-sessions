@@ -14,8 +14,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 
-	"github.com/r33drichards/browserjs-sessions/terraform-provider-metronome/internal/client"
-	"github.com/r33drichards/browserjs-sessions/terraform-provider-metronome/internal/fakeapi"
+	"github.com/r33drichards/computer-use/terraform-provider-metronome/internal/client"
+	"github.com/r33drichards/computer-use/terraform-provider-metronome/internal/fakeapi"
 )
 
 // Acceptance tests run real plans, applies and imports with a terraform or

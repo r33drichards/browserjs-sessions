@@ -118,7 +118,7 @@ await session.sleep();
 ```
 
 ```go [Go]
-import "github.com/r33drichards/browserjs-sessions/sdk/go/computeruse"
+import "github.com/r33drichards/computer-use/sdk/go/computeruse"
 
 client, err := computeruse.ClientWithToken(os.Getenv("COMPUTERUSE_API_TOKEN"))
 

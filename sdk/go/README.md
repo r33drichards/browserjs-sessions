@@ -11,7 +11,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/r33drichards/browserjs-sessions/sdk/go/computeruse"
+	"github.com/r33drichards/computer-use/sdk/go/computeruse"
 )
 
 func main() {
@@ -64,8 +64,8 @@ Each release has a static library per platform. `install-lib.sh` fetches the
 one for this machine and prints the setting:
 
 ```bash
-go get github.com/r33drichards/browserjs-sessions/sdk/go@v0.1.0
-curl -fsSL https://raw.githubusercontent.com/r33drichards/browserjs-sessions/main/sdk/go/install-lib.sh | sh -s -- 0.1.0 ./lib
+go get github.com/r33drichards/computer-use/sdk/go@v0.1.0
+curl -fsSL https://raw.githubusercontent.com/r33drichards/computer-use/main/sdk/go/install-lib.sh | sh -s -- 0.1.0 ./lib
 export CGO_LDFLAGS="-L$PWD/lib"
 go build ./...
 ```

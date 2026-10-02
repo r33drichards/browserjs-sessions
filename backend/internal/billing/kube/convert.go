@@ -14,8 +14,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/billing"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
+	"github.com/r33drichards/computer-use/backend/internal/billing"
+	"github.com/r33drichards/computer-use/backend/internal/sessions"
 )
 
 const group, version = "browserjs.dev", "v1alpha1"

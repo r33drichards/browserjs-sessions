@@ -1,4 +1,4 @@
-module github.com/r33drichards/browserjs-sessions/terraform-provider-browserjs
+module github.com/r33drichards/computer-use/terraform-provider-browserjs
 
 go 1.26.8
 
@@ -8,12 +8,12 @@ require (
 	github.com/hashicorp/terraform-plugin-framework-validators v0.19.0
 	github.com/hashicorp/terraform-plugin-go v0.31.0
 	github.com/hashicorp/terraform-plugin-testing v1.16.0
-	github.com/r33drichards/browserjs-sessions/sdk/go v0.1.0
+	github.com/r33drichards/computer-use/sdk/go v0.1.0
 )
 
 // The SDK's Go module is in this repository, and the provider is built from
 // the repository, with the SDK at the same commit.
-replace github.com/r33drichards/browserjs-sessions/sdk/go => ../sdk/go
+replace github.com/r33drichards/computer-use/sdk/go => ../sdk/go
 
 require (
 	github.com/ProtonMail/go-crypto v1.4.1 // indirect

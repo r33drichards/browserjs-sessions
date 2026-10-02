@@ -16,7 +16,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
+	"github.com/r33drichards/computer-use/backend/internal/sessions"
 )
 
 // ErrNotFound is the answer of a lookup (an Account, a Checkout Session, a

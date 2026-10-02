@@ -71,7 +71,7 @@ tested product owned by the company that already takes our payments.
 
 **The fallback**, if the sandbox turns out to be sales-gated or a minimum
 makes it unusable: the small usage service on Firestore of
-[pull request 83](https://github.com/r33drichards/browserjs-sessions/pull/83)
+[pull request 83](https://github.com/r33drichards/computer-use/pull/83)
 (closed, not merged; kept as the record of the fallback).
 The interfaces below are the same for both (the `Ledger` hides which), so
 falling back costs one implementation, not a redesign.
@@ -258,9 +258,9 @@ any Metronome credit that is missing (409 for the ones that exist).
 ## 6. What happens to the build
 
 State on `main` today: track E (UI) is merged. Open: track B deployment
-([#79](https://github.com/r33drichards/browserjs-sessions/pull/79)), track
+([#79](https://github.com/r33drichards/computer-use/pull/79)), track
 D's interfaces and fakes
-([#80](https://github.com/r33drichards/browserjs-sessions/pull/80)).
+([#80](https://github.com/r33drichards/computer-use/pull/80)).
 Tracks A and C have no pull request yet.
 
 ### Contract files

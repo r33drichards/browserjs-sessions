@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/r33drichards/browserjs-sessions/terraform-provider-browserjs/internal/fakeapi"
+	"github.com/r33drichards/computer-use/terraform-provider-browserjs/internal/fakeapi"
 )
 
 // The .rego files under examples/ are copies of the contract's example

@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/hosts"
+	"github.com/r33drichards/computer-use/backend/internal/hosts"
 )
 
 // The scopes an API token may carry.

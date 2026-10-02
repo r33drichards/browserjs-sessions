@@ -3,7 +3,7 @@ package provider
 import (
 	"testing"
 
-	"github.com/r33drichards/browserjs-sessions/terraform-provider-browserjs/internal/fakeapi"
+	"github.com/r33drichards/computer-use/terraform-provider-browserjs/internal/fakeapi"
 )
 
 const sessionRes = "browserjs_session"

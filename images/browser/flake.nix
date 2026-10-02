@@ -85,24 +85,12 @@
             xapp = null;
           };
 
-          # `chromium`, for everything on the desktop that opens a browser
-          # (the panel launcher, the menu, a link clicked in another program,
-          # the command typed in a terminal): a window or tab in the
-          # session's own Chromium, never a second browser with another
-          # profile and no remote debugging. Chromium hands the request to
-          # the running instance of the same profile and exits. While the
-          # entrypoint is restarting Chromium there is none: wait for it.
+          # `chromium`, for everything in a session that wants the browser:
+          # browser/session-chromium.sh starts the session's one Chromium
+          # when it is not running, and otherwise opens a window in it.
           session-chromium = pkgs.writeShellScriptBin "chromium" ''
-            profile="''${BROWSER_PROFILE_DIR:-/data/chrome}"
-            for _ in $(${pkgs.coreutils}/bin/seq 1 100); do
-              [ -L "$profile/SingletonLock" ] && break
-              ${pkgs.coreutils}/bin/sleep 0.2
-            done
-            if [ ! -L "$profile/SingletonLock" ]; then
-              echo "chromium: the session's browser is not running" >&2
-              exit 1
-            fi
-            exec ${pkgs.chromium}/bin/chromium --no-sandbox --user-data-dir="$profile" "$@"
+            export CHROMIUM_BIN=${pkgs.chromium}/bin/chromium
+            exec ${pkgs.bash}/bin/bash ${./browser/session-chromium.sh} "$@"
           '';
 
           # What the desktop looks up by name: programs, their menu entries
@@ -256,7 +244,6 @@
             text = ''
               export NOVNC_WEB=${pkgs.novnc}/share/webapps/novnc
               export CADDYFILE=${./browser/Caddyfile}
-              export CHROMIUM_BIN=${pkgs.chromium}/bin/chromium
               export DBUS_SESSION_CONF=${pkgs.dbus}/share/dbus-1/session.conf
               export XDG_CONFIG_DIRS=${./desktop}/xdg:${desktop}/etc/xdg
               export XDG_DATA_DIRS=${./desktop}/share:${desktop}/share

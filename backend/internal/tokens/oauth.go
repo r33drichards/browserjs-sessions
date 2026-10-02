@@ -11,7 +11,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/auth"
+	"github.com/r33drichards/computer-use/backend/internal/auth"
 )
 
 // AccessTokenLife is how long an access token lasts. The API token it came

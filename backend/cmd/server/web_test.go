@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/config"
+	"github.com/r33drichards/computer-use/backend/internal/config"
 )
 
 func TestWebHandler(t *testing.T) {

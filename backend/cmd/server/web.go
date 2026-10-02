@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/config"
+	"github.com/r33drichards/computer-use/backend/internal/config"
 )
 
 // webHandler serves the built UI, falling back to index.html for client-side

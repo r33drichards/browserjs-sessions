@@ -12,8 +12,8 @@ import (
 	"k8s.io/client-go/dynamic"
 	dynfake "k8s.io/client-go/dynamic/fake"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions/sessionstest"
+	"github.com/r33drichards/computer-use/backend/internal/sessions"
+	"github.com/r33drichards/computer-use/backend/internal/sessions/sessionstest"
 )
 
 var nodes = schema.GroupVersionResource{Version: "v1", Resource: "nodes"}

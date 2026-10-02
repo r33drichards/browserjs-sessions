@@ -8,9 +8,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
 
-	"github.com/r33drichards/browserjs-sessions/backend/internal/idle"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
-	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions/sessionstest"
+	"github.com/r33drichards/computer-use/backend/internal/idle"
+	"github.com/r33drichards/computer-use/backend/internal/sessions"
+	"github.com/r33drichards/computer-use/backend/internal/sessions/sessionstest"
 )
 
 func TestSweepSuspendsOnlyIdleRunningSessions(t *testing.T) {

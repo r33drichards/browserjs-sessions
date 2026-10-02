@@ -13,8 +13,9 @@ An agent needs this because much software has no API. It has a screen. A
 desktop gives the agent the same surface a person has: windows, a pointer, a
 keyboard, a clipboard.
 
-Today the desktop is minimal: Chromium is its only application. A fuller
-desktop with a terminal and a file manager is planned. See
+The desktop is XFCE, with Chromium, a terminal, a file manager and a text
+editor. It starts empty: the browser opens when the agent first uses it, or
+when you start it from the panel. See
 [Capabilities](/reference/capabilities).
 
 ## Stateful
@@ -42,7 +43,8 @@ processes continue where they were. The screen shows what it showed. An
 agent that comes back the next day finds its task where it left it.
 
 This differs from restarting. A restart gives you the disk and a fresh
-desktop: the browser reopens its tabs and reloads them, logins survive, and
+desktop: the browser, when it is next opened, reopens its tabs and reloads
+them, logins survive, and
 whatever lived only in memory is gone. That is what **Stop** and **Start**
 do, and what a wake falls back to if a snapshot could not be taken or
 restored.

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# An XFCE desktop on Xvnc with one Chromium on it, viewable over noVNC (behind
-# Caddy basic auth on $PORT); Chromium is drivable over CDP by the browser MCP
+# An XFCE desktop on Xvnc, viewable over noVNC (behind Caddy basic auth on
+# $PORT). Chromium is not started here: it starts when it is first wanted
+# (session-chromium.sh), and is then drivable over CDP by the browser MCP
 # server (private port 8081). docs/desktop.md describes the desktop.
 #
 # SESSION_MODE=1 (a browserjs session pod): no Caddy and no VNC password, the
@@ -102,8 +103,12 @@ export PAGER=less
 export GSETTINGS_BACKEND=keyfile
 # No accessibility bus to look for.
 export NO_AT_BRIDGE=1
-# Chromium's profile, for the `chromium` command of the desktop.
+# For the `chromium` command (session-chromium.sh): the profile, whether to
+# restore the last session's tabs, and, for the MCP server, that it may start
+# Chromium with that command when a call needs it.
 export BROWSER_PROFILE_DIR="$PROFILE_DIR"
+export BROWSER_RESTORE_FLAG="$RESTORE_FLAG"
+export BROWSER_LAUNCHER=chromium
 # The session bus XFCE keeps its settings on (xfconfd is started through it).
 export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
 # The same environment for a shell that was not started from the desktop
@@ -133,17 +138,14 @@ browser_pids() {
 }
 
 pids=()
-chromium_loop=""
 cleaned=""
-# Chromium only writes a complete session file on a clean exit, so on SIGTERM
+# Chromium, if it is running, only writes a complete session file on a clean exit, so on SIGTERM
 # (pod shutdown, suspend) ask it to quit and wait before killing the rest.
 cleanup() {
   local bp
   # Runs again from the EXIT trap after a signal.
   [ -z "$cleaned" ] || return 0
   cleaned=1
-  # Stop the restart loop first so it cannot bring Chromium back.
-  [ -z "$chromium_loop" ] || kill "$chromium_loop" 2>/dev/null || true
   bp="$(browser_pids)"
   if [ -n "$bp" ]; then
     # shellcheck disable=SC2086
@@ -276,9 +278,7 @@ watch_screen_size() {
   done
 }
 
-# The desktop's size now, as Chromium wants it ("W,H"): a viewer may have
-# resized it since the start. This is the window's size before it is
-# maximised.
+# The desktop's size, for the panel's strip above.
 desktop_size() {
   local size
   size="$(xdpyinfo -display :99 2>/dev/null | sed -n 's/^ *dimensions: *\([0-9]*\)x\([0-9]*\) pixels.*/\1,\2/p' | head -n 1)"
@@ -286,77 +286,10 @@ desktop_size() {
 }
 keep_running watch_screen_size
 
-# Maximises Chromium's windows once it has put them up. --start-maximized
-# does that for a new profile, but a window restored from the last session
-# comes back the size it was saved with, on a desktop that may be another
-# size now. After this they are ordinary windows: someone may unmaximise one,
-# and xfwm4 refits those that are maximised whenever the desktop is resized.
-browser_windows() {
-  { wmctrl -lx 2>/dev/null || true; } | awk 'tolower($3) ~ /chromium/ { print $1 }'
-}
-maximise_browser_windows() {
-  local ids="" id
-  for _ in $(seq 1 60); do
-    ids="$(browser_windows)"
-    [ -z "$ids" ] || break
-    sleep 0.5
-  done
-  # Restored windows appear one after another.
-  sleep 1
-  ids="$(browser_windows)"
-  for id in $ids; do
-    wmctrl -i -r "$id" -b add,maximized_vert,maximized_horz 2>/dev/null || true
-  done
-}
-
-# Keep Chromium alive: if someone closes the last window (it is one program
-# among others on the desktop now, and can be closed like them) or it
-# crashes, bring it back with the same profile. browser_execute needs it.
-(
-  while true; do
-    # After an unclean exit Chromium shows a "restore pages?" bubble instead
-    # of restoring; mark the previous exit as clean. Best effort: a failure
-    # here (disk full, permissions) must not end this loop.
-    prefs="$PROFILE_DIR/Default/Preferences"
-    if [ -n "$RESTORE_FLAG" ] && [ -f "$prefs" ]; then
-      sed -i 's/"exit_type":"[A-Za-z]*"/"exit_type":"Normal"/' "$prefs" ||
-        echo "warning: could not mark $prefs as cleanly exited; Chromium may ask before restoring tabs" >&2
-    fi
-    browser-mcp download-dir "$PROFILE_DIR" "$FILES_DIR" ||
-      echo "warning: could not point Chromium's downloads at $FILES_DIR" >&2
-    # A start URL is opened next to the restored tabs, so with a session to
-    # restore pass none (or every restart would add one more blank tab).
-    start_url=about:blank
-    if [ -n "$RESTORE_FLAG" ] && [ -n "$(ls -A "$PROFILE_DIR/Default/Sessions" 2>/dev/null)" ]; then
-      start_url=""
-    fi
-    maximise_browser_windows &
-    # Chromium by its path: `chromium` on PATH is the desktop's command for a
-    # window in this one (flake.nix).
-    # shellcheck disable=SC2086
-    "${CHROMIUM_BIN:-chromium}" \
-      --no-sandbox \
-      --disable-gpu \
-      --disable-dev-shm-usage \
-      --no-first-run \
-      --no-default-browser-check \
-      --password-store=basic \
-      --user-data-dir="$PROFILE_DIR" \
-      --remote-debugging-address=127.0.0.1 \
-      --remote-debugging-port=9222 \
-      --window-position=0,0 \
-      --window-size="$(desktop_size)" \
-      --force-device-scale-factor=1 \
-      --start-maximized \
-      $RESTORE_FLAG \
-      $start_url || true
-    echo "chromium exited; restarting in 2s" >&2
-    rm -f "$PROFILE_DIR"/Singleton{Lock,Socket,Cookie}
-    sleep 2
-  done
-) &
-chromium_loop=$!
-pids+=($!)
+# No Chromium yet: a session starts with the desktop only. The `chromium`
+# command (session-chromium.sh) starts it when something wants the browser:
+# the first browser_execute call, the panel launcher, a link. If someone
+# closes it, it stays closed until the next of those.
 
 websockify --web "$NOVNC_WEB" "$WEBSOCKIFY_BIND:6080" 127.0.0.1:5900 &
 pids+=($!)

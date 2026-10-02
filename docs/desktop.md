@@ -14,7 +14,7 @@ has only been checked under Docker.
 | Desktop | `xfdesktop`: wallpaper and icons | entrypoint, restarted |
 | Settings | `xfsettingsd` (theme, fonts, shortcuts), `xfconfd` (the settings store) | entrypoint; `xfconfd` through D-Bus |
 | Session bus | `dbus-daemon --session` on `$XDG_RUNTIME_DIR/bus` | entrypoint, a core process |
-| Browser | Chromium, as before | entrypoint, restarted |
+| Browser | Chromium | on demand: the first `browser_execute` call, or its launcher |
 | Terminal | `xfce4-terminal` | on demand |
 | File manager | Thunar | on demand |
 | Text editor | Mousepad | on demand |
@@ -65,12 +65,19 @@ Mousepad's text is still drawn in a serif font; the terminal's is fixed-width.
   changes (`xev`) and, when no strip is in effect, removes the panel's strut
   and sets it again, which xfwm4 does act on. The smoke test resizes six
   times and checks the work area and Chromium each time.
-- **Chromium is always there.** The restart loop is unchanged: close the
-  last window, or kill it, and it is back in two seconds with the same
-  profile. `browser_execute` needs it, so on this desktop Chromium is the
-  one program that cannot be quit for good.
+- **Chromium starts when it is wanted.** A session starts with the desktop
+  only: no Chromium process, no window. `chromium` on `PATH`
+  (`browser/session-chromium.sh`) is the one way it starts: the session's
+  profile, remote debugging on loopback, downloads in the Files folder, the
+  last session's tabs restored. The browser MCP server runs it when a
+  `browser_execute` call finds nothing on the debugging port; the panel
+  launcher, the menu and links run it too. When Chromium is already running
+  the same command opens a window in it. Starts are serialised, so two at
+  once give one browser. Closed, it stays closed until the next of those.
+  `/healthz` of the MCP server no longer depends on Chromium. Files, the
+  clipboard and `desktop_execute` never needed it.
 - **Chromium starts maximised.** openbox maximised every ordinary window,
-  always. xfwm4 has no such rule, so the entrypoint maximises Chromium's
+  always. xfwm4 has no such rule, so the start command maximises Chromium's
   windows once after each start (`wmctrl`); after that they are ordinary
   windows. Two differences follow: someone can unmaximise Chromium, and a
   popup a page opens keeps the size the page asked for.
@@ -191,6 +198,13 @@ open and `desktop_execute` used once. So the desktop costs about 85 MiB a
 session when nobody uses it, and about 40 MiB more with a terminal, a file
 manager and an editor open.
 
+Since Chromium starts on demand, a session nobody has used the browser in
+is the desktop alone (run 37065126630): the cgroup counted 157 to 165 MiB
+with no Chromium, 401 MiB once `browser_execute` had started it on
+`about:blank`, and 447 MiB with the three programs open as well. The MCP
+server answered `/healthz` 0.6 to 1.1 s after the container started. A warm
+pool sandbox is in the first state: about 240 MiB less each than before.
+
 **The requests and limits do not change.** The browser container requests
 1Gi and is limited to 2Gi. Idle use stays well under the request, so the
 packing arithmetic in `deploy/gke/warmpool.yaml` holds as written: 1280Mi a
@@ -300,7 +314,7 @@ panel, the desktop, the settings daemon; Chromium's window, maximised above
 the panel, and its debugging port; a terminal with a working shell, Thunar
 and Mousepad opening; `desktop_execute` typing into a terminal and grabbing
 the screen; the terminal's tools; the `chromium` command; the clipboard;
-three resizes; Chromium coming back after being closed; no locker,
+six resizes; Chromium absent at the start, started by `browser_execute` and by the `chromium` command, staying closed when closed, one browser from three starters at once; no locker,
 screensaver or session manager; then a second container on the same volume
 finding the file, the setting and the shell configuration of the first. It
 prints how long the start took and what each part uses in memory, and saves
