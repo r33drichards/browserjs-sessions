@@ -68,6 +68,19 @@ func (f *fakeAPI) on(route string, status int, body string) {
 	f.answers[route] = func(url.Values) (int, string) { return status, body }
 }
 
+// count is how many requests were made to route.
+func (f *fakeAPI) count(route string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, r := range f.seen {
+		if r.method+" "+r.path == route {
+			n++
+		}
+	}
+	return n
+}
+
 // last is the last request, which must be route.
 func (f *fakeAPI) last(route string) request {
 	f.t.Helper()
@@ -176,12 +189,30 @@ func TestAPICreateCustomerAndPortal(t *testing.T) {
 		t.Errorf("Idempotency-Key = %q", got)
 	}
 
+	// The portal: with no configuration of ours, Stripe's default.
+	f.on("GET /v1/billing_portal/configurations", 200, `{"object":"list","has_more":false,"data":[{"id":"bpc_0","object":"billing_portal.configuration","metadata":{}}]}`)
 	f.on("POST /v1/billing_portal/sessions", 200, `{"id":"bps_1","object":"billing_portal.session","url":"https://billing.stripe.com/p/session/1"}`)
 	link, err := api.CreatePortal(ctx, "cus_1", "https://app.example.test/billing")
 	if err != nil || link != "https://billing.stripe.com/p/session/1" {
 		t.Fatalf("url %q, err %v", link, err)
 	}
 	wantForm(t, f.last("POST /v1/billing_portal/sessions"), map[string]string{"customer": "cus_1", "return_url": "https://app.example.test/billing"})
+
+	// Once infra/billing has made one, it is named: one made through the
+	// API is never the default. It is looked up once.
+	f.on("GET /v1/billing_portal/configurations", 200, `{"object":"list","has_more":false,"data":[
+		{"id":"bpc_0","object":"billing_portal.configuration","metadata":{}},
+		{"id":"bpc_1","object":"billing_portal.configuration","metadata":{"managed_by":"stripe-setup"}}]}`)
+	for i := 0; i < 2; i++ {
+		if _, err := api.CreatePortal(ctx, "cus_1", "https://app.example.test/billing"); err != nil {
+			t.Fatal(err)
+		}
+		wantForm(t, f.last("POST /v1/billing_portal/sessions"), map[string]string{
+			"customer": "cus_1", "return_url": "https://app.example.test/billing", "configuration": "bpc_1"})
+	}
+	if n := f.count("GET /v1/billing_portal/configurations"); n != 2 {
+		t.Errorf("%d lists of configurations, want 2: one that found none, one that found it", n)
+	}
 }
 
 func TestAPICreateRecharge(t *testing.T) {
