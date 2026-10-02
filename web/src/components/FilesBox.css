@@ -5,10 +5,6 @@
   padding-top: 10px;
   border-top: 2px dashed var(--pencil);
 }
-.wf-files.wf-files-over {
-  outline: 2px dashed var(--ink);
-  outline-offset: 6px;
-}
 .wf-files input[type="file"] {
   display: none;
 }
@@ -40,4 +36,30 @@
 }
 .wf-files-error {
   font-size: 13px;
+}
+.wf-files:focus {
+  outline: none;
+}
+.wf-files:focus-visible,
+.wf-files:focus {
+  outline: 2px dashed var(--ink);
+  outline-offset: 6px;
+}
+/* While files are dragged over the page: the whole of it takes the drop. */
+.wf-drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.82);
+}
+.wf-drop-overlay div {
+  padding: 24px 40px;
+  border: 3px dashed var(--ink);
+  border-radius: var(--wobble);
+  background: #fff;
+  font-size: 20px;
 }
