@@ -1,0 +1,127 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dex
+---
+# Dex keeps its state (auth requests, refresh tokens, signing keys) in custom
+# resources in its own namespace, and creates their definitions at startup.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dex
+rules:
+  - apiGroups: ["dex.coreos.com"]
+    resources: ["*"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dex
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: dex
+subjects:
+  - kind: ServiceAccount
+    name: dex
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: browserjs-sessions-dex
+rules:
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: browserjs-sessions-dex
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: browserjs-sessions-dex
+subjects:
+  - kind: ServiceAccount
+    name: dex
+    namespace: browserjs-sessions
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dex
+  labels:
+    app: dex
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dex
+  template:
+    metadata:
+      labels:
+        app: dex
+    spec:
+      serviceAccountName: dex
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: dex
+          image: ghcr.io/dexidp/dex:v2.45.1
+          args: ["dex", "serve", "/etc/dex/config.yaml"]
+          # GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GITHUB_CLIENT_ID,
+          # GITHUB_CLIENT_SECRET, POMERIUM_CLIENT_SECRET
+          envFrom:
+            - secretRef:
+                name: dex-oauth
+          ports:
+            - name: http
+              containerPort: 5556
+            - name: telemetry
+              containerPort: 5558
+          readinessProbe:
+            httpGet:
+              path: /healthz/ready
+              port: telemetry
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/dex
+              readOnly: true
+            # The image's entrypoint renders the config through a temp file.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: dex-config
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dex
+spec:
+  selector:
+    app: dex
+  ports:
+    - name: http
+      port: 5556
+      targetPort: http

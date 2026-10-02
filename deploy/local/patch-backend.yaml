@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  template:
+    spec:
+      containers:
+        - name: backend
+          env:
+            - name: PUBLIC_URL
+              value: https://app.localtest.me
+            - name: SESSION_URL_TEMPLATE
+              value: https://{id}.sessions.localtest.me
+            # *.localtest.me is 127.0.0.1 inside the cluster too, so the keys
+            # are fetched from Pomerium's Service; its certificate is signed
+            # by the throwaway CA hack/local-up.sh makes.
+            - name: POMERIUM_JWKS_URL
+              value: https://pomerium.browserjs-sessions.svc.cluster.local/.well-known/pomerium/jwks.json
+            - name: SSL_CERT_FILE
+              value: /etc/local-ca/ca.crt
+            - name: ADMIN_EMAILS
+              value: admin@example.com
+          volumeMounts:
+            - name: local-ca
+              mountPath: /etc/local-ca
+              readOnly: true
+      volumes:
+        - name: local-ca
+          configMap:
+            name: local-ca

@@ -328,7 +328,7 @@ func TestSessionHostServesOnlyTheSession(t *testing.T) {
 		{"GET", "/api/artifacts"}, {"GET", "/api/artifact-uploads/" + uploadToken},
 		{"POST", "/api/artifact-uploads/" + uploadToken}, {"POST", "/api/exec"},
 		{"GET", "/s/" + e.id + "/mcp"}, {"POST", "/s/" + e.id + "/mcp"},
-		{"GET", "/.well-known/oauth-protected-resource"}, {"GET", "/.well-known/oauth-protected-resource/mcp"},
+		{"GET", "/.well-known/openid-configuration"}, {"GET", "/.well-known/pomerium/jwks.json"},
 		{"POST", "/vnc"}, {"GET", "/vnc/x"}, {"GET", "/websockify"}, {"GET", "/mcpx"},
 	} {
 		rec := e.do(c.method, c.path, alice, "")

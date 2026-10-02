@@ -159,9 +159,9 @@ func newHandler(cfg config.Config, verifier auth.Verifier, store *sessions.Store
 	apiHandler := auth.Middleware(verifier)(apiMux)
 	app.Handle("/api/", apiHandler)
 	app.Handle("/api", apiHandler) // or the mux redirects it to /api/
-	// Pomerium answers for the OAuth metadata of the hosts it fronts. A
-	// client probing here for more must be told there is none, not handed
-	// the UI.
+	// The app's host has no OAuth metadata (a session's host has its own, see
+	// proxy/metadata.go). A client probing here must be told there is none,
+	// not handed the UI.
 	app.Handle("/.well-known/", http.NotFoundHandler())
 	app.Handle("/", webHandler(cfg))
 	return px.Handler(noAPIRedirects(app)), px

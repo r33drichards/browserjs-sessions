@@ -1,0 +1,65 @@
+# A session pod runs whatever its user's agent tells it to. It is reached
+# only by the backend, and reaches only the internet.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: session-pods
+spec:
+  podSelector:
+    matchLabels:
+      app: browserjs-session
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: backend
+      ports:
+        - port: 6080 # VNC (websockify)
+          protocol: TCP
+        - port: 8080 # mcp-js
+          protocol: TCP
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # The internet, but not the cluster, the node's network or the metadata
+    # address (169.254.169.254).
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 100.64.0.0/10
+              - 169.254.0.0/16
+---
+# Identity is whatever Pomerium says it is, and the upload and VNC routes
+# have no login at all: nothing but Pomerium talks to the backend.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend
+spec:
+  podSelector:
+    matchLabels:
+      app: backend
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: pomerium
+      ports:
+        - port: 8080
+          protocol: TCP

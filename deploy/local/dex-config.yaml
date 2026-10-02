@@ -1,0 +1,63 @@
+# Dex for the local cluster. The browser reaches it at localhost:5556, which
+# is the callback registered with the Google and GitHub OAuth apps.
+issuer: http://localhost:5556/dex
+
+storage:
+  type: kubernetes
+  config:
+    inCluster: true
+
+web:
+  http: 0.0.0.0:5556
+
+# Health checks (and metrics), away from the public port.
+telemetry:
+  http: 0.0.0.0:5558
+
+oauth2:
+  responseTypes: ["code"]
+  skipApprovalScreen: true
+
+staticClients:
+  - id: pomerium
+    name: browserjs sessions
+    secretEnv: POMERIUM_CLIENT_SECRET
+    redirectURIs:
+      - https://authenticate.localtest.me/oauth2/callback
+
+connectors:
+  - type: google
+    id: google
+    name: Google
+    config:
+      clientID: $GOOGLE_CLIENT_ID
+      clientSecret: $GOOGLE_CLIENT_SECRET
+      redirectURI: http://localhost:5556/dex/callback
+  - type: github
+    id: github
+    name: GitHub
+    config:
+      clientID: $GITHUB_CLIENT_ID
+      clientSecret: $GITHUB_CLIENT_SECRET
+      redirectURI: http://localhost:5556/dex/callback
+
+# Test users, for the local cluster only. The password of each is "test".
+enablePasswordDB: true
+staticPasswords:
+  - email: alice@example.com
+    username: alice
+    userID: 0a11ce00-0000-4000-8000-000000000001
+    hash: "$2y$10$j1YYKenM3gb7FDFFl/7wSOA6VPwZRc.t/lw4PWMS5grnsgOpt.aTS"
+  - email: bob@example.com
+    username: bob
+    userID: 0b0b0000-0000-4000-8000-000000000002
+    hash: "$2y$10$j1YYKenM3gb7FDFFl/7wSOA6VPwZRc.t/lw4PWMS5grnsgOpt.aTS"
+  - email: admin@example.com
+    username: admin
+    userID: 0ad00000-0000-4000-8000-000000000003
+    hash: "$2y$10$j1YYKenM3gb7FDFFl/7wSOA6VPwZRc.t/lw4PWMS5grnsgOpt.aTS"
+  # Signs in, but is not on Pomerium's list of who may use the app.
+  - email: mallory@example.com
+    username: mallory
+    userID: 0badbad0-0000-4000-8000-000000000004
+    hash: "$2y$10$fb5KlCfwXcS6ADCf/MYfre4BWkG7ZoQcYYW0pntsI6GYwbcC75NUK"

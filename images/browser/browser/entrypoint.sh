@@ -28,6 +28,12 @@ if [ "$SESSION_MODE" = 1 ]; then
   RESTORE_FLAG="--restore-last-session"
 fi
 
+# x11vnc walks every possible file descriptor when a viewer connects. Under
+# containerd the limit can be a billion (Docker's default is far lower), and
+# it then spins without ever answering: the screen stays blank. Not fatal if
+# the limit cannot be changed.
+ulimit -n 65536 2>/dev/null || echo "warning: could not lower the open-file limit ($(ulimit -n)); VNC may hang" >&2
+
 export DISPLAY=:99
 export HOME=/root
 export XDG_RUNTIME_DIR=/tmp/runtime

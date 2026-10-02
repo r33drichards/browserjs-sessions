@@ -1,0 +1,42 @@
+# Dex federates the sign-in: Pomerium is its one client, Google and GitHub
+# its connectors. $NAMES are read from the environment (the dex-oauth Secret).
+issuer: https://dex.example.com
+
+storage:
+  type: kubernetes
+  config:
+    inCluster: true
+
+web:
+  http: 0.0.0.0:5556
+
+# Health checks (and metrics), away from the public port.
+telemetry:
+  http: 0.0.0.0:5558
+
+oauth2:
+  responseTypes: ["code"]
+  skipApprovalScreen: true
+
+staticClients:
+  - id: pomerium
+    name: browserjs sessions
+    secretEnv: POMERIUM_CLIENT_SECRET
+    redirectURIs:
+      - https://authenticate.example.com/oauth2/callback
+
+connectors:
+  - type: google
+    id: google
+    name: Google
+    config:
+      clientID: $GOOGLE_CLIENT_ID
+      clientSecret: $GOOGLE_CLIENT_SECRET
+      redirectURI: https://dex.example.com/callback
+  - type: github
+    id: github
+    name: GitHub
+    config:
+      clientID: $GITHUB_CLIENT_ID
+      clientSecret: $GITHUB_CLIENT_SECRET
+      redirectURI: https://dex.example.com/callback

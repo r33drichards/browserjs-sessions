@@ -1,0 +1,114 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backend
+---
+# The backend holds the only Kubernetes credentials in the system, and they
+# reach no further than the session Sandboxes of this namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: backend
+rules:
+  - apiGroups: ["agents.x-k8s.io"]
+    resources: ["sandboxes"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: backend
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: backend
+subjects:
+  - kind: ServiceAccount
+    name: backend
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  labels:
+    app: backend
+spec:
+  # Exactly one: VNC tickets and idle tracking live in the process's memory
+  # (see backend/cmd/server/main.go). Recreate, so there are never two.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      serviceAccountName: backend
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: backend
+          image: browserjs/backend
+          env:
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: PUBLIC_URL
+              value: https://app.example.com
+            - name: SESSION_URL_TEMPLATE
+              value: https://{id}.sessions.example.com
+            # Pomerium serves its signing keys on every host it fronts.
+            - name: POMERIUM_JWKS_URL
+              value: https://app.example.com/.well-known/pomerium/jwks.json
+            - name: ADMIN_EMAILS
+              value: ""
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: blueprint
+              mountPath: /etc/browserjs
+              readOnly: true
+      volumes:
+        - name: blueprint
+          configMap:
+            name: session-blueprint
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+spec:
+  selector:
+    app: backend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

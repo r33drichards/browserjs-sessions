@@ -1,0 +1,25 @@
+# kind maps 127.0.0.1:443 and :5556 on the host to these node ports
+# (hack/kind-config.yaml).
+apiVersion: v1
+kind: Service
+metadata:
+  name: pomerium
+spec:
+  type: NodePort
+  ports:
+    - name: https
+      port: 443
+      targetPort: https
+      nodePort: 30443
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dex
+spec:
+  type: NodePort
+  ports:
+    - name: http
+      port: 5556
+      targetPort: http
+      nodePort: 30556

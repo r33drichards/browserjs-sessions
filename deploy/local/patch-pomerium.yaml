@@ -1,0 +1,26 @@
+# Dex's issuer is http://localhost:5556/dex, because that is where the
+# browser finds it. Pomerium talks to the issuer too (discovery, tokens), so
+# its pod gets a localhost:5556 that leads to Dex.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: pomerium
+spec:
+  template:
+    spec:
+      containers:
+        - name: dex-forward
+          image: alpine/socat:1.8.0.3
+          args:
+            - TCP-LISTEN:5556,fork,reuseaddr,bind=127.0.0.1
+            - TCP:dex.browserjs-sessions.svc.cluster.local:5556
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]

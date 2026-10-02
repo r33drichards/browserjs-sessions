@@ -1,0 +1,14 @@
+# The local cluster as test/integration.py needs it: the backend trusts the
+# test's own signing keys instead of Pomerium's, so the test can say who is
+# calling. The test applies this and puts deploy/local back when it is done;
+# it is never the configuration anyone signs in to.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: browserjs-sessions
+
+resources:
+  - ../local
+  - test-jwks.yaml
+
+patches:
+  - path: patch-backend.yaml

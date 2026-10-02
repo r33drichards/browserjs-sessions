@@ -346,7 +346,7 @@ func TestSessionHostRoutes(t *testing.T) {
 		{"GET", "/"}, {"GET", "/healthz"}, {"GET", "/config.js"}, {"GET", "/sessions/" + mine.ID},
 		{"GET", "/api/me"}, {"GET", "/api/sessions"}, {"POST", ticketPath},
 		{"GET", "/api/artifacts"}, {"POST", "/vnc"},
-		{"POST", "/s/" + mine.ID + "/mcp"}, {"GET", "/.well-known/oauth-protected-resource/mcp"},
+		{"POST", "/s/" + mine.ID + "/mcp"}, {"GET", "/.well-known/openid-configuration"},
 	} {
 		rec := s.do(c.method, host, c.path, alice, "")
 		if rec.Code != http.StatusNotFound || strings.Contains(rec.Body.String(), "<html>") {

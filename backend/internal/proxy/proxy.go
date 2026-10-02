@@ -114,6 +114,7 @@ func (p *Proxy) Handler(app http.Handler) http.Handler {
 	session.HandleFunc("/mcp/{rest...}", p.mcp)
 	session.HandleFunc("PUT /api/artifact-uploads/{token}", p.upload)
 	session.HandleFunc("GET /vnc", p.vnc)
+	p.oauthMetadata(session)
 	// The rest of a pod's API is not exposed, and the app is not served here.
 	session.Handle("/", http.NotFoundHandler())
 

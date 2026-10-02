@@ -1,0 +1,119 @@
+# deploy/base/blueprint.yaml, plus a command for the browser container
+# (explained where it is set). Keep the two in step; delete this file, and its entry in
+# kustomization.yaml, after the next build of the browser image.
+#
+# The spec of a session's Sandbox (agents.x-k8s.io/v1beta1), rendered by the
+# backend for each new session: {{ .ID }} is the session's ID, {{ .SessionURL }}
+# its own base URL, {{ .PublicURL }} the app's. The backend adds operatingMode
+# and the owner label.
+podTemplate:
+  metadata:
+    labels:
+      app: browserjs-session
+  spec:
+    automountServiceAccountToken: false
+    enableServiceLinks: false
+    # Chromium only saves its tabs on a clean exit: the browser's entrypoint
+    # asks it to quit and waits up to 10 s before stopping the rest.
+    terminationGracePeriodSeconds: 30
+    securityContext:
+      # mcp-js runs as uid/gid 1000 and writes to the session disk.
+      fsGroup: 1000
+      fsGroupChangePolicy: OnRootMismatch
+    containers:
+      - name: browser
+        image: browserjs/browser:dev
+        # The local browserjs/browser:dev was built before the entrypoint
+        # lowered its own file descriptor limit (without that, x11vnc never
+        # answers a viewer under kind's containerd). exec, so signals still
+        # reach the entrypoint. /bin/sh is the image's bash.
+        command: ["/bin/sh", "-c", "ulimit -n 65536 || true; exec /entrypoint"]
+        env:
+          - name: SESSION_MODE
+            value: "1"
+          - name: DATA_DIR
+            value: /data
+          - name: TAB_STATE_FILE
+            value: /data/chrome/browserjs-tabs.json
+        ports:
+          - name: vnc
+            containerPort: 6080
+          - name: browser-mcp
+            containerPort: 8081
+        # The image has no shell tools to exec; both probes are HTTP.
+        startupProbe:
+          httpGet:
+            path: /healthz
+            port: browser-mcp
+          periodSeconds: 1
+          failureThreshold: 120
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: browser-mcp
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: "2"
+            memory: 2Gi
+        volumeMounts:
+          - name: data
+            mountPath: /data/chrome
+            subPath: chrome
+          - name: shm
+            mountPath: /dev/shm
+      - name: mcp-js
+        image: browserjs/mcp-js:dev
+        env:
+          # One-time upload URLs are made from this, so they come back
+          # through the session's own host.
+          - name: MCP_V8_PUBLIC_URL
+            value: "{{ .SessionURL }}"
+        ports:
+          - name: mcp
+            containerPort: 8080
+        startupProbe:
+          httpGet:
+            path: /api/artifacts
+            port: mcp
+          periodSeconds: 1
+          failureThreshold: 180
+        readinessProbe:
+          httpGet:
+            path: /api/artifacts
+            port: mcp
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: "1"
+            memory: 1Gi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts:
+          - name: data
+            mountPath: /data/memory
+            subPath: memory
+          - name: data
+            mountPath: /data/mcp
+            subPath: mcp
+    volumes:
+      - name: shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 1Gi
+volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 5Gi
