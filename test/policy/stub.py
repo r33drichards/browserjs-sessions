@@ -11,6 +11,9 @@ standard library only; one file, mounted into three pods.
                      named "browser" on 8081 with one tool, browser_execute,
                      and desktop_execute beside it, which run nothing and
                      say what they were asked.
+                     Beside it on 8082, the "exec" server (mcp-exec), the
+                     second server mcp-js connects to at start: its three
+                     tools, which run nothing either.
   stub.py backend    something listening where the backend does, on 8080.
 """
 import hashlib
@@ -88,6 +91,9 @@ class Operator(Handler):
 
 
 class Browser(Handler):
+    server_name = "browser"
+    tools = ("browser_execute", "desktop_execute")
+
     def do_GET(self):
         if self.path == "/healthz":
             return self.answer(200, b"ok")
@@ -104,11 +110,11 @@ class Browser(Handler):
         if method == "initialize":
             result = {"protocolVersion": params.get("protocolVersion", "2025-03-26"),
                       "capabilities": {"tools": {}},
-                      "serverInfo": {"name": "browser", "version": "stub"}}
+                      "serverInfo": {"name": self.server_name, "version": "stub"}}
         elif method == "tools/list":
             result = {"tools": [{"name": name, "description": "Says what it was asked to do.",
                                  "inputSchema": {"type": "object", "properties": {"operations": {"type": "array"}}}}
-                                for name in ("browser_execute", "desktop_execute")]}
+                                for name in self.tools]}
         elif method == "tools/call":
             operations = (params.get("arguments") or {}).get("operations") or []
             types = [op.get("type") for op in operations if isinstance(op, dict)]
@@ -120,6 +126,11 @@ class Browser(Handler):
             return self.answer(200, json.dumps(reply).encode(), "application/json")
         reply = {"jsonrpc": "2.0", "id": message["id"], "result": result}
         self.answer(200, json.dumps(reply).encode(), "application/json")
+
+
+class Exec(Browser):
+    server_name = "exec"
+    tools = ("exec", "stream_logs", "search_logs")
 
 
 class Backend(Handler):
@@ -137,6 +148,7 @@ if role == "operator":
     threading.Thread(target=serve, args=(8081, Operator), daemon=True).start()
     serve(8080, Operator)
 elif role == "browser":
+    threading.Thread(target=serve, args=(8082, Exec), daemon=True).start()
     serve(8081, Browser)
 elif role == "backend":
     serve(8080, Backend)
