@@ -138,7 +138,7 @@ export function FilesBox({ sessionId }: { sessionId: string }) {
               e.target.value = "" // so the same file can be chosen again
             }}
           />
-          {unavailable && <span className="wf-note">{unavailable}</span>}
+          {unavailable ? <span className="wf-note">{unavailable}</span> : null}
         </SpaceBetween>
         {errors.map((text, i) => (
           <div key={i} className="wf-files-error" role="alert">

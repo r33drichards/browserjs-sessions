@@ -1,9 +1,6 @@
 import Box from "@cloudscape-design/components/box"
 import Button from "@cloudscape-design/components/button"
-import FormField from "@cloudscape-design/components/form-field"
 import Header from "@cloudscape-design/components/header"
-import Input from "@cloudscape-design/components/input"
-import Modal from "@cloudscape-design/components/modal"
 import SpaceBetween from "@cloudscape-design/components/space-between"
 import Table from "@cloudscape-design/components/table"
 import Toggle from "@cloudscape-design/components/toggle"
@@ -12,22 +9,18 @@ import { Link, useNavigate } from "react-router-dom"
 import type { Session } from "../api"
 import { useMe } from "../auth/MeProvider"
 import { signedOutHandled } from "../auth/signedOut"
+import type { PolicySession } from "../policyApi"
+import { isManagedAsCode, policySummaryLine } from "../policyApi"
 import { Shell, StateTag, api } from "../shell"
-import { petname } from "../petname"
 import { usePolling } from "../usePolling"
 
 export function SessionsList() {
   const navigate = useNavigate()
   const me = useMe()
-  const [sessions, setSessions] = useState<Session[] | null>(null)
+  const [sessions, setSessions] = useState<PolicySession[] | null>(null)
   const [error, setError] = useState("") // last poll failure; cleared by the next good poll
   const [actionError, setActionError] = useState("") // last failed action; polling leaves it alone
   const [showAll, setShowAll] = useState(false)
-  const [creating, setCreating] = useState(false)
-  const [name, setName] = useState("")
-  const [suggested, setSuggested] = useState("") // the placeholder; used when the field is left empty
-  const [createError, setCreateError] = useState("")
-  const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState<{ id: string; ok: boolean } | null>(null) // the row whose button just answered
 
   const load = useCallback(() => {
@@ -54,32 +47,6 @@ export function SessionsList() {
     }
     setCopied({ id: s.id, ok })
     setTimeout(() => setCopied(c => (c?.id === s.id ? null : c)), 1500)
-  }
-
-  function openCreate() {
-    setName("")
-    // Not a name one of the sessions on screen already has.
-    const taken = new Set((sessions ?? []).map(s => s.name))
-    let pet = petname()
-    for (let i = 0; i < 5 && taken.has(pet); i++) pet = petname()
-    setSuggested(pet)
-    setCreateError("")
-    setCreating(true)
-  }
-
-  async function create() {
-    if (busy) return
-    setBusy(true)
-    setCreateError("")
-    try {
-      // Left empty, the session gets the name shown as the placeholder.
-      const session = await api.createSession(name.trim() || suggested)
-      navigate(`/sessions/${session.id}`)
-    } catch (e) {
-      if (!signedOutHandled(e)) setCreateError(String((e as Error).message))
-    } finally {
-      setBusy(false)
-    }
   }
 
   async function act(fn: () => Promise<unknown>) {
@@ -110,8 +77,8 @@ export function SessionsList() {
                     everyone&apos;s
                   </Toggle>
                 )}
-                <Button variant="primary" onClick={openCreate}>
-                  New session
+                <Button variant="primary" onClick={() => navigate("/sessions/create")}>
+                  Create session
                 </Button>
               </SpaceBetween>
             }
@@ -123,6 +90,27 @@ export function SessionsList() {
           { id: "name", header: "Name", cell: s => <Link to={`/sessions/${s.id}`}>{s.name}</Link> },
           { id: "state", header: "State", cell: s => <StateTag state={s.state} /> },
           ...(showAll ? [{ id: "owner", header: "Owner", cell: (s: Session) => <span className="wf-mono">{s.owner}</span> }] : []),
+          // Only where the backend has policies: without them no session carries one.
+          ...(sessions?.some(s => s.policy)
+            ? [
+                {
+                  id: "policy",
+                  header: "Policy",
+                  cell: (s: PolicySession) =>
+                    s.policy && (
+                      <>
+                        {policySummaryLine(s.policy)}
+                        {isManagedAsCode(s.policy) && (
+                          <>
+                            {" "}
+                            <span className="wf-tag">as code</span>
+                          </>
+                        )}
+                      </>
+                    ),
+                },
+              ]
+            : []),
           { id: "created", header: "Created", cell: s => new Date(s.created).toLocaleString() },
           {
             id: "actions",
@@ -157,41 +145,6 @@ export function SessionsList() {
       />
       {actionError && <Box padding={{ top: "s" }}>⚠ {actionError}</Box>}
       {error && sessions && sessions.length > 0 && <Box padding={{ top: "s" }}>⚠ {error}</Box>}
-
-      <Modal
-        visible={creating}
-        onDismiss={() => setCreating(false)}
-        header="New session"
-        footer={
-          <Box float="right">
-            <SpaceBetween direction="horizontal" size="xs">
-              <Button onClick={() => setCreating(false)}>Cancel</Button>
-              <Button variant="primary" loading={busy} onClick={create}>
-                Create
-              </Button>
-            </SpaceBetween>
-          </Box>
-        }
-      >
-        <FormField
-          label={
-            <>
-              Name - <i>optional</i>
-            </>
-          }
-          errorText={createError}
-        >
-          <Input
-            value={name}
-            placeholder={suggested}
-            onChange={e => setName(e.detail.value)}
-            onKeyDown={e => {
-              if (e.detail.key === "Enter") void create()
-            }}
-            autoFocus
-          />
-        </FormField>
-      </Modal>
     </Shell>
   )
 }

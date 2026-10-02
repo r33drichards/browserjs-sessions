@@ -225,7 +225,7 @@ export function VncPane({ sessionId, controls }: { sessionId: string; controls?:
             <Button disabled={!clip} onClick={copy}>
               Copy
             </Button>
-            {note && <span className="wf-note">{note}</span>}
+            {note ? <span className="wf-note">{note}</span> : null}
           </SpaceBetween>
           <FilesBox sessionId={sessionId} />
         </SpaceBetween>
