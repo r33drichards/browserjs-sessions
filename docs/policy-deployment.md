@@ -54,52 +54,50 @@ first and refuses files that disagree with each other.
 
 | Stage | OPA, operator | Backend | New session pods | What is enforced |
 |---|---|---|---|---|
-| `off` (now) | 0 replicas | no `POLICY_OPERATOR_URL`: policies are off in the API | as before | nothing; mcp-js's own file policy, as before |
-| `serving` | running | keeps policies (`SessionPolicy` objects), validates through the operator | as before: they do not ask OPA | nothing. Policies are compiled and loaded, and judge no call |
-| `enforcing` | running | the same | mcp-js asks OPA on every browser call | each new session's own policy; **a session with no `SessionPolicy` is denied every browser call** |
+| `off` (now) | 0 replicas | no `POLICY_OPERATOR_URL`: policies are off in the API and the UI | as before | nothing; mcp-js's own file policy, as before |
+| `serving` | running, with an empty bundle | the same as `off` | as before | nothing. Nothing a user or a session can notice has changed |
+| `enforcing` | running | keeps a `SessionPolicy` for every session it creates | mcp-js asks OPA on every browser call | each new session's own policy; **a session with no `SessionPolicy` is denied every browser call** |
 
 What the script changes:
 
-- `off`: `patch-policy-off.yaml` is listed (last) in the overlay's
-  `kustomization.yaml`. It sets both Deployments to 0 replicas and removes
-  `POLICY_OPERATOR_URL` from the backend.
-- `serving`: that line is commented out.
-- `enforcing`: also, `MCP_V8_POLICIES_JSON` is written into the overlay's pod
-  templates, directly below `MCP_V8_PUBLIC_URL`: for `gke`,
-  `deploy/gke/blueprint.yaml` and `deploy/gke/warmpool.yaml`; for `local`,
-  `deploy/local/blueprint.yaml` and `deploy/base/blueprint.yaml`. The value
-  is the contract's. `backend/internal/sessions/deploy_test.go` checks it,
-  and that the files of an overlay have it together.
+- `off`: `patch-policy-off.yaml` (both Deployments at 0 replicas) and
+  `patch-policy-backend-off.yaml` (the backend without `POLICY_OPERATOR_URL`)
+  are the last two patches of the overlay's `kustomization.yaml`.
+- `serving`: the first is commented out.
+- `enforcing`: both are commented out, and `MCP_V8_POLICIES_JSON` is written
+  into the overlay's pod templates, directly below `MCP_V8_PUBLIC_URL`: for
+  `gke`, `deploy/gke/blueprint.yaml` and `deploy/gke/warmpool.yaml`; for
+  `local`, `deploy/local/blueprint.yaml` and `deploy/base/blueprint.yaml`.
+  The value is the contract's. `backend/internal/sessions/deploy_test.go`
+  checks it, and that the files of an overlay have it together.
+
+**Why the backend and the pod templates switch together.** A backend that
+keeps policies asks for one on every warm pod it adopts, and gives back a
+pod that does not ask OPA (`adoptPolicy`, `backend/internal/sessions/policy.go`):
+with the backend on and the templates unchanged, every new session would
+miss the warm pool and start cold. The script refuses that combination.
 
 ### off to serving
 
 ```
-hack/pin-images.sh policy-operator=sha256:…    # from the "images" run
+hack/pin-images.sh policy-operator=sha256:…    # from the "images" run on main
 hack/policy-stage.sh gke serving
 ```
 
-Needs first:
-
-1. Track A merged, and the `images` workflow has published
-   `policy-operator`. `hack/pin-images.sh --check` (and so the deploy)
-   refuses an unpinned operator in any stage but `off`.
-2. The backend that is pinned should be one with track C. An older backend
-   ignores the two new variables, which is harmless: OPA and the operator
-   then run with an empty bundle.
+Needs first: the `images` workflow has published `policy-operator` (it does
+on the push to `main` that merges this change, since `images.yml` changed).
+`hack/pin-images.sh --check`, and so the deploy, refuses an unpinned
+operator in any stage but `off`.
 
 What the deploy does:
 
 - OPA (two pods) and the operator start on the system node. The deploy
-  workflow waits for both; OPA is ready only when it has the operator's
-  bundle, so "ready" already means the bundle path works end to end.
-- The backend's Deployment changes (one variable), so the backend restarts,
-  as on any backend deploy.
-- **Existing sessions, running, sleeping or stopped: nothing.** No session
-  pod and no warm pod is touched: the pod templates are unchanged, so the
-  warm pool is not recreated.
-- No session asks OPA. A policy saved through the API is compiled and
-  loaded and has no effect. Every session is, in the contract's term, not
-  policy-capable, and the API reports its policy as `unsupported`.
+  workflow waits for both. OPA is ready only when it has the operator's
+  bundle, so "ready" means the operator reached the API server, built a
+  bundle, and OPA fetched it through the NetworkPolicies.
+- The backend is not touched and does not restart.
+- **Sessions, existing or new, warm pods included: nothing.** No pod
+  template changed, the warm pool is not recreated, no pod asks OPA.
 
 This stage exists to see the operator, the bundle and OPA working in
 production while nothing depends on them.
@@ -110,39 +108,43 @@ production while nothing depends on them.
 hack/policy-stage.sh gke enforcing
 ```
 
-Needs first, and this one is a hard requirement: **the deployed backend
-creates a `SessionPolicy` for every session it creates or adopts** (track
-C). With a backend that does not, every session created from then on has
-no policy, and all its browser calls are denied.
+Needs first: **the pinned backend is one with the policy API** (track C,
+on `main` since #48). An older backend ignores `POLICY_OPERATOR_URL` and
+would make sessions with no policy, which are denied every browser call.
 
 What the deploy does:
 
-- The blueprint ConfigMap changes, so the backend restarts.
+- The backend gains `POLICY_OPERATOR_URL` and a new blueprint, and
+  restarts. From then on the UI shows the Policy section and tab.
 - The `SandboxTemplate` changes, and the warm pool (`updateStrategy:
-  Recreate`) replaces the Sandboxes that are waiting. For a minute or two
-  the pool is empty or short and a new session starts cold, which is the
-  path that already exists. Sessions in use are not touched.
+  Recreate`) replaces the seven Sandboxes that are waiting. For a minute or
+  two the pool is empty or short; a session created then starts cold (about
+  100 s), which is the path that already exists. Sessions in use are not
+  touched.
 - **Sessions created from now on** (cold, or adopted from the new warm
-  pods) ask OPA at `browserjs/decision/<session id>/mcp_tools` on every
-  browser call.
+  pods) get a `SessionPolicy` (the unrestricted one unless another was
+  asked for) and ask OPA at `browserjs/decision/<session id>/mcp_tools` on
+  every browser call. A session shows `starting` until its policy is loaded
+  (measured below: about 0.2 s from the object to `Ready`).
 - **A warm pod nobody has adopted** has no `SessionPolicy`, so it is denied
-  everything. Nothing can call it either. After adoption it is denied until
-  the backend has created its policy and OPA has loaded it (measured below:
-  a published bundle judges calls about 0.2 s later).
+  everything. Nothing can call it either.
 - **Sessions that existed before this deploy never become enforcing.**
   A Sandbox keeps the pod template it was created with: a wake from a
   snapshot restores the old process, and a cold wake makes a pod from the
-  same stored template. They stay unrestricted, and `unsupported` in the
-  API, until they are deleted. To put a policy on one, delete it and create
-  it again.
+  same stored template. They stay unrestricted, show
+  `policy: {"state": "unsupported"}`, and cannot be given a policy. To put
+  a policy on one, delete it and create it again.
 
 From this stage on, OPA is in the path of every browser call of the new
-sessions: see "Failing closed" below for what its absence looks like.
+sessions: see "Checked on kind" for what its absence looks like.
 
 ### Going back
 
-- `enforcing` to `serving`: new sessions stop asking OPA. Sessions created
-  while enforcing keep asking for as long as they live.
+- `enforcing` to `serving`: the backend stops keeping policies and new
+  sessions stop asking OPA; the warm pool is replaced again. **Sessions
+  created while enforcing keep asking OPA for as long as they live**, and
+  keep the policy they have (the operator still serves it); it can no
+  longer be edited, the API being off.
 - To `off`: only when no session that asks OPA is left. With OPA at 0
   replicas every browser call of such a session is denied, after 5 seconds
   each. `hack/gke-status.sh` (the deploy summary and the "cluster info"
@@ -151,13 +153,28 @@ sessions: see "Failing closed" below for what its absence looks like.
 
 ### Local
 
-`deploy/local` is `off` as well, for the same reason: without tracks A and
-C a local session would be denied everything. `hack/local-up.sh` creates the
-Secret, builds `browserjs/policy-operator:dev` once
-`images/policy-operator/Dockerfile` exists (context: the repository root),
+`deploy/local` is `off` as well. `hack/local-up.sh` creates the Secrets,
+builds `browserjs/policy-operator:dev` (context: the repository root),
 loads it, and waits for both Deployments, which is immediate while they
-have no pods. Then `hack/policy-stage.sh local serving` or `enforcing`, and
+have no pods. Then `hack/policy-stage.sh local enforcing`, and
 `hack/local-up.sh` again.
+
+## API tokens
+
+Separate from the stages above, and independent of them except that a
+token's `policies` scopes are useful only when enforcing. Installed by this
+change: the `APIToken` CRD, the backend's Role rules, and the Secret
+`api-tokens` (`signing-key`), which the deploy workflow makes once. They are
+turned on by adding to `deploy/gke/patch-backend.yaml` (docs/api-tokens.md):
+
+```yaml
+            - name: ALLOWED_EMAILS
+              value: rwendt1337@gmail.com,browserjs06@gmail.com
+```
+
+the same addresses as the policy in `deploy/gke/pomerium-config.yaml`; the
+two lists have to be changed together. Turned off again by removing it:
+every token is then refused, and none can be made.
 
 ## Images
 
@@ -175,9 +192,8 @@ have no pods. Then `hack/policy-stage.sh local serving` or `enforcing`, and
   of `hack/pin-images.sh`. It is built with the repository root as context
   and `images/policy-operator/Dockerfile` as the file, because it copies
   files of `docs/contracts/policy`. The root `.dockerignore` lets through
-  only `web/` and `backend/`, so the image needs its own
-  `images/policy-operator/Dockerfile.dockerignore`. It is skipped, with a
-  notice, while the Dockerfile does not exist. It is rebuilt when
+  only `web/` and `backend/`, so the image has its own
+  `images/policy-operator/Dockerfile.dockerignore`. It is rebuilt when
   `images/policy-operator/` or `docs/contracts/policy/` changes.
 
 ## Checked on kind
@@ -192,8 +208,9 @@ the script builds from the contract's examples with the image's own `opa`),
 the browser container (an MCP server that runs nothing) and the backend (a
 listener). Session pods are plain Pods with the session label.
 
-Run 36971833355 (2026-10-02, Kubernetes v1.37.0 on kind, kindnet's
-NetworkPolicy): 46 checks, all passed.
+Run 37028978340 (2026-10-02, Kubernetes v1.37.0 on kind, kindnet's
+NetworkPolicy): 61 checks, all passed. The figures of items 2 to 4 are
+those of run 36971833355, the first.
 
 1. **The CRDs.** Both are accepted. Refused, each with its own message: a
    `SessionPolicy` whose name is not its session's, `iac` without a URL or
@@ -230,7 +247,26 @@ NetworkPolicy): 46 checks, all passed.
    denied, and allowed again once a pod was back. A new OPA pod is running
    and not ready, and the Service has no address, until it has a bundle.
 
-Two things this found:
+5. **The real operator**, built from `images/policy-operator` in the same
+   run and put in place of the stand-in, with `deploy/base`'s own
+   Deployment, Role and NetworkPolicy. It starts and becomes ready (the
+   list at start, the watch, the API server through the NetworkPolicy); a
+   `SessionPolicy` is `Ready` 0.22 s after it is created, with `hash`,
+   `rego` and `loaded: 2 of 2` in its status (the status subresource, and
+   both replicas found through the EndpointSlices and asked by pod
+   address); allowed runs, denied does not; an edit judges the next call
+   0.25 s later; a source that does not compile gives `Compiled=False`
+   with errors while the previous policy stays in force; a delete goes
+   through the finalizer and the session is denied 0.18 s later; the
+   operator is not restarted over 75 s (kopf's liveness on 8081).
+
+Three things this found:
+
+- **The operator's image exits at start as it is**: kopf asks for the
+  user's name, and uid 65532 has no entry in the image's `/etc/passwd`
+  (`KeyError: getpwuid(): uid not found: 65532`). The Deployment sets
+  `USER=policy-operator`, which is what Python reads first. The image
+  should have the entry.
 
 - **With OPA away, a browser call is not refused at once: it takes the full
   5 seconds of mcp-js's timeout**, also when the Service simply has no
@@ -243,8 +279,8 @@ Two things this found:
 ## Not yet checked: GKE
 
 Step 5 of the track needs the production cluster (there is no separate
-staging cluster) and was not run: this track does not deploy. Nothing below
-needs the `enforcing` stage except the last item.
+staging cluster) and was not run: this track does not deploy. Items 1 and
+2 need only the `serving` stage.
 
 After a deploy in the `serving` stage:
 
@@ -273,10 +309,10 @@ After a deploy in the `serving` stage:
    If the first connection hangs instead, the rule does not work under
    gVisor with Dataplane V2 (the existing DNS rules needed NodeLocal
    DNSCache's address added for that combination).
-3. `kubectl -n browserjs-sessions get sessionpolicies` after saving a
-   policy in the UI: `Ready` True, `Loaded` naming both replicas.
-
 After a deploy in the `enforcing` stage, with a session created after it:
+
+3. "cluster info", section "Session policies": the session's
+   `SessionPolicy` is listed, `Ready` True, `Loaded` naming both replicas.
 
 4. An allowed and a denied call, as on kind.
 5. A session restored from a snapshot is judged by the current policy:
@@ -294,11 +330,9 @@ without a call failing.
 
 ## Deviations from the contract
 
-1. **`deploy.md`, "policy-capable"**: the test is written as "contains
-   `/browserjs/decision/`". The value the same contract prescribes has
-   `"policy_path":"browserjs/decision/…"`, with no slash before
-   `browserjs`. The test has to be "contains `browserjs/decision/`".
-   Affects track C. `hack/gke-status.sh` uses the corrected form.
+1. **`deploy.md`, "policy-capable"**: it said "contains
+   `/browserjs/decision/`", which the prescribed value does not. Fixed in
+   the contract since (#50): "contains `browserjs/decision/`".
 2. **`opa-config` "by `configMapGenerator`, not copies"**: kustomize does
    not read files outside a kustomization's directory, so `deploy/base`
    cannot generate it from `docs/contracts/policy`. Added:
@@ -309,15 +343,19 @@ without a call failing.
    the top. `deploy_test.go` needed no change to accept the variable (it
    already renders the blueprint with the ID `$(SESSION_ID)`); it gained a
    test of the variable itself.
-4. **Operator, "Volumes: none"**: the Deployment has a read-only root
-   filesystem and an `emptyDir` at `/tmp`, and runs as uid 65532. If the
-   image needs to write elsewhere, that is where to change it.
+4. **Operator**: a read-only root filesystem with an `emptyDir` at `/tmp`
+   (the contract says no volumes; the operator needs `/tmp`), uid 65532,
+   and `USER` in its environment (above). The ClusterRole of the contract
+   is installed and unused: the operator runs with kopf's scanning off.
 5. **OPA**: the `preStop` sleep, a CPU limit of 500m and a memory limit of
    512Mi (the design says the replicas have CPU limits; the contract gives
    requests only), and the spread constraint as `ScheduleAnyway`.
 6. **`deploy.yml`** is not in the track's list of files, but the contract
    says the Secret is created the way the existing ones are: the workflow
-   makes `policy-tokens` once, checks the stage, and waits for the two
-   Deployments.
+   makes `policy-tokens` and `api-tokens` once, checks the stage, waits for
+   the CRDs to be established and for the two Deployments.
 7. The comments at the top of the two CRD files still say they are not in
    the kustomization. They are contract files, so they were left.
+8. **The `serving` stage keeps the backend off.** The contract has one
+   switch for the backend (`POLICY_OPERATOR_URL`); the stages tie it to the
+   pod templates, for the reason given with them.
