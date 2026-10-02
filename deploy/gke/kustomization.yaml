@@ -33,7 +33,7 @@ images:
   # operator has no pods.
   - name: browserjs/policy-operator
     newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/policy-operator
-    digest: sha256:9837e78ca32245d9734406977920d9096d299fd61346637290b545dc103cc5f3
+    digest: sha256:b5885373ff01fdcc855d086cbbb62c4ce0297040d4aa63c3d123661b8dfbd481
   # Not pinned yet. hack/pin-images.sh accepts the placeholder only while
   # billing is off (hack/billing-stage.sh), when the operator has no pods.
   - name: browserjs/billing-operator
@@ -41,7 +41,7 @@ images:
     digest: REPLACE_WITH_DIGEST
   - name: browserjs/backend
     newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/backend
-    digest: sha256:f14ec13443a50db250246e515ea57f25d65932dc5b538bf3987af133a9beb341
+    digest: sha256:055c019475d6d4f89ca8a7806018db632491b1052b88f553c3575c23c4b868da
   - name: browserjs/browser
     newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/browser
     digest: sha256:63145f8083996b55793f6d7b91a819e72ac70c4f8925689a4ec70e4cdad47367
@@ -50,7 +50,7 @@ images:
     digest: sha256:de903a1b46c19e9130292317b75487f524a78cb3cd373597cde203f8d6be9e9e
   - name: browserjs/site
     newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/site
-    digest: sha256:07be0426815f351f31aeedbc2a80ed0cbd6e37a9195e716e7d147c6a216c10f0
+    digest: sha256:5fbef9c6bf8142baca0e9c7c62ee19aba810a7c8aeebf31bc8fd68065b584742
 
 configMapGenerator:
   - name: session-blueprint
