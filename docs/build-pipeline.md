@@ -49,7 +49,7 @@ changed it, so not every commit has a tag for every image.
 ## One-time setup
 
 1. Merge and apply the `infra/main` change that creates the `images-push`
-   service account (pull request, read the plan, merge, run **infra apply**).
+   service account (pull request, read the plan, merge; **infra apply** then runs by itself).
 2. From the apply run's outputs, set two repository variables:
 
    ```sh
