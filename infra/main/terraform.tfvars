@@ -47,10 +47,6 @@ session_spot         = false
 # the region. A session stays in the zone its disk was created in.
 session_node_zones = ["us-west1-a", "us-west1-b", "us-west1-c"]
 
-# Not pinned: the pin exists for Pod Snapshots, which are not in use, and it
-# narrows the hardware a node can be placed on.
-session_min_cpu_platform = null
-
 # Must match the Sandbox template and PodSnapshotStorageConfig in deploy/.
 sessions_namespace      = "browserjs-sessions"
 session_service_account = "session"
