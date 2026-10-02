@@ -77,6 +77,7 @@ func New(t *testing.T) (*sessions.Store, dynamic.Interface) {
 			sessions.SandboxGVR:         "SandboxList",
 			sessions.PodSnapshotGVR:     "PodSnapshotList",
 			sessions.SnapshotTriggerGVR: "PodSnapshotManualTriggerList",
+			sessions.ClaimGVR:           "SandboxClaimList",
 		})
 	emulateAPIServer(client)
 	store, err := sessions.NewStore(contextAware{client}, Namespace, Blueprint, PublicURL, URLs())
@@ -383,4 +384,89 @@ func Suspended() map[string]any {
 	return map[string]any{
 		"conditions": []any{map[string]any{"type": "Suspended", "status": "True", "reason": "PodTerminated"}},
 	}
+}
+
+// WarmPoolName is the SandboxWarmPool the fake claim controller serves.
+const WarmPoolName = "s"
+
+// PlayClaimController answers every new SandboxClaim the way Agent Sandbox's
+// claim controller does. A claim is bound to the next of warm, a Sandbox the
+// pool made earlier and that keeps its own name; once warm runs out, to a new
+// Sandbox named after the claim (a cold start from the template). The claim
+// becomes the Sandbox's controlling owner and names it in its status.
+func PlayClaimController(t *testing.T, client dynamic.Interface, warm ...string) {
+	t.Helper()
+	fake := client.(*dynfake.FakeDynamicClient)
+	tracker := fake.Tracker()
+	for _, name := range warm {
+		pooled := &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": sessions.SandboxGVR.GroupVersion().String(),
+			"kind":       "Sandbox",
+			"metadata": map[string]any{
+				"name": name, "namespace": Namespace,
+				"creationTimestamp": "2026-10-01T00:00:00Z",
+				"labels":            map[string]any{"agents.x-k8s.io/warm-pool-sandbox": "pool"},
+			},
+			"spec": map[string]any{},
+		}}
+		if err := tracker.Create(sessions.SandboxGVR, pooled, Namespace); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var mu sync.Mutex
+	fake.PrependReactor("create", sessions.ClaimGVR.Resource, func(action k8stesting.Action) (bool, runtime.Object, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		claim := action.(k8stesting.CreateAction).GetObject().(*unstructured.Unstructured).DeepCopy()
+		claim.SetNamespace(Namespace)
+		claim.SetUID(types.UID("uid-" + claim.GetName()))
+		name := claim.GetName()
+		if len(warm) > 0 {
+			name, warm = warm[0], warm[1:]
+		} else {
+			cold := &unstructured.Unstructured{Object: map[string]any{
+				"apiVersion": sessions.SandboxGVR.GroupVersion().String(),
+				"kind":       "Sandbox",
+				"metadata":   map[string]any{"name": name, "namespace": Namespace},
+				"spec":       map[string]any{},
+			}}
+			if err := tracker.Create(sessions.SandboxGVR, cold, Namespace); err != nil {
+				return true, nil, err
+			}
+		}
+		obj, err := tracker.Get(sessions.SandboxGVR, Namespace, name)
+		if err != nil {
+			return true, nil, err
+		}
+		sandbox := obj.(*unstructured.Unstructured).DeepCopy()
+		controller := true
+		sandbox.SetOwnerReferences([]metav1.OwnerReference{{
+			APIVersion: sessions.ClaimGVR.GroupVersion().String(), Kind: "SandboxClaim",
+			Name: claim.GetName(), UID: claim.GetUID(), Controller: &controller,
+		}})
+		labels := sandbox.GetLabels()
+		delete(labels, "agents.x-k8s.io/warm-pool-sandbox")
+		sandbox.SetLabels(labels)
+		bumpResourceVersion(sandbox)
+		if err := tracker.Update(sessions.SandboxGVR, sandbox, Namespace); err != nil {
+			return true, nil, err
+		}
+		if err := unstructured.SetNestedField(claim.Object, name, "status", "sandbox", "name"); err != nil {
+			return true, nil, err
+		}
+		if err := tracker.Create(sessions.ClaimGVR, claim, Namespace); err != nil {
+			return true, nil, err
+		}
+		return true, claim, nil
+	})
+}
+
+// Claims lists the SandboxClaims in the fake cluster.
+func Claims(t *testing.T, client dynamic.Interface) []unstructured.Unstructured {
+	t.Helper()
+	list, err := client.Resource(sessions.ClaimGVR).Namespace(Namespace).List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return list.Items
 }

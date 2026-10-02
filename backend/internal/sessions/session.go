@@ -31,7 +31,10 @@ func OwnerLabel(owner string) string {
 	return hex.EncodeToString(sum[:])[:32]
 }
 
-var idPattern = regexp.MustCompile(`^s-[a-z2-7]{10}$`)
+// A session's ID is its Sandbox's name: ten characters from newID for one
+// the backend named, five from the API server (generateName "s-") for one
+// that came out of the warm pool "s".
+var idPattern = regexp.MustCompile(`^s-([a-z2-7]{10}|[a-z0-9]{5})$`)
 
 // ValidID reports whether id has the form of a session ID. Anything else
 // cannot name a session and need not be sent to the cluster.
@@ -90,6 +93,9 @@ func FromSandbox(obj *unstructured.Unstructured) Session {
 		Name:    obj.GetAnnotations()[AnnName],
 		Owner:   obj.GetAnnotations()[AnnOwner],
 		Created: obj.GetCreationTimestamp().Time,
+	}
+	if adopted, err := time.Parse(time.RFC3339, obj.GetAnnotations()[AnnCreated]); err == nil {
+		s.Created = adopted
 	}
 	mode, _, _ := unstructured.NestedString(obj.Object, "spec", "operatingMode")
 	conds := conditions(obj)

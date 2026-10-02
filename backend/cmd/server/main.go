@@ -88,6 +88,12 @@ func run() error {
 		store.EnableSnapshots(dyn, cfg.Namespace, sessions.SnapshotOptions{Timeout: cfg.SnapshotTimeout})
 		slog.Info("idle sessions sleep to Pod Snapshots", "timeout", cfg.SnapshotTimeout, "restoreTimeout", cfg.RestoreTimeout)
 	}
+	if cfg.WarmPool != "" {
+		store.EnableWarmPool(cfg.WarmPool, cfg.WarmPoolWait)
+		if err := store.RecoverClaims(ctx); err != nil {
+			slog.Error("warm pool: claims left unfinished", "err", err)
+		}
+	}
 	verifier, err := auth.NewJWKSVerifier(ctx, cfg.PomeriumJWKSURL, cfg.AdminEmails)
 	if err != nil {
 		return err

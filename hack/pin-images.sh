@@ -4,14 +4,14 @@
 #   hack/pin-images.sh backend=sha256:… browser=sha256:… mcp-js=sha256:…
 #       writes the given digests (any subset) into the images: block of
 #       deploy/gke/kustomization.yaml, then copies the two session images
-#       into deploy/gke/blueprint.yaml
+#       into deploy/gke/blueprint.yaml and deploy/gke/warmpool.yaml
 #   hack/pin-images.sh
 #       only copies: use it after editing kustomization.yaml by hand
 #   hack/pin-images.sh --registry [tag]
 #       asks Artifact Registry (gcloud) for the digest each image's tag
 #       (default: main) points at now, and pins those
 #   hack/pin-images.sh --check
-#       changes nothing; fails if a placeholder is left or the two files
+#       changes nothing; fails if a placeholder is left or the files
 #       disagree. The deploy workflow runs this first.
 #
 # The digests are in the summary of the "images" workflow run for the commit.
@@ -19,7 +19,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 kustomization=deploy/gke/kustomization.yaml
-blueprint=deploy/gke/blueprint.yaml
+# Where the session images are named: a cold session's pod and a warm one's.
+blueprints=(deploy/gke/blueprint.yaml deploy/gke/warmpool.yaml)
 images=(backend browser mcp-js)
 
 die() {
@@ -48,9 +49,9 @@ set_digest() { # image, digest
   mv "$kustomization.tmp" "$kustomization"
 }
 
-# The reference a session image has in the blueprint.
-in_blueprint() { # image
-  awk -v suffix="/$1@" '$1 == "image:" && index($2, suffix) { print $2 }' "$blueprint"
+# The reference a session image has in a blueprint.
+in_blueprint() { # image, file
+  awk -v suffix="/$1@" '$1 == "image:" && index($2, suffix) { print $2 }' "$2"
 }
 
 check=""
@@ -87,20 +88,22 @@ for image in "${images[@]}"; do
   fi
   [ "$image" != backend ] || continue
   want="$name@$digest"
-  have="$(in_blueprint "$image")"
-  [ "$(wc -l <<<"$have")" -eq 1 ] && [ -n "$have" ] || die "expected one $image image line in $blueprint"
-  [ "$have" != "$want" ] || continue
-  if [ -n "$check" ]; then
-    echo "pin-images: $blueprint has $have, $kustomization says $want: run hack/pin-images.sh" >&2
-    failed=1
-  else
-    awk -v have="$have" -v want="$want" '
-      $1 == "image:" && $2 == have { sub(/image:.*/, "image: " want) }
-      { print }
-    ' "$blueprint" >"$blueprint.tmp"
-    mv "$blueprint.tmp" "$blueprint"
-    echo "$blueprint: $image is $want"
-  fi
+  for blueprint in "${blueprints[@]}"; do
+    have="$(in_blueprint "$image" "$blueprint")"
+    [ "$(wc -l <<<"$have")" -eq 1 ] && [ -n "$have" ] || die "expected one $image image line in $blueprint"
+    [ "$have" != "$want" ] || continue
+    if [ -n "$check" ]; then
+      echo "pin-images: $blueprint has $have, $kustomization says $want: run hack/pin-images.sh" >&2
+      failed=1
+    else
+      awk -v have="$have" -v want="$want" '
+        $1 == "image:" && $2 == have { sub(/image:.*/, "image: " want) }
+        { print }
+      ' "$blueprint" >"$blueprint.tmp"
+      mv "$blueprint.tmp" "$blueprint"
+      echo "$blueprint: $image is $want"
+    fi
+  done
 done
 [ -z "$failed" ] || exit 1
 echo "pin-images: ok"

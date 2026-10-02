@@ -151,3 +151,32 @@ func TestFromEnvSnapshots(t *testing.T) {
 		}
 	}
 }
+
+func TestWarmPool(t *testing.T) {
+	base := map[string]string{
+		"PUBLIC_URL":           "https://app.example.com",
+		"SESSION_URL_TEMPLATE": "https://{id}.sessions.example.com",
+		"POMERIUM_JWKS_URL":    "https://app.example.com/.well-known/pomerium/jwks.json",
+	}
+	with := func(k, v string) func(string) string {
+		m := map[string]string{k: v}
+		for bk, bv := range base {
+			m[bk] = bv
+		}
+		return env(m)
+	}
+	c, err := FromEnv(env(base))
+	if err != nil || c.WarmPool != "" || c.WarmPoolWait != 5*time.Second {
+		t.Errorf("defaults: pool %q, wait %s, err %v; want no pool", c.WarmPool, c.WarmPoolWait, err)
+	}
+	if c, err := FromEnv(with("WARM_POOL", "s")); err != nil || c.WarmPool != "s" {
+		t.Errorf("WARM_POOL=s: pool %q, err %v", c.WarmPool, err)
+	}
+	// Any other pool's Sandboxes would not be named like sessions.
+	if _, err := FromEnv(with("WARM_POOL", "sessions")); err == nil || !strings.Contains(err.Error(), "WARM_POOL") {
+		t.Errorf("WARM_POOL=sessions: err = %v", err)
+	}
+	if _, err := FromEnv(with("WARM_POOL_WAIT", "0s")); err == nil {
+		t.Error("WARM_POOL_WAIT=0s was accepted")
+	}
+}

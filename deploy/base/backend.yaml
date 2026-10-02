@@ -4,7 +4,8 @@ metadata:
   name: backend
 ---
 # The backend holds the only Kubernetes credentials in the system, and they
-# reach no further than the session Sandboxes of this namespace.
+# reach no further than the session Sandboxes of this namespace and the
+# claims on them.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -13,6 +14,11 @@ rules:
   - apiGroups: ["agents.x-k8s.io"]
     resources: ["sandboxes"]
     verbs: ["get", "list", "create", "update", "patch", "delete"]
+  # A session taken from a warm pool (WARM_POOL) is asked for with a
+  # SandboxClaim, and deleted by deleting it.
+  - apiGroups: ["extensions.agents.x-k8s.io"]
+    resources: ["sandboxclaims"]
+    verbs: ["get", "list", "create", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

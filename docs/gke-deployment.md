@@ -53,6 +53,10 @@ collected at the end.
     node selector and toleration, `serviceAccountName: session`, no service
     account token, all capabilities dropped, CPU and memory limits, disks
     from the StorageClass below.
+  - The warm pool (`warmpool.yaml`, [warm-pool.md](warm-pool.md)): a
+    `SandboxWarmPool` of one session started ahead of time, over a
+    `SandboxTemplate` that repeats the blueprint, and `WARM_POOL=s` on the
+    backend.
   - The `session` ServiceAccount, and the StorageClass `browserjs-zonal`
     (`pd.csi.storage.gke.io`, `pd-balanced`, `WaitForFirstConsumer`).
   - The NetworkPolicies of `deploy/base`, unchanged (see below).
@@ -258,7 +262,8 @@ git commit -am "deploy: pin the images"
 ```
 
 The digests live in the `images:` block of `deploy/gke/kustomization.yaml`;
-the script copies the two session images into `deploy/gke/blueprint.yaml`.
+the script copies the two session images into `deploy/gke/blueprint.yaml`
+and `deploy/gke/warmpool.yaml`.
 `hack/pin-images.sh --check` is the deploy's first step.
 
 The browser digest pinned must be of an image built after the non-root

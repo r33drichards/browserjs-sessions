@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"text/template"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -38,6 +40,11 @@ type Store struct {
 	publicURL string
 	urls      *URLTemplate
 	snap      *snapshotter // nil: no Pod Snapshots (see EnableSnapshots)
+
+	// See warm.go. warmPool is "" when new sessions do not come from a pool.
+	claims   dynamic.ResourceInterface
+	warmPool string
+	warmWait time.Duration
 }
 
 // NewStore parses blueprint (see deploy/base/blueprint.yaml for the format).
@@ -53,6 +60,7 @@ func NewStore(client dynamic.Interface, namespace, blueprint, publicURL string, 
 	}
 	return &Store{
 		client:    client.Resource(SandboxGVR).Namespace(namespace),
+		claims:    client.Resource(ClaimGVR).Namespace(namespace),
 		blueprint: tmpl,
 		publicURL: publicURL,
 		urls:      urls,
@@ -82,6 +90,13 @@ func (s *Store) Create(ctx context.Context, name, owner string) (Session, error)
 	}
 	if owner == "" {
 		return Session{}, ErrOwnerRequired
+	}
+	if s.warmPool != "" {
+		warm, err := s.createWarm(ctx, name, owner)
+		if err == nil {
+			return warm, nil
+		}
+		slog.Warn("no session from the warm pool; starting one cold", "err", err)
 	}
 	id := newID()
 
@@ -327,7 +342,10 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 			return err
 		}
 	}
-	err := s.client.Delete(ctx, id, metav1.DeleteOptions{})
+	err := s.releaseClaim(ctx, id)
+	if err == nil {
+		err = s.client.Delete(ctx, id, metav1.DeleteOptions{})
+	}
 	if apierrors.IsNotFound(err) {
 		return ErrNotFound
 	}

@@ -36,3 +36,7 @@ spec:
               value: 2m
             - name: READY_TIMEOUT
               value: 5m
+            # New sessions are taken from the SandboxWarmPool "s"
+            # (warmpool.yaml). Remove this to start every session cold.
+            - name: WARM_POOL
+              value: s
