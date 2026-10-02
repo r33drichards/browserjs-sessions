@@ -116,6 +116,9 @@ spec:
                           echo "no token (the Secret release-canary): the release canary is not switched on, and this backend goes out unchecked"
                           exit 0
                         fi
+                        # backend-preview has only just got its new pod: let
+                        # the Service settle on it before asking.
+                        sleep 20
                         exec python3 /canary/canary.py
                     env:
                       - name: CANARY_API_TOKEN
@@ -186,6 +189,11 @@ spec:
       maxUnavailable: 0
       steps:
         - setWeight: 25
+        # site-canary has only just been pointed at the new pods: a check
+        # that started at once could still be answered by an old one, and
+        # pass a site it never saw (it did, on kind).
+        - pause:
+            duration: 20s
         - analysis:
             templates:
               - templateName: site-answers
@@ -247,9 +255,10 @@ spec:
                       - python3
                       - -c
                       - |
-                        import sys, urllib.request
+                        import sys, time, urllib.request
                         base = "http://site-canary.browserjs-sessions.svc"
                         for attempt in range(20):
+                            time.sleep(0.5)
                             for path, want in (("/", b"<html"), ("/healthz", b"")):
                                 with urllib.request.urlopen(base + path, timeout=10) as r:
                                     body = r.read()

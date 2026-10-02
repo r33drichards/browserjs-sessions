@@ -257,8 +257,10 @@ The deploy workflow writes the script (ConfigMap `release-canary`, from
 Secret the Job passes, saying that it checked nothing.
 
 **Site.** Four pods. A change makes the Rollout bring up one new pod (a
-quarter), run the check `site-answers` against the new pods through the
-Service `site-canary`, go to half, wait 30 seconds, and finish. A failed
+quarter), wait 20 seconds for the Service `site-canary` to settle on the
+new pods (on kind a check that started at once was answered by an old pod
+and passed a broken site), run the check `site-answers` against them, go to
+half, wait 30 seconds, and finish. A failed
 check takes the new pods away; never fewer than four serve.
 
 **The rest** is unchanged: OPA rolls with two replicas and a disruption
