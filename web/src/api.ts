@@ -40,7 +40,9 @@ export class SignedOutError extends Error {
 
 // The backend's id format. Anything else never reaches the network, so a
 // crafted /sessions/:id link cannot steer an authenticated request elsewhere.
-const SESSION_ID = /^s-[a-z2-7]{10}$/
+// Ten base32 characters for a session the backend named, five characters for
+// one taken from the warm pool (backend/internal/sessions ValidID).
+const SESSION_ID = /^s-([a-z2-7]{10}|[a-z0-9]{5})$/
 
 export const isSessionId = (id: string) => SESSION_ID.test(id)
 
