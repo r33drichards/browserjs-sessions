@@ -254,9 +254,11 @@ case "${1:-}" in
         git checkout --quiet - && git branch --quiet -D "$branch"
         die "nothing to pin: deploy/gke already has these digests. To release main as it is: hack/release.sh --no-pin"
       fi
+      # The lines of "after" that "before" has not: what was pinned.
+      news="$(comm -13 <(sort <<<"$before") <(sort <<<"$after"))"
       echo "pinned:"
-      diff <(echo "$before") <(echo "$after") | sed -n 's/^> /  /p'
-      git commit --quiet -am "deploy: pin images ($(diff <(echo "$before") <(echo "$after") | sed -n 's/^> \([^ ]*\) .*/\1/p' | paste -sd, - | sed 's/,/, /g'))"
+      sed 's/^/  /' <<<"$news"
+      git commit --quiet -am "deploy: pin images ($(awk '{ print $1 }' <<<"$news" | paste -sd, - | sed 's/,/, /g'))"
       if [ -n "${DRY_RUN:-}" ]; then
         echo "DRY_RUN: the commit is on the local branch $branch; nothing was pushed"
         exit 0
