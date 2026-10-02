@@ -1,0 +1,106 @@
+# Sleep to, and wake from, GKE Pod Snapshots (podsnapshot.gke.io/v1): the
+# backend (SNAPSHOTS=true in patch-backend.yaml) snapshots an idle session's
+# pod before suspending it, and the pod made on wake is restored from that
+# snapshot: memory, processes and root filesystem as they were. The session
+# disk is not in the snapshot; it is the same disk, attached again.
+# The research behind every choice here: docs/infrastructure.md, section 3.
+#
+# Where snapshots are stored: the bucket infra/main makes (its output
+# snapshot_bucket). tokenSource must be infra's snapshot_token_source: with
+# podKSA the pod's ServiceAccount (session, in session.yaml) is what reads
+# and writes the bucket, through Workload Identity.
+apiVersion: podsnapshot.gke.io/v1
+kind: PodSnapshotStorageConfig
+metadata:
+  name: browserjs-sessions
+spec:
+  snapshotStorageConfig:
+    gcs:
+      bucket: browserjs-sessions-pod-snapshots
+      path: sessions
+      tokenSource: podKSA
+---
+apiVersion: podsnapshot.gke.io/v1
+kind: PodSnapshotPolicy
+metadata:
+  name: session-sleep
+spec:
+  storageConfigName: browserjs-sessions
+  # The label every session pod has (blueprint.yaml), and nothing else does.
+  selector:
+    matchLabels:
+      app: browserjs-session
+  # Memory and all, restored only into an identical pod spec on the same
+  # machine series (the backend pins a sleeping session to its node pool).
+  snapshotScope: whole-pod
+  triggerConfig:
+    # Only when the backend asks (a PodSnapshotManualTrigger).
+    type: manual
+    # The pod runs on after the checkpoint; the backend suspends the Sandbox
+    # once the snapshot is Ready, and Chromium still exits cleanly, so its
+    # on-disk session restore stays good as the fallback.
+    postCheckpoint: resume
+  snapshotGroupingRules:
+    groupByLabelValue:
+      # A pod is restored from the newest ready snapshot OF ITS GROUP. This
+      # label is put on every session pod by the Sandbox controller and is
+      # unique to its Sandbox: a session only ever wakes from its own
+      # snapshot, never from another user's. Do not remove it.
+      labels:
+        - agents.x-k8s.io/sandbox-name-hash
+      groupRetentionPolicy:
+        # The one a session wakes from. The backend deletes older ones too.
+        maxSnapshotCountPerGroup: 1
+---
+# What the backend needs for snapshots, on top of its Sandboxes: to trigger
+# one, to see it become ready, and to delete it (GKE then removes the objects
+# from the bucket).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: backend-snapshots
+rules:
+  - apiGroups: ["podsnapshot.gke.io"]
+    resources: ["podsnapshotmanualtriggers"]
+    verbs: ["create", "get", "delete"]
+  - apiGroups: ["podsnapshot.gke.io"]
+    resources: ["podsnapshots"]
+    verbs: ["get", "list", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: backend-snapshots
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: backend-snapshots
+subjects:
+  - kind: ServiceAccount
+    name: backend
+---
+# A snapshot only restores on the machine series and CPU it was taken on.
+# The backend reads the node a session runs on for its browserjs.com/pool
+# label, and pins the sleeping session to that pool. Nodes are not
+# namespaced, hence a ClusterRole; it reads nodes and nothing else.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: browserjs-backend-nodes
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: browserjs-backend-nodes
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: browserjs-backend-nodes
+subjects:
+  - kind: ServiceAccount
+    name: backend
+    namespace: browserjs-sessions

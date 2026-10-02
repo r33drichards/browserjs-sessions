@@ -19,3 +19,20 @@ spec:
               value: https://app.browserjs.com/.well-known/pomerium/jwks.json
             - name: ADMIN_EMAILS
               value: rwendt1337@gmail.com
+            # An idle session sleeps to a Pod Snapshot and wakes from it
+            # (snapshots.yaml). "false" is today's behaviour: every wake is a
+            # cold start, with Chromium restoring its tabs from disk.
+            - name: SNAPSHOTS
+              value: "true"
+            # A snapshot not ready by then is abandoned; the session sleeps
+            # without one and wakes cold.
+            - name: SNAPSHOT_TIMEOUT
+              value: 2m
+            # A restore not running by then (counted from when the pod has a
+            # node) is abandoned: the snapshot is deleted, the session is
+            # started cold on any pool. The wait for a session has to cover
+            # that second start.
+            - name: SNAPSHOT_RESTORE_TIMEOUT
+              value: 2m
+            - name: READY_TIMEOUT
+              value: 5m
