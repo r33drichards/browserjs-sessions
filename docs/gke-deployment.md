@@ -137,7 +137,7 @@ add-on's admission policy split into a fixed part and an editable part (next
 section). The deploy workflow checks which versions the cluster serves and
 fails, at the end, if `v1beta1` is not among them.
 
-### 2. The browser runs as root, and the add-on's policy forbids that
+### 2. Sessions run as a non-root user, because the add-on's policy requires it
 
 VERIFIED
 <https://docs.cloud.google.com/kubernetes-engine/docs/how-to/agent-sandbox>,
@@ -156,62 +156,58 @@ the gVisor node selector and toleration, `capabilities.drop: ["ALL"]` and a
 memory limit. The exact expressions are not published; `cluster info` prints
 both policies in full.
 
-Against that, `deploy/gke/blueprint.yaml`:
+`deploy/gke/blueprint.yaml` meets all of it: the gVisor runtime class, node
+selector and toleration; no service account token; no host network, host
+path, privileged mode, added capabilities, host ports or sysctls; all
+capabilities dropped and CPU and memory limits on both containers; and the
+whole pod as uid and gid 1000 (`runAsNonRoot`, `runAsUser`, `runAsGroup`). No
+policy is edited and no namespace is exempted. There is no `seccompProfile`:
+GKE Sandbox does not support seccomp and the policies do not ask for one.
 
-| Requirement | Blueprint |
+The browser image used to have no user but root. It now has the user
+`browser` (uid 1000, home `/home/browser`) and an entrypoint that needs
+nothing of root:
+
+- `images/browser/Dockerfile`: a passwd and a group entry for uid 1000
+  (openbox crashes for a uid that is not in `/etc/passwd`), and
+  `/home/browser` owned by it.
+- `images/browser/browser/entrypoint.sh`: `HOME` is `/root` for root and the
+  user's home otherwise (with `/tmp/home` as the fallback for a uid the image
+  does not know), instead of always `/root`; the `chmod` of `/tmp`, which
+  only its owner may do, is allowed to fail; and an unwritable profile
+  directory is reported as such instead of as a Chromium crash loop.
+- The image still **defaults to root** (no `USER`): the standalone
+  deployment on Railway mounts a root-owned volume at `/data`, and keeps
+  working unchanged. A session pod asks for uid 1000 itself.
+
+Checked on the local image with the new entrypoint and passwd files layered
+on top (Docker, arm64; not gVisor, and not a rebuilt image), as
+`--user 1000:1000 --cap-drop ALL --security-opt no-new-privileges` with a
+fresh volume at `/data/chrome` owned `root:1000`, mode 2775, which is what
+`fsGroup: 1000` leaves:
+
+| Check | Result |
 |---|---|
-| gVisor runtime class, node selector, toleration | yes |
-| no service account token | yes |
-| no host network, host path, privileged, added capabilities, host ports, sysctls | none used |
-| drop all capabilities | yes, both containers (new for the browser) |
-| CPU and memory limits | yes, both containers |
-| run as non-root | **mcp-js yes (uid 1000); browser no** |
+| starts | `/healthz` 200 after 1.1 s; every process is uid 1000; all capability sets zero, `NoNewPrivs: 1` |
+| VNC | websocket upgrade 101, banner `RFB 003.008` |
+| two named tabs | `default` at example.com, `two` at example.org |
+| window fills the screen | outer 1279x799 on a 1280x800 screen, device pixel ratio 1 |
+| `docker stop` | 0.6 s, exit 143; tab file and a session file written, owned by 1000 |
+| restart | both pages restored, both names rebound, no extra tab |
+| `docker kill`, restart | `exit_type` was `Crashed`; three pages restored and rebound; `exit_type` reset to `Normal` |
+| volume not writable (root-owned, no group write) | exits with the new message naming the uid and its groups |
+| as root, not in session mode, root-owned `/data` | Caddy `/healthz` 200; 401 without the password; `/vnc.html` 200 with it; stop under 1 s |
 
-The browser image has no user but root, and its entrypoint needs one. Checked
-locally on the current image (Docker, arm64, not gVisor):
+Xvfb prints "Owner of /tmp/.X11-unix should be set to root" as a non-root
+user; it is a warning. Chromium keeps `--no-sandbox`; gVisor is the sandbox.
 
-- root with every capability dropped and `no-new-privileges`: starts, health
-  check 200 in 3 s, VNC answers. So dropping capabilities costs nothing.
-- uid 1000 with the image unchanged: the entrypoint dies at `chmod 1777 /tmp`.
-- uid 1000 with that line made tolerant and `HOME` writable: openbox crashes
-  (signal 11), because uid 1000 has no entry in `/etc/passwd`.
-- uid 1000 with a passwd entry as well: starts, health check 200 in 2 s, VNC
-  answers, all 21 processes run as uid 1000, clean stop.
+`deploy/base` and `deploy/local` are unchanged and still run the browser as
+root: the local image predates this change (rebuilding it needs about 14 GB),
+and the new image runs as root as well, so local keeps working either way.
+Move the three `runAs*` lines to base when the local image is rebuilt.
 
-Chromium keeps `--no-sandbox` either way; gVisor is the sandbox.
-
-**The two ways forward** (a decision; the images were not changed here):
-
-A. **Make the image non-root** (recommended; small). Exactly:
-   - `images/browser/Dockerfile`: add `browser:x:1000:1000:browser:/home/browser:/bin/sh`
-     to `/rootfs/etc/passwd` and `browser:x:1000:` to `/rootfs/etc/group`;
-     `mkdir -p /rootfs/home/browser && chown 1000:1000 /rootfs/home/browser`;
-     in the final stage `USER 1000:1000` and `ENV HOME=/home/browser`.
-   - `images/browser/browser/entrypoint.sh`: `export HOME=/root` becomes
-     `export HOME="${HOME:-/root}"`; `chmod 1777 /tmp /tmp/.X11-unix` gets
-     `2>/dev/null || true` (the image's `/tmp` is already 1777).
-   - `deploy/gke/blueprint.yaml`: uncomment `runAsNonRoot: true`,
-     `runAsUser: 1000`, `runAsGroup: 1000` in the pod's `securityContext`
-     (they are there, commented). The session disk already has `fsGroup: 1000`.
-   - Railway's standalone use of the same image mounts a volume at `/data`
-     that root owned so far; it would need its ownership changed once
-     (UNVERIFIED, not part of this system).
-   Then no policy is touched and the deploy runs with
-   `hardening_exemption: leave`.
-B. **Exempt the namespace from the hardening policy** (what the workflow
-   offers for the first deployment with today's image): the input
-   `hardening_exemption: exempt-namespace` adds a `namespaceSelector` to
-   `sandbox-hardening-binding` so that it no longer matches Sandboxes in
-   `browserjs-sessions`. The core policy still applies, and the blueprint
-   still meets every hardening rule except non-root by its own choice.
-   `restore` removes the selector again. This is narrower than Google's
-   documented "delete the binding", which would lift the policy for the
-   whole cluster. UNVERIFIED: the binding's current `matchResources` (the
-   run prints it before and after), and that GKE leaves the edit in place.
-
-On the current 1.35.8 cluster neither applies: there is no editable policy
-before the split (UNVERIFIED which single policy exists there), so a
-root pod would simply be refused. Another reason for finding 1.
+On 1.35.8 the policy cannot be edited at all (the split is from
+1.36.0-gke.2459000), which no longer matters for this deployment.
 
 ## Runbook
 
@@ -265,6 +261,11 @@ The digests live in the `images:` block of `deploy/gke/kustomization.yaml`;
 the script copies the two session images into `deploy/gke/blueprint.yaml`.
 `hack/pin-images.sh --check` is the deploy's first step.
 
+The browser digest pinned must be of an image built after the non-root
+change (finding 2): an older one has no uid 1000 and its sessions crash at
+start. After that change merges and `images` has run, pin `browser` again
+before deploying.
+
 ### 4. Infrastructure: pull request, apply, one variable
 
 1. Check that the channel offers 1.36.3-gke.1767000 or later (command in
@@ -304,8 +305,7 @@ then `gh run watch`). In its summary check:
 ### 6. Deploy with the staging issuer
 
 ```sh
-gh workflow run deploy.yml --ref main -f confirm=deploy -f issuer=staging \
-  -f hardening_exemption=exempt-namespace     # "leave" once the browser image is non-root
+gh workflow run deploy.yml --ref main -f confirm=deploy -f issuer=staging
 gh run watch
 ```
 
@@ -320,11 +320,11 @@ should pass everything but the four certificate checks.
 ### 7. Deploy with the production issuer
 
 ```sh
-gh workflow run deploy.yml --ref main -f confirm=deploy -f issuer=production -f hardening_exemption=leave
+gh workflow run deploy.yml --ref main -f confirm=deploy -f issuer=production
 gh run watch
 ```
 
-(`leave` does not undo the exemption made in step 6.) The Certificate is
+The Certificate is
 issued again, the workflow sees that Pomerium still serves the old one and
 restarts it, then the backend.
 
@@ -381,7 +381,7 @@ events, logs and the description of every pod that is not ready.
 | sign-in | Google or GitHub says the redirect URI is wrong | step 1 |
 | sign-in | Pomerium's 403 page | the e-mail is not on the allow-list in `deploy/gke/pomerium-config.yaml` |
 | the app | every API call 401 after sign-in | the backend has not got Pomerium's keys (its log: "Failed to refresh HTTP JWK Set"): same cause as two rows up; it retries every few minutes and on a restart |
-| a session | creating fails with `sandbox-hardening-policy … denied` | the browser is root: finding 2, way A or B |
+| a session | creating fails with `sandbox-hardening-policy … denied` | the blueprint or an image breaks a hardening rule (finding 2): the message names it; the browser image pinned must be one built after the non-root change |
 | | `sandbox-core-policy … denied` | the blueprint breaks a fixed rule: read the message, compare with the policy `cluster info` prints |
 | | stays "starting" | `cluster info -f sandbox=<id>`: no node (the pool is scaling, or quota for N2), image pull (digest or the node account's reader role), a probe failing under gVisor |
 | | runs, but the browser cannot reach sites | DNS: the `kube-dns` label in "Nodes"; the NetworkPolicy |
@@ -403,7 +403,6 @@ give the two pods `hostAliases` for the three names pointing at a fixed
   left the manifests; nothing in this deployment relies on that yet.
 - **Pomerium's secrets** are never touched by a deploy, so a rollback signs
   nobody out. Pomerium's disk and every session disk stay.
-- **The hardening exemption:** `-f hardening_exemption=restore`.
 - **A bad certificate:** run with the other issuer; the previous Secret is
   replaced only when the new certificate is issued.
 - **The cluster version** cannot be rolled back. Agent Sandbox objects did
@@ -447,13 +446,13 @@ Actions has on the cluster. It runs `get`, `describe` and `logs` only.
 2. The managed add-on on 1.36 serves `agents.x-k8s.io/v1beta1` with the
    fields the backend uses, as upstream v1.0.x does (tested locally against
    upstream v1.0.4 only), and deletes a Sandbox's disk with it.
-3. The admission policies' exact rules, names of the bindings, and that a
-   `namespaceSelector` merged into `sandbox-hardening-binding` exempts the
-   namespace and stays. Whether the policies accept a container-level
-   `runAsNonRoot` (mcp-js) with a root container beside it does not matter
-   under way B and is moot under way A.
-4. Chromium, Xvfb and x11vnc under gVisor, with capabilities dropped (tested
-   under Docker only). The x11vnc open-file-limit fix is in the image now but
+3. The admission policies' exact rules, and that the blueprint passes them
+   (written from Google's description and sample, not from the policies'
+   text; `cluster info` prints them).
+4. Chromium, Xvfb, openbox and x11vnc under gVisor as uid 1000 with
+   capabilities dropped (tested under Docker only, on files layered over the
+   old image, not on the image CI builds); the session disk's `chrome`
+   subPath being group-writable for gid 1000 on a Persistent Disk. The x11vnc open-file-limit fix is in the image now but
    was never run from a rebuilt image.
 5. Pods reaching the load balancer's own address from inside the cluster
    (above).
@@ -478,12 +477,8 @@ Actions has on the cluster. It runs `get`, `describe` and `logs` only.
 
 ## Decisions needed
 
-1. **Cluster version** (finding 1): upgrade to 1.36 now (recommended, and in
-   this branch as its own commit), or keep 1.35 and have the backend support
-   v1alpha1 (a real code change, not a setting).
-2. **Root browser** (finding 2): change the image (A, recommended, folded
-   into the rebuild from `main`) or exempt the namespace (B). B also works
-   as a stopgap for the first deployment.
+1. (Decided: the cluster is upgraded to 1.36; finding 1.)
+2. (Decided: the browser image is non-root; finding 2.)
 3. **GitHub OAuth App**: a second app for production, or move the one app.
 4. **Kubernetes Engine Admin for the deployer** (above), or the narrower
    split.

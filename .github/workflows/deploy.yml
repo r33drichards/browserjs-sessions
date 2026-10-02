@@ -36,15 +36,6 @@ on:
         options:
           - production
           - staging
-      hardening_exemption:
-        description: Agent Sandbox hardening policy for the sessions namespace (docs/gke-deployment.md)
-        required: true
-        type: choice
-        default: leave
-        options:
-          - leave
-          - exempt-namespace
-          - restore
 
 permissions:
   contents: read
@@ -231,35 +222,6 @@ jobs:
           if [ -n "$before" ] && [ "$before" != "$(version)" ]; then
             echo "dex_changed=true" >> "$GITHUB_OUTPUT"
           fi
-
-      # The managed add-on's sandbox-hardening-policy demands, among other
-      # things, a non-root pod; the browser image runs as root. Google
-      # documents the policy as the user's to change (EnsureExists). This
-      # takes one namespace out of it rather than deleting the binding for
-      # the whole cluster; sandbox-core-policy (gVisor, no host access)
-      # still applies.
-      - name: Agent Sandbox hardening policy
-        if: ${{ inputs.hardening_exemption != 'leave' }}
-        env:
-          MODE: ${{ inputs.hardening_exemption }}
-        run: |
-          binding=validatingadmissionpolicybinding/sandbox-hardening-binding
-          if ! kubectl get "$binding" >/dev/null 2>&1; then
-            echo "::error::$binding does not exist. The editable hardening policy exists from GKE 1.36.0-gke.2459000; before that there is one policy and it cannot be changed."
-            kubectl get validatingadmissionpolicies,validatingadmissionpolicybindings || true
-            exit 1
-          fi
-          echo "Before:"
-          kubectl get "$binding" -o yaml
-          if [ "$MODE" = exempt-namespace ]; then
-            patch="$(jq -cn --arg ns "$NS" '{spec: {matchResources: {namespaceSelector: {matchExpressions: [
-              {key: "kubernetes.io/metadata.name", operator: "NotIn", values: [$ns]}]}}}}')"
-          else
-            patch='{"spec":{"matchResources":{"namespaceSelector":null}}}'
-          fi
-          kubectl patch "$binding" --type=merge -p "$patch"
-          echo "After:"
-          kubectl get "$binding" -o yaml
 
       - name: Apply
         env:
