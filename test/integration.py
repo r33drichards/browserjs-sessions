@@ -555,6 +555,9 @@ class Run:
         expect(exists("pvc", "data-" + self.sid) or kubectl("-n", NS, "get", "pvc", "-o", "name").strip() != "",
                "the disk is gone")
         host = session_host(self.sid)
+        # For up to 2 s after it last saw the pod, the proxy still takes it to
+        # be there; a call in that window is a 502, not the 409.
+        time.sleep(2.5)
         status, _, raw = request("POST", host, "/mcp", user=ALICE, body={"jsonrpc": "2.0", "id": 1, "method": "ping"},
                                  headers={"Accept": "application/json, text/event-stream"})
         expect(status == 409, "MCP POST while stopped: %d %s" % (status, raw[:100]))

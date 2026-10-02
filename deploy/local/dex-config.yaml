@@ -56,3 +56,8 @@ staticPasswords:
     username: admin
     userID: 0ad00000-0000-4000-8000-000000000003
     hash: "$2y$10$j1YYKenM3gb7FDFFl/7wSOA6VPwZRc.t/lw4PWMS5grnsgOpt.aTS"
+  # Signs in, but is not on Pomerium's list of who may use the app.
+  - email: mallory@example.com
+    username: mallory
+    userID: 0badbad0-0000-4000-8000-000000000004
+    hash: "$2y$10$fb5KlCfwXcS6ADCf/MYfre4BWkG7ZoQcYYW0pntsI6GYwbcC75NUK"

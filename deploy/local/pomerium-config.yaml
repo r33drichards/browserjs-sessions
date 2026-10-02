@@ -62,7 +62,8 @@ routes:
     preserve_host_header: true
 
   # The session's MCP endpoint. Pomerium signs the MCP client's user in and
-  # says who it is; the backend decides whether the session is theirs.
+  # says who it is; the backend decides whether the session is theirs. The
+  # list of who may sign in is shared with the app's route below.
   - name: session-mcp
     from: https://*.sessions.localtest.me
     prefix: /mcp
@@ -70,7 +71,20 @@ routes:
     mcp:
       server:
         max_request_bytes: 1048576
-    allow_any_authenticated_user: true
+    # Who may use the app at all: these email addresses, nobody else.
+    policy: &allowed
+      - allow:
+          or:
+            - email:
+                is: alice@example.com
+            - email:
+                is: bob@example.com
+            - email:
+                is: admin@example.com
+            - email:
+                is: rwendt1337@gmail.com
+            - email:
+                is: browserjs06@gmail.com
     pass_identity_headers: true
     preserve_host_header: true
 
@@ -78,7 +92,7 @@ routes:
   - name: app
     from: https://app.localtest.me
     to: http://backend
-    allow_any_authenticated_user: true
+    policy: *allowed
     pass_identity_headers: true
     preserve_host_header: true
     # A request may wait for a session's pod to answer.
