@@ -6,6 +6,10 @@ declare module "@novnc/novnc" {
     viewOnly: boolean
     background: string
     disconnect(): void
+    focus(options?: FocusOptions): void
     clipboardPasteFrom(text: string): void
+    // Internal to noVNC, not part of its API: see ResizingRFB.
+    protected _requestRemoteResize(): void
+    protected _screenSize(): { w: number; h: number }
   }
 }

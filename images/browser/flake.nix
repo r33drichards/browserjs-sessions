@@ -31,6 +31,13 @@
             '';
           };
 
+          # Only the Xvnc server out of TigerVNC: the package also carries the
+          # viewer and its toolkit, which the image has no use for.
+          xvnc = pkgs.runCommand "xvnc-${pkgs.tigervnc.version}" { } ''
+            mkdir -p $out/bin
+            cp ${pkgs.tigervnc}/bin/Xvnc $out/bin/Xvnc
+          '';
+
           runtime = pkgs.writeShellApplication {
             name = "browser-entrypoint";
             runtimeInputs = [
@@ -43,9 +50,8 @@
               pkgs.openbox
               pkgs.procps
               pkgs.python3Packages.websockify
-              pkgs.x11vnc
               pkgs.xorg.xdpyinfo
-              pkgs.xorg.xorgserver
+              xvnc
             ];
             text = ''
               export NOVNC_WEB=${pkgs.novnc}/share/webapps/novnc
@@ -63,7 +69,7 @@
           };
         in
         {
-          inherit browser-mcp runtime;
+          inherit browser-mcp runtime xvnc;
           default = runtime;
         }
       );

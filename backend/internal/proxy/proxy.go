@@ -24,7 +24,7 @@ import (
 // Ports inside a session pod.
 const (
 	mcpPort = 8080 // mcp-js
-	vncPort = 6080 // websockify in front of x11vnc
+	vncPort = 6080 // websockify in front of the VNC server
 )
 
 // DefaultMaxUploadBytes is the largest upload body passed on to a pod:
