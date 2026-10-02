@@ -115,9 +115,6 @@ func run() error {
 	}
 	if cfg.WarmPool != "" {
 		store.EnableWarmPool(cfg.WarmPool, cfg.WarmPoolWait)
-		if err := store.RecoverClaims(ctx); err != nil {
-			slog.Error("warm pool: claims left unfinished", "err", err)
-		}
 	}
 	verifier, err := auth.NewJWKSVerifier(ctx, cfg.PomeriumJWKSURL, cfg.AdminEmails)
 	if err != nil {
@@ -159,9 +156,18 @@ func run() error {
 	handler, px := newHandlerWith(cfg, verifier, store, tracker, bill)
 	// The periodic passes, on one replica at a time. Each keeps nothing
 	// between runs and reads what it decides from off the cluster.
-	go leader.Run(ctx, leases, cfg.Namespace, host+"_"+replica, leader.DefaultTiming, func(ctx context.Context) {
+	// A replica a release is still checking (ACTIVE_FILE) does not campaign.
+	go leader.Run(ctx, leases, cfg.Namespace, host+"_"+replica, leader.DefaultTiming, leader.Active(cfg.ActiveFile), func(ctx context.Context) {
 		metrics.Leader.Set(1)
 		defer metrics.Leader.Set(0)
+		// What a backend that died in the middle of a create left undone.
+		// The leader's, so that it is done once and not by a replica that
+		// is only being checked; doing it again changes nothing.
+		if cfg.WarmPool != "" {
+			if err := store.RecoverClaims(ctx); err != nil {
+				slog.Error("warm pool: claims left unfinished", "err", err)
+			}
+		}
 		go idle.Run(ctx, store, idle.Rule{After: cfg.IdleAfter, Margin: idle.DefaultMargin, Source: tracker}, time.Minute)
 		bill.run(ctx, px)
 		if payments != nil {

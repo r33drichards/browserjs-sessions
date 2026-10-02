@@ -18,8 +18,12 @@ type Config struct {
 	// MetricsAddr is where /metrics is served (METRICS_ADDR), on a port of
 	// its own that Pomerium does not route to. "off" for none.
 	MetricsAddr string
-	Namespace   string // namespace holding session Sandboxes
-	PublicURL   string // the app's (UI and API) base URL, no trailing slash
+	// ActiveFile, if set (ACTIVE_FILE), is the pod's labels file: the
+	// replica runs the periodic passes only while it carries the label
+	// leader.ActiveLabel. Unset, every replica may.
+	ActiveFile string
+	Namespace  string // namespace holding session Sandboxes
+	PublicURL  string // the app's (UI and API) base URL, no trailing slash
 
 	// SessionURLs is where sessions are reached: one host for all of them,
 	// each under its ID.
@@ -112,6 +116,7 @@ func FromEnv(get func(string) string) (Config, error) {
 	c := Config{
 		Addr:            or("ADDR", ":8080"),
 		MetricsAddr:     or("METRICS_ADDR", ":9090"),
+		ActiveFile:      get("ACTIVE_FILE"),
 		Namespace:       or("NAMESPACE", "browserjs-sessions"),
 		PublicURL:       strings.TrimRight(get("PUBLIC_URL"), "/"),
 		PomeriumJWKSURL: get("POMERIUM_JWKS_URL"),

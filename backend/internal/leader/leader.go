@@ -14,6 +14,8 @@ package leader
 import (
 	"context"
 	"log/slog"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -44,14 +46,48 @@ var DefaultTiming = Timing{Duration: 60 * time.Second, Deadline: 45 * time.Secon
 // is called with a context that ends when it stops leading (or ctx ends).
 // lead is to return when that context ends, and only then does the replica
 // campaign again. identity names the replica in the Lease.
-func Run(ctx context.Context, leases coordinationv1.LeasesGetter, namespace, identity string, timing Timing, lead func(ctx context.Context)) {
+//
+// eligible, if not nil, is asked every Retry: a replica campaigns only
+// while it says yes, and one that is leading when it says no gives the
+// Lease up. A replica that is being checked before a release serves the
+// requests it is sent and runs no pass (Active).
+func Run(ctx context.Context, leases coordinationv1.LeasesGetter, namespace, identity string, timing Timing, eligible func() bool, lead func(ctx context.Context)) {
 	check(ctx, leases, namespace)
+	if eligible == nil {
+		eligible = func() bool { return true }
+	}
 	lock := &resourcelock.LeaseLock{
 		LeaseMeta:  metav1.ObjectMeta{Namespace: namespace, Name: Lease},
 		Client:     leases,
 		LockConfig: resourcelock.ResourceLockConfig{Identity: identity},
 	}
 	for ctx.Err() == nil {
+		if !eligible() {
+			select {
+			case <-ctx.Done():
+			case <-time.After(timing.Retry):
+			}
+			continue
+		}
+		// The campaign ends with ctx, or when the replica stops being
+		// eligible.
+		ctx, stop := context.WithCancel(ctx)
+		go func() {
+			tick := time.NewTicker(timing.Retry)
+			defer tick.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-tick.C:
+					if !eligible() {
+						slog.Info("no longer eligible to lead; giving the Lease up", "identity", identity)
+						stop()
+						return
+					}
+				}
+			}
+		}()
 		var leading sync.WaitGroup
 		elector, err := leaderelection.NewLeaderElector(leaderelection.LeaderElectionConfig{
 			Lock:            lock,
@@ -74,10 +110,40 @@ func Run(ctx context.Context, leases coordinationv1.LeasesGetter, namespace, ide
 		})
 		if err != nil {
 			slog.Error("leader election not started; no replica of this configuration runs the periodic passes", "err", err)
+			stop()
 			return
 		}
 		elector.Run(ctx) // returns when the Lease is lost, or ctx is done
+		stop()
 		leading.Wait()
+	}
+}
+
+// ActiveLabel is the line of a pod's labels file (the downward API's
+// metadata.labels) that makes the pod eligible to lead: the label a release
+// puts on the backend that serves users, and not on one it is still
+// checking.
+const ActiveLabel = `browserjs.dev/role="active"`
+
+// Active is the eligibility of a replica whose labels are in file: it is
+// eligible while the file has the line ActiveLabel. The file is read each
+// time, so a label changed on a running pod is seen without a restart.
+// With no file (the empty name) every replica is eligible.
+func Active(file string) func() bool {
+	if file == "" {
+		return nil
+	}
+	return func() bool {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return false
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.TrimSpace(line) == ActiveLabel {
+				return true
+			}
+		}
+		return false
 	}
 }
 

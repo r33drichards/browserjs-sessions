@@ -3,6 +3,8 @@ package leader_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"testing"
@@ -94,6 +96,45 @@ func eventually(t *testing.T, what string, ok func() bool) {
 	}
 }
 
+// A replica that a release is still checking does not campaign, takes over
+// when it is made active, and gives the Lease up when it no longer is: with
+// no restart, the label file is read each time.
+func TestOnlyAnActiveReplicaLeads(t *testing.T) {
+	client := cluster()
+	l := &leading{now: map[string]bool{}, ever: map[string]int{}}
+	file := filepath.Join(t.TempDir(), "labels")
+	label := func(role string) {
+		t.Helper()
+		if err := os.WriteFile(file, []byte("app=\"backend\"\nbrowserjs.dev/role=\""+role+"\"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	label("preview")
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		leader.Run(ctx, client.CoordinationV1(), namespace, "new", timing, leader.Active(file), l.lead("new"))
+	}()
+	t.Cleanup(func() { cancel(); <-done })
+
+	time.Sleep(timing.Duration)
+	if got := l.who(); len(got) != 0 {
+		t.Fatalf("a replica under check leads: %v", got)
+	}
+	label("active")
+	eventually(t, "the replica leads once it is active", func() bool { return len(l.who()) == 1 })
+	label("preview")
+	eventually(t, "the replica stops leading once it is not", func() bool { return len(l.who()) == 0 })
+
+	if leader.Active("") != nil {
+		t.Error("with no file a replica should always be eligible")
+	}
+	if leader.Active(filepath.Join(t.TempDir(), "missing"))() {
+		t.Error("a labels file that cannot be read makes the replica eligible")
+	}
+}
+
 // Of the replicas, one runs the passes; when it goes, another does.
 func TestOneReplicaLeadsAtATime(t *testing.T) {
 	client := cluster()
@@ -103,7 +144,7 @@ func TestOneReplicaLeadsAtATime(t *testing.T) {
 	for _, name := range []string{"a", "b", "c"} {
 		ctx, cancel := context.WithCancel(t.Context())
 		stops[name] = cancel
-		wg.Go(func() { leader.Run(ctx, client.CoordinationV1(), namespace, name, timing, l.lead(name)) })
+		wg.Go(func() { leader.Run(ctx, client.CoordinationV1(), namespace, name, timing, nil, l.lead(name)) })
 	}
 	t.Cleanup(func() {
 		for _, stop := range stops {

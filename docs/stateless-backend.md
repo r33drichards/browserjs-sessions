@@ -182,6 +182,13 @@ backend says so at start.
 that shuts down releases it. After a crash the passes resume within about a
 minute, plus the pass's own interval.
 
+With `ACTIVE_FILE` set to the pod's labels file (the downward API), a
+replica campaigns only while it carries the label
+`browserjs.dev/role="active"`, and gives the Lease up when it loses it. A
+backend that a release is still checking then serves what it is sent and
+runs no pass, and neither does it finish unfinished warm-pool claims
+(`RecoverClaims`, now the leader's). Unset, every replica may lead.
+
 A replica that may not read the Lease logs an error at start and never
 leads. If that is every replica, nothing is ever put to sleep: apply
 `deploy/base/backend.yaml`'s Role with the image.
