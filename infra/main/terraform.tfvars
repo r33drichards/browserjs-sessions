@@ -13,6 +13,10 @@ cluster_location = "us-west1-a"
 
 domain = "browserjs.com"
 
+# The domain the deployment is moving to (docs/domain-switch.md): a second
+# zone with the same records. Nothing is served under it yet.
+additional_domains = ["computeruse.site"]
+
 # "pomerium_nlb": Pomerium terminates TLS behind a passthrough load balancer,
 #                 certificates from cert-manager (recommended).
 # "gateway_alb":  a GKE Gateway terminates TLS with Certificate Manager.

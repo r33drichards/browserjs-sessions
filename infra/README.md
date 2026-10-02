@@ -153,6 +153,11 @@ This replaces every record Namecheap served for the domain: mail (MX), any
 existing site. Recreate what you still need in the Cloud DNS zone first.
 Certificates cannot be issued until the delegation is live.
 
+A domain listed in `additional_domains` gets a zone of its own with the same
+records, and its own nameservers, in the output `additional_dns_name_servers`.
+Nothing is served under it: it is how the deployment moves to another domain,
+[docs/domain-switch.md](../docs/domain-switch.md).
+
 ## 6. Image pushes (once)
 
 After the apply that creates the `images-push` service account, set two more

@@ -152,6 +152,16 @@ output "dns_name_servers" {
   value       = var.create_dns_zone ? google_dns_managed_zone.this[0].name_servers : null
 }
 
+output "additional_dns_name_servers" {
+  description = "Per additional domain: the nameservers to set at its registrar (Namecheap: Domain List > Manage > Nameservers > Custom DNS). They differ from dns_name_servers: Cloud DNS gives each zone its own set."
+  value       = { for domain, zone in google_dns_managed_zone.domains : domain => zone.name_servers }
+}
+
+output "additional_dns_records" {
+  description = "The records under the additional domains. Created here when create_dns_zone is true."
+  value       = [for record in values(local.additional_records) : { name = record.name, type = "A", value = local.edge_ip }]
+}
+
 output "dns_records" {
   description = "The records that must exist. Created here when create_dns_zone is true; otherwise create them wherever the domain's DNS lives."
   value = concat(
