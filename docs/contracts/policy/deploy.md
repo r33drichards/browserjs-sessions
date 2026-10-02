@@ -3,6 +3,31 @@
 Names, labels, ports, images, secrets and the two changes to existing
 manifests. Everything is in the namespace `browserjs-sessions`.
 
+## One namespace, and what that means
+
+The shared OPA (a Deployment and a Service, not a sidecar), the operator,
+every `SessionPolicy` and every `APIToken` live in `browserjs-sessions`,
+the namespace of the session Sandboxes, the backend, Pomerium and Dex. A
+`SessionPolicy` has to be there: an `ownerReference` to its Sandbox only
+works within a namespace.
+
+Consequences, since Pomerium's and Dex's ConfigMaps and the Secrets are in
+the same namespace:
+
+- **No ServiceAccount gains rights on `configmaps` or `secrets`.** The
+  backend's Role grows by two custom resources of `browserjs.dev` and
+  nothing else; the operator's Role names `sessionpolicies`, `events` and
+  `endpointslices`. RBAC cannot select objects by label, so a rule on
+  `configmaps` here would reach Pomerium's routes; that is why policy state
+  is a custom resource and not a ConfigMap.
+- OPA's own ConfigMap (`opa-config`) and Secret (`policy-tokens`) are
+  mounted by the kubelet. OPA's ServiceAccount has no token and no Role.
+- Session pods can already reach nothing in the cluster; they gain one
+  destination, OPA on 8181. They cannot reach the operator, the backend,
+  Pomerium or Dex, in this namespace or any other.
+- Pod labels are what the NetworkPolicies select on. `app: opa` and
+  `app: policy-operator` must not be used by anything else in the namespace.
+
 ## Workloads
 
 | | OPA | Policy operator |

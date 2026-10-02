@@ -63,7 +63,9 @@ full record is section 10):
   servers run, and publishes one bundle that the OPA replicas poll. It is
   also the one place policies are validated: the backend's "validate"
   endpoint for the editor calls it.
-- **OPA**: two replicas on the system pool. Each session's mcp-js is
+- **OPA**: a Deployment of two replicas, with a Service, in the sessions'
+  own namespace (`browserjs-sessions`) beside the operator, on the system
+  pool. Each session's mcp-js is
   configured, from the pod's own name, to ask for
   `browserjs/decision/<session id>/mcp_tools`. Nothing is pushed into a pod,
   so warm-adopted and snapshot-restored pods need nothing done to them. No
