@@ -282,11 +282,13 @@ reasonable later move.
 **Scale to zero.** `autoscaling { min_node_count = 0 }` on the gVisor pool is
 ordinary cluster autoscaler behaviour; nothing in GVISOR forbids it, and the
 "at least one node" rule applies to the non-gVisor pool (VERIFIED, GVISOR).
-UNVERIFIED on a real cluster: scale-up from zero for a pod whose only match is
-the gVisor label and taint. Expect about 1 to 2 minutes from a pending pod to a
-ready node, plus the image pull, and about 10 minutes of idle before a node is
-removed (`autoscaling_profile = "OPTIMIZE_UTILIZATION"` shortens it;
-UNVERIFIED figures).
+Measured on 2026-10-02: 103 seconds from the autoscaler's scale-up to a ready
+session, of which 38 s is the node, 36 s the image pulls and 25 s the
+session's disk; [cold-start.md](cold-start.md) has the breakdown and the
+options. The session pools use image streaming (`session_image_streaming`) to
+take the pull out of that. A node is removed after about 10 minutes idle
+(`autoscaling_profile = "OPTIMIZE_UTILIZATION"` shortens it; UNVERIFIED
+figures).
 
 **Machine type.** Default `n2-standard-4` (4 vCPU billed, 2 usable under
 gVisor on Intel, 16 GB): about four sessions at a 3 GiB limit each. N2 is the

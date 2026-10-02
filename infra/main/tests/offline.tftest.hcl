@@ -90,6 +90,24 @@ run "defaults_pomerium_nlb" {
   }
 
   assert {
+    condition = alltrue([
+      for pool in concat([google_container_node_pool.sessions], values(google_container_node_pool.sessions_fallback)) :
+      pool.node_config[0].gcfs_config[0].enabled
+    ])
+    error_message = "Every session pool must have image streaming on."
+  }
+
+  assert {
+    condition     = length(google_container_node_pool.system.node_config[0].gcfs_config) == 0
+    error_message = "The system pool is not changed: turning image streaming on would recreate its node."
+  }
+
+  assert {
+    condition     = contains(keys(google_project_service.this), "containerfilesystem.googleapis.com") && google_project_iam_member.nodes_image_streaming.role == "roles/serviceusage.serviceUsageConsumer"
+    error_message = "Image streaming needs the Container File System API and the Service Usage Consumer role for the node service account."
+  }
+
+  assert {
     condition     = length(google_container_node_pool.system.node_config[0].sandbox_config) == 0
     error_message = "The system pool must not run gVisor: GKE Sandbox needs one ordinary pool."
   }

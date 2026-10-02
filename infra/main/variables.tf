@@ -340,6 +340,19 @@ variable "session_disk_size_gb" {
   }
 }
 
+variable "session_image_streaming" {
+  description = <<-EOT
+    Image streaming on the session node pools: a new node starts the browser
+    container from a remote mount of the image instead of first pulling and
+    unpacking all of it (about 31 s for the 905 MB browser image). Changing
+    this on a pool that has nodes makes GKE recreate them at once, outside
+    the maintenance window: the sessions on them restart from their disks.
+    Images GKE cannot stream are pulled the ordinary way.
+  EOT
+  type        = bool
+  default     = true
+}
+
 # --- Pod Snapshots storage --------------------------------------------------------------
 
 variable "snapshot_bucket_name" {
