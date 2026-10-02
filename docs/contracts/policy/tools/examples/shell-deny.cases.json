@@ -1,0 +1,189 @@
+[
+  {
+    "name": "the browser tool",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "url"
+          }
+        ]
+      }
+    },
+    "allow": true
+  },
+  {
+    "name": "argv",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_execute",
+      "arguments": {
+        "argv": [
+          "ls"
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "script",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_execute",
+      "arguments": {
+        "script": "ls"
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "background",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_execute",
+      "arguments": {
+        "argv": [
+          "sleep",
+          "1"
+        ],
+        "background": true
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "list background commands",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_process",
+      "arguments": {
+        "action": "list"
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "poll a background command",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_process",
+      "arguments": {
+        "action": "poll",
+        "id": "p1"
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "kill a background command",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_process",
+      "arguments": {
+        "action": "kill",
+        "id": "p1",
+        "signal": "SIGKILL"
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "the desktop tool (it can type into a terminal)",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "desktop_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "screen.grab"
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "another server's browser_execute",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "other",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": []
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "null arguments",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_execute",
+      "arguments": null
+    },
+    "allow": false
+  },
+  {
+    "name": "no arguments at all",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_execute",
+      "arguments": {}
+    },
+    "allow": false
+  },
+  {
+    "name": "arguments is an array",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_execute",
+      "arguments": [
+        [
+          "ls"
+        ]
+      ]
+    },
+    "allow": false
+  },
+  {
+    "name": "another server's shell_execute",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "other",
+      "tool": "shell_execute",
+      "arguments": {
+        "argv": [
+          "ls"
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "a tool with a similar name",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_execute2",
+      "arguments": {
+        "argv": [
+          "ls"
+        ]
+      }
+    },
+    "allow": false
+  }
+]

@@ -5,8 +5,11 @@ WORKDIR /src
 COPY . .
 # desktop-smoke first: it runs the desktop_execute tool against a real Xvnc,
 # so an image whose nut.js cannot drive the display is never built.
+# shell-smoke does the same for shell_execute, through the packaged server.
 RUN nix --extra-experimental-features "nix-command flakes" --option filter-syscalls false \
       build -L --no-link .#desktop-smoke \
+ && nix --extra-experimental-features "nix-command flakes" --option filter-syscalls false \
+      build -L --no-link .#shell-smoke \
  && nix --extra-experimental-features "nix-command flakes" --option filter-syscalls false \
       build .#runtime -o /result \
  && mkdir -p /rootfs/nix/store /rootfs/tmp /rootfs/root /rootfs/etc /rootfs/data \

@@ -127,9 +127,46 @@
                   node ${./test/desktop-smoke.mjs}
                 touch $out
               '';
+
+          # The same for shell_execute and shell_process: the unit tests on
+          # the packaged shell.js, then the packaged server over HTTP, running
+          # commands and opening a window on the image's Xvnc and openbox
+          # (test/shell-smoke.mjs). The Dockerfile builds it before the image.
+          shell-smoke =
+            pkgs.runCommand "shell-smoke"
+              {
+                nativeBuildInputs = [
+                  browser-mcp
+                  pkgs.bash
+                  pkgs.nodejs_22
+                  pkgs.openbox
+                  pkgs.xdpyinfo
+                  pkgs.xterm
+                  pkgs.xwininfo
+                  xvnc
+                ];
+              }
+              ''
+                export HOME=$TMPDIR/home DISPLAY=:97
+                export FONTCONFIG_FILE=${pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; }}
+                mkdir -p "$HOME" /tmp/.X11-unix
+                SHELL_JS=${browser-mcp}/lib/node_modules/browser-mcp/shell.js \
+                  node --test ${./test/shell.test.mjs}
+                Xvnc :97 -geometry 1280x800 -depth 24 -nolisten tcp -ac \
+                  -rfbport 5997 -localhost -UseIPv6=0 -SecurityTypes None &
+                trap 'kill $(jobs -p) 2>/dev/null || true' EXIT
+                for _ in $(seq 1 100); do
+                  xdpyinfo >/dev/null 2>&1 && break
+                  sleep 0.1
+                done
+                xdpyinfo >/dev/null
+                openbox --sm-disable --config-file ${./browser/openbox-rc.xml} &
+                BROWSER_MCP=${browser-mcp}/bin/browser-mcp node ${./test/shell-smoke.mjs}
+                touch $out
+              '';
         in
         {
-          inherit browser-mcp runtime xvnc;
+          inherit browser-mcp runtime xvnc shell-smoke;
           default = runtime;
         }
         // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isx86_64 { inherit desktop-smoke; }

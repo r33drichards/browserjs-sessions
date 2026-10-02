@@ -261,3 +261,103 @@ not contain: the browser's own UI (address bar, tabs, permission and download
 prompts, extension popups), native dialogs such as the file chooser, pages
 that only react to real input, and other windows. The person watching sees
 the pointer move and can use the mouse and keyboard at the same time.
+
+### Shell — `mcp.callTool("browser", "shell_execute", …)`
+
+Commands run on the desktop Chromium runs on, as the desktop's user: the same
+home directory, files and `PATH` as a terminal there, and `DISPLAY` is set, so
+a command can open a window the person watching sees. (`child_process` is not
+available in `run_js`; this is the way to run a program.) Give exactly one of
+`argv` and `script`:
+
+```js
+// argv: the program and its arguments, run directly. No shell reads them, so
+// nothing needs quoting and nothing is expanded.
+const r = await mcp.callTool("browser", "shell_execute", {
+  argv: ["git", "clone", "--depth", "1", "https://github.com/octocat/Hello-World", "hello"],
+  timeout_ms: 120000,
+});
+const out = JSON.parse(r.content[0].text);
+// { exit_code: 0, signal: null, stdout: "", stderr: "Cloning into 'hello'...\n",
+//   truncated: false, duration_ms: 812, timed_out: false }
+if (out.exit_code !== 0) throw new Error(out.stderr);
+```
+
+```js
+// script: bash source (`bash -lc`), for pipes, redirection, globs and loops.
+const r = await mcp.callTool("browser", "shell_execute", {
+  script: "ls -1 *.csv | wc -l",
+  cwd: "/tmp",
+});
+console.log(JSON.parse(r.content[0].text).stdout);
+```
+
+```js
+// A long-running command: start it in the background, then poll and kill it.
+const start = await mcp.callTool("browser", "shell_execute", {
+  argv: ["python3", "-m", "http.server", "8000"],
+  background: true,
+});
+const { id } = JSON.parse(start.content[0].text); // { id: "p1", pid, started_at }
+// Later, in this or another run_js call: what it wrote since the last poll.
+const poll = await mcp.callTool("browser", "shell_process", { action: "poll", id, wait_ms: 1000 });
+console.log(poll.content[0].text); // { id, running: true, exit_code: null, stdout, stderr, ... }
+await mcp.callTool("browser", "shell_process", { action: "kill", id });
+```
+
+Arguments of `shell_execute`:
+
+- `argv: ["program", "arg", ...]` or `script: "..."`, never both.
+- `cwd`: the working directory. An absolute path written exactly as the
+  directory is (no `..`, no trailing `/`, no symbolic link in it), inside the
+  home directory, `/data` or `/tmp`. Default: the home directory.
+- `env: { NAME: "value" }`: added to the environment. `PATH`, `LD_*`,
+  `BASH_ENV`, `ENV`, `BASH_FUNC_*`, `SHELLOPTS`, `BASHOPTS`, `PS4` and
+  `NODE_OPTIONS` are refused.
+- `stdin`: a string written to the command's input (up to 1 MiB). Without it
+  the input is empty.
+- `timeout_ms`: default 30000, at most 600000. Then the command and everything
+  it started are sent SIGTERM, and SIGKILL two seconds later; the result has
+  `timed_out: true`. Keep it under the `run_js` timeout (30 s unless you raise
+  `execution_timeout_secs`), or use `background`.
+- `max_output_bytes`: how much of stdout, and of stderr, is kept (default
+  1048576, at most 4194304). The rest is dropped and `truncated` is `true`.
+- `background: true`: return `{ id, pid, started_at }` at once. No timeout
+  unless `timeout_ms` is given (at most 86400000).
+
+`shell_process` follows background commands: `{ action: "list" }`,
+`{ action: "poll", id, wait_ms? }` (wait up to 30000 ms for it to exit) and
+`{ action: "kill", id, signal? }` (`SIGTERM` by default, or `SIGKILL`,
+`SIGINT`, `SIGHUP`; sent to the command and everything it started). `poll`
+and `kill` return the result shape below plus `id` and `running`, with the
+output written since the previous poll; once one has reported
+`running: false` the id is forgotten.
+
+How it behaves:
+
+- **Result.** `r.content[0].text` is JSON: `{ exit_code, signal, stdout,
+  stderr, truncated, duration_ms, timed_out }`. `exit_code` is `null` when a
+  signal ended the command (`signal` then names it). A non-zero exit code is a
+  result, not an error: check it. `stdout` and `stderr` are text; a stream
+  that is not valid UTF-8 comes back base64 encoded, with `stdout_encoding`
+  or `stderr_encoding` set to `"base64"`. Nothing reaches the model unless you
+  print it: log the part you need, not megabytes of output.
+- **Failures.** The arguments are checked before anything runs. A refused
+  argument, a program that does not exist, or a policy that denies the call
+  makes `mcp.callTool` throw.
+- **No terminal.** Commands have no TTY: programs that prompt or draw a
+  screen (`vim`, `top`, `sudo`, `ssh` asking for a password) will not work.
+  Pass flags that make them non-interactive, or give the answer in `stdin`.
+- **What a command leaves behind.** When a foreground command exits, anything
+  it started that is still running (`cmd &`) is ended with it. For something
+  that must keep running (a server, a GUI application), use
+  `background: true`. At most 16 commands run at a time.
+- **Limits.** Commands run as an unprivileged user with nothing to gain
+  privileges with (no `sudo`, no package installation into the system), and
+  reach the network the browser reaches.
+
+**Prefer `argv`.** It runs exactly the program and arguments you wrote, with
+no quoting to get wrong. It is also what a session's policy can read: a
+policy may allow only certain programs, hosts or directories, or deny the
+`script` form outright. When a call is denied by policy, do not look for
+another way to run the same thing; say what was refused.

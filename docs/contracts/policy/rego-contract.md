@@ -34,6 +34,10 @@ the policy sees it: every field can be missing or of any type.
 `input-sample.json` is a sample; the `examples/*.cases.json` files hold many
 more, hostile ones included.
 
+The same server has three more tools, and `tool` names the one called:
+`desktop_execute`, `shell_execute` and `shell_process`. For the last two,
+`shell-execute-input.md` gives the `arguments` and worked policies.
+
 There is nothing in the input that identifies the session, the user or the
 MCP client.
 

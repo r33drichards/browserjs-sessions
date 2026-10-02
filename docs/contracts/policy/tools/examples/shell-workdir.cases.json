@@ -1,0 +1,366 @@
+[
+  {
+    "name": "argv in the directory",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_execute",
+      "arguments": {
+        "argv": [
+          "ls",
+          "-la"
+        ],
+        "cwd": "/home/browser/work"
+      }
+    },
+    "allow": true
+  },
+  {
+    "name": "script in a subdirectory",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_execute",
+      "arguments": {
+        "script": "npm test",
+        "cwd": "/home/browser/work/app/packages/a"
+      }
+    },
+    "allow": true
+  },
+  {
+    "name": "in the background",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_execute",
+      "arguments": {
+        "argv": [
+          "npm",
+          "run",
+          "dev"
+        ],
+        "cwd": "/home/browser/work/app",
+        "background": true
+      }
+    },
+    "allow": true
+  },
+  {
+    "name": "poll a background command",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_process",
+      "arguments": {
+        "action": "poll",
+        "id": "p1"
+      }
+    },
+    "allow": true
+  },
+  {
+    "name": "no cwd (the home directory)",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_execute",
+      "arguments": {
+        "argv": [
+          "ls"
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "the home directory",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_execute",
+      "arguments": {
+        "argv": [
+          "ls"
+        ],
+        "cwd": "/home/browser"
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "the root",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_execute",
+      "arguments": {
+        "argv": [
+          "ls"
+        ],
+        "cwd": "/"
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "a sibling whose name starts the same",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_execute",
+      "arguments": {
+        "argv": [
+          "ls"
+        ],
+        "cwd": "/home/browser/work-other"
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "out through ..",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_execute",
+      "arguments": {
+        "argv": [
+          "ls"
+        ],
+        "cwd": "/home/browser/work/../.ssh"
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "out through .. deeper",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_execute",
+      "arguments": {
+        "argv": [
+          "ls"
+        ],
+        "cwd": "/home/browser/work/a/../../.ssh"
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "ending in ..",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_execute",
+      "arguments": {
+        "argv": [
+          "ls"
+        ],
+        "cwd": "/home/browser/work/.."
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "the profile's disk",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_execute",
+      "arguments": {
+        "argv": [
+          "ls"
+        ],
+        "cwd": "/data/chrome"
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "relative",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_execute",
+      "arguments": {
+        "argv": [
+          "ls"
+        ],
+        "cwd": "work"
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "cwd is not a string",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_execute",
+      "arguments": {
+        "argv": [
+          "ls"
+        ],
+        "cwd": [
+          "/home/browser/work"
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "cwd is null",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_execute",
+      "arguments": {
+        "argv": [
+          "ls"
+        ],
+        "cwd": null
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "upper case",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_execute",
+      "arguments": {
+        "argv": [
+          "ls"
+        ],
+        "cwd": "/home/browser/Work"
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "the browser tool",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "url"
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "the desktop tool",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "desktop_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "screen.grab"
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "a path outside, as an argument (cwd does not confine a command)",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_execute",
+      "arguments": {
+        "argv": [
+          "cat",
+          "/data/chrome/Default/Preferences"
+        ],
+        "cwd": "/home/browser/work"
+      }
+    },
+    "allow": true
+  },
+  {
+    "name": "a script that changes directory (the same)",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_execute",
+      "arguments": {
+        "script": "cd / && ls",
+        "cwd": "/home/browser/work"
+      }
+    },
+    "allow": true
+  },
+  {
+    "name": "null arguments",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_execute",
+      "arguments": null
+    },
+    "allow": false
+  },
+  {
+    "name": "no arguments at all",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_execute",
+      "arguments": {}
+    },
+    "allow": false
+  },
+  {
+    "name": "arguments is an array",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_execute",
+      "arguments": [
+        [
+          "ls"
+        ]
+      ]
+    },
+    "allow": false
+  },
+  {
+    "name": "another server's shell_execute",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "other",
+      "tool": "shell_execute",
+      "arguments": {
+        "argv": [
+          "ls"
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "a tool with a similar name",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "shell_execute2",
+      "arguments": {
+        "argv": [
+          "ls"
+        ]
+      }
+    },
+    "allow": false
+  }
+]

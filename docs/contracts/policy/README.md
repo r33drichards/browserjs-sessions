@@ -16,6 +16,7 @@ request, and say which tracks it affects.
 | [`examples/`](examples/) | five policies; for each the Rego it compiles to and decisions it must give | A (tests), D (presets), F (docs) |
 | [`rego-contract.md`](rego-contract.md) | package, rule, input, decision path, tenant checks, bundle layout | A, B |
 | [`input-sample.json`](input-sample.json) | an `mcp_tools` input as mcp-js sends it | A, D |
+| [`shell-execute-input.md`](shell-execute-input.md), [`tools/`](tools/) | the `mcp_tools` input for `shell_execute` and `shell_process`: argument schemas, five Rego policies with their cases | A, D, F |
 | [`decision-module.rego.tmpl`](decision-module.rego.tmpl) | the platform module generated per session | A |
 | [`system-authz.rego`](system-authz.rego) | who may call OPA's API | B |
 | [`capabilities.json`](capabilities.json), [`capabilities-allowlist.txt`](capabilities-allowlist.txt) | the built-ins tenant Rego may use | A, B |
@@ -36,6 +37,15 @@ evaluates every case the way OPA will be asked:
 ```
 python3 docs/contracts/policy/spike/run-cases.py "$(command -v opa)" docs/contracts/policy
 86/86 cases pass
+```
+
+The Rego policies for the shell tools (`tools/examples/`, written by hand, no
+JSON form) have a runner of their own, which also applies the operator's
+tenant checks:
+
+```
+python3 docs/contracts/policy/tools/run-cases.py "$(command -v opa)" docs/contracts/policy
+139/139 cases pass
 ```
 
 Track A's translator must produce each `examples/<name>.rego` from

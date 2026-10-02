@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://computeruse.site/contracts/policy/tools/shell_execute.schema.json",
+  "title": "shell_execute arguments",
+  "description": "The arguments of the browser server's shell_execute tool, which is input.arguments of the mcp_tools policy input when input.server is \"browser\" and input.tool is \"shell_execute\". The tool refuses anything that does not match, but a policy is asked BEFORE the tool validates: in a policy every field can be missing or of any type. Exactly one of argv and script. images/browser/test/shell.test.mjs checks that the tool advertises these properties.",
+  "type": "object",
+  "additionalProperties": false,
+  "oneOf": [{ "required": ["argv"] }, { "required": ["script"] }],
+  "properties": {
+    "argv": {
+      "type": "array",
+      "description": "The program and its arguments, executed directly: no shell, no word splitting, no globbing, no expansion. argv[0] is a name looked up on the server's PATH (which env cannot change) or a path.",
+      "items": { "type": "string", "maxLength": 131072, "pattern": "^[^\\u0000]*$" },
+      "minItems": 1,
+      "maxItems": 1024
+    },
+    "script": {
+      "type": "string",
+      "description": "Shell source, run as bash -lc <script>. Opaque to a policy beyond string matching.",
+      "minLength": 1,
+      "maxLength": 131072,
+      "pattern": "^[^\\u0000]*$"
+    },
+    "cwd": {
+      "type": "string",
+      "description": "Working directory. Absolute and already normalised (no '.', '..', '//' or trailing '/'), an existing directory with no symbolic link anywhere in the path, equal to or inside one of the allowed roots (the user's home, /data, /tmp). Default: the user's home directory ($HOME of the desktop).",
+      "pattern": "^/",
+      "maxLength": 4096
+    },
+    "env": {
+      "type": "object",
+      "description": "Variables added to the desktop's environment. Refused names: PATH, BASH_ENV, ENV, SHELLOPTS, BASHOPTS, PS4, NODE_OPTIONS, and any name starting with LD_ or BASH_FUNC_. At most 64 variables, 32768 bytes in all.",
+      "maxProperties": 64,
+      "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+      "additionalProperties": { "type": "string", "pattern": "^[^\\u0000]*$" }
+    },
+    "stdin": {
+      "type": "string",
+      "description": "Written to the command's standard input, which is then closed. Without it standard input is /dev/null.",
+      "maxLength": 1048576
+    },
+    "timeout_ms": {
+      "type": "integer",
+      "description": "After this long the command's process group is sent SIGTERM, and SIGKILL two seconds later. In the foreground: default 30000, maximum 600000. With background: true: no default (the command runs until it exits or is killed), maximum 86400000.",
+      "minimum": 1,
+      "maximum": 86400000
+    },
+    "max_output_bytes": {
+      "type": "integer",
+      "description": "The most bytes kept of stdout, and of stderr (each has its own count). In the background, of output not yet polled.",
+      "minimum": 1,
+      "maximum": 4194304,
+      "default": 1048576
+    },
+    "background": {
+      "type": "boolean",
+      "description": "Start the command and return {id, pid, started_at} at once; read its output and end it with the shell_process tool.",
+      "default": false
+    }
+  }
+}
