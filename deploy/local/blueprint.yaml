@@ -1,3 +1,7 @@
+# deploy/base/blueprint.yaml, plus a command for the browser container
+# (explained where it is set). Keep the two in step; delete this file, and its entry in
+# kustomization.yaml, after the next build of the browser image.
+#
 # The spec of a session's Sandbox (agents.x-k8s.io/v1beta1), rendered by the
 # backend for each new session: {{ .ID }} is the session's ID, {{ .SessionURL }}
 # its own base URL, {{ .PublicURL }} the app's. The backend adds operatingMode
@@ -19,6 +23,11 @@ podTemplate:
     containers:
       - name: browser
         image: browserjs/browser:dev
+        # The local browserjs/browser:dev was built before the entrypoint
+        # lowered its own file descriptor limit (without that, x11vnc never
+        # answers a viewer under kind's containerd). exec, so signals still
+        # reach the entrypoint. /bin/sh is the image's bash.
+        command: ["/bin/sh", "-c", "ulimit -n 65536 || true; exec /entrypoint"]
         env:
           - name: SESSION_MODE
             value: "1"

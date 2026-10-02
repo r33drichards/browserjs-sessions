@@ -12,6 +12,10 @@ images:
     newTag: dev
 
 configMapGenerator:
+  - name: session-blueprint
+    behavior: replace
+    files:
+      - blueprint.yaml
   - name: pomerium-config
     behavior: replace
     files:
