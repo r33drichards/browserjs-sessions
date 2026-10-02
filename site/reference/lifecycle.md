@@ -16,7 +16,7 @@ states. The app shows the state; the API returns it as `state`.
 
 | From | Cause | To |
 | --- | --- | --- |
-| (none) | Create | `starting`, then `running` |
+| (none) | Create | `starting`, then `running`. A small session is ready in seconds; a [bigger one](/reference/session-sizes) starts cold |
 | `running` | **Sleep**, or 15 minutes without use | `stopping`, then `asleep` |
 | `asleep` | An MCP call, **Wake**, or a file sent or saved | `starting`, then `running` |
 | `running` or `starting` | **Stop** | `stopping`, then `stopped` |
@@ -41,6 +41,18 @@ If the snapshot cannot be taken, the session still goes to sleep, and wakes
 like a stopped one: from its disk. The app then says
 `asleep: state not saved`, and the API leaves `stateSaved` out. A snapshot
 that cannot be restored is given up the same way.
+
+## Changing the size
+
+A session's [size](/reference/session-sizes) can be changed at any time.
+One that is asleep or stopped has the new size at once. One that is awake
+keeps running, and has it from its next start. That start is always a fresh
+one, from the disk, as after a stop: a snapshot belongs to the size it was
+taken at, so resizing a sleeping session drops its saved state, and a
+session with a resize waiting goes to sleep without one.
+
+If there is no machine with room for the session's size, **Wake**,
+**Start** and an agent's call answer `409` and the session stays as it is.
 
 ## What counts as use
 

@@ -344,7 +344,7 @@ components:
           type: string
           enum: [payment_method_required, out_of_credit, session_limit, awake_limit,
                  at_capacity, rate_limited, metering_unavailable, account_blocked,
-                 terms_required, signups_paused, already_subscribed, no_customer,
+                 terms_required, size_not_included, signups_paused, already_subscribed, no_customer,
                  unknown_item, ui_only, stripe_unavailable, payments_off,
                  too_many_cards, auto_recharge_off, not_subscribed, payment_failed,
                  subscription_ending, invalid_request]
@@ -568,4 +568,5 @@ components:
         creditMicros: { type: integer, format: int64 }
         maxSessions: { type: integer }
         maxAwake: { type: integer }
+        sizes: { type: array, items: { type: string }, description: "Of a plan: the sizes of session it includes, `small` among them." }
         validDays: { type: integer }

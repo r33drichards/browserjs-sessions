@@ -16,6 +16,8 @@ import (
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic"
 	dynfake "k8s.io/client-go/dynamic/fake"
@@ -688,5 +690,40 @@ func testHostsThatNameNoSessionAre404(t *testing.T, e *env) {
 	}
 	if len(e.seen()) != 0 {
 		t.Error("one of them reached a pod")
+	}
+}
+
+// A sleeping session that no session node has room for is not woken to wait
+// for a node that is not coming: the call is answered at once, and the
+// session stays asleep.
+func TestNoRoomToWakeIsAConflict(t *testing.T) { eachForm(t, testNoRoomToWakeIsAConflict) }
+
+func testNoRoomToWakeIsAConflict(t *testing.T, e *env) {
+	ctx := t.Context()
+	if err := e.store.Suspend(ctx, e.id, sessions.StoppedByIdle); err != nil {
+		t.Fatal(err)
+	}
+	sessionstest.SetStatus(t, e.client, e.id, sessionstest.Suspended())
+	// One node of sessions, and this session's pod asks for more than is
+	// left of it.
+	sessionstest.EnableSizes(t, e.store, "capacity: {nodes: 1, cpu: \"1\", memory: 1Gi}\n")
+	res := e.client.Resource(sessions.SandboxGVR).Namespace(sessionstest.Namespace)
+	obj, err := res.Get(ctx, e.id, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	containers, _, _ := unstructured.NestedSlice(obj.Object, "spec", "podTemplate", "spec", "containers")
+	containers[0].(map[string]any)["resources"] = map[string]any{"requests": map[string]any{"cpu": "100m", "memory": "2Gi"}}
+	_ = unstructured.SetNestedSlice(obj.Object, containers, "spec", "podTemplate", "spec", "containers")
+	if _, err := res.Update(ctx, obj, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := e.do("POST", "/mcp", alice, `{}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "no capacity for a small session right now") || rec.Header().Get("Retry-After") != "120" {
+		t.Fatalf("%d %s (Retry-After %q)", rec.Code, rec.Body, rec.Header().Get("Retry-After"))
+	}
+	if s, _ := e.store.Get(ctx, e.id); s.State != sessions.Asleep {
+		t.Errorf("state %q after a refused wake", s.State)
 	}
 }

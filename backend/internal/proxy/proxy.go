@@ -293,6 +293,11 @@ func lookupFailed(w http.ResponseWriter, r *http.Request, id string, err error) 
 		http.Error(w, "session not found", http.StatusNotFound)
 	case errors.Is(err, ErrStopped):
 		http.Error(w, err.Error(), http.StatusConflict)
+	case errors.Is(err, sessions.ErrNoCapacity):
+		// Asleep, and no session node has room to wake it on. It stays
+		// asleep; room comes back as other sessions sleep.
+		w.Header().Set("Retry-After", "120")
+		http.Error(w, err.Error(), http.StatusConflict)
 	case errors.Is(err, ErrNotRunning):
 		http.Error(w, "session is asleep; make an MCP call to wake it, then upload", http.StatusConflict)
 	case errors.Is(err, ErrFailed):
