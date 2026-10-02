@@ -26,11 +26,18 @@ var (
 // How long a single read of a session, shared by its callers, may take.
 const lookupTimeout = 15 * time.Second
 
+// Store is what the Waker needs of the session store (a *sessions.Store).
+type Store interface {
+	Get(ctx context.Context, id string) (sessions.Session, error)
+	Wake(ctx context.Context, id string) error
+	ColdStart(ctx context.Context, id string) (bool, error)
+}
+
 // Waker finds the pod behind a session. Every proxied request asks it, so it
 // keeps the cluster reads down: concurrent callers for one session share one
 // read or one wait, and a session seen running is remembered for RunningTTL.
 type Waker struct {
-	Store   *sessions.Store
+	Store   Store
 	Timeout time.Duration // how long to wait for a session; 3m if unset
 	Poll    time.Duration // how often to look; 1s if unset
 	// RestoreTimeout is how long a session woken from a snapshot may take to
@@ -42,6 +49,9 @@ type Waker struct {
 	// running on the same pod, without asking the cluster again. 0 asks
 	// every time.
 	RunningTTL time.Duration
+	// Allow, if set, is asked before a sleeping session is woken: an error
+	// leaves it asleep and is the wait's answer (billing; see billing.go).
+	Allow func(ctx context.Context, s sessions.Session) error
 
 	now func() time.Time // time.Now if unset
 
@@ -212,6 +222,11 @@ func (w *Waker) await(ctx context.Context, id string) (sessions.Session, error) 
 			if !woken {
 				// Wake only undoes an idle sleep: if the user stopped the
 				// session after we looked, it stays stopped.
+				if w.Allow != nil {
+					if err := w.Allow(ctx, s); err != nil {
+						return sessions.Session{}, err
+					}
+				}
 				err := w.Store.Wake(ctx, id)
 				if errors.Is(err, sessions.ErrStateChanged) {
 					return sessions.Session{}, ErrStopped

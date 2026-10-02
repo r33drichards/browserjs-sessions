@@ -105,7 +105,7 @@ func TestSleepWithoutASnapshotStillSleeps(t *testing.T) {
 			addSnapshot(t, client, "old", id) // of an earlier sleep: now stale
 
 			start := time.Now()
-			if err := store.Sleep(ctx, id, nil); err != nil {
+			if err := store.Sleep(ctx, id, sessions.StoppedByIdle, nil); err != nil {
 				t.Fatal(err)
 			}
 			if took := time.Since(start); took > time.Second {
@@ -130,7 +130,7 @@ func TestSleepLeavesASessionUsedDuringTheSnapshot(t *testing.T) {
 	store, client, _ := sessionstest.NewWithSnapshots(t, sessions.SnapshotOptions{Timeout: 2 * time.Second})
 	id := running(t, store, client)
 
-	err := store.Sleep(t.Context(), id, func() bool { return false })
+	err := store.Sleep(t.Context(), id, sessions.StoppedByIdle, func() bool { return false })
 	if !errors.Is(err, sessions.ErrStateChanged) {
 		t.Fatalf("err = %v, want ErrStateChanged", err)
 	}
@@ -146,7 +146,7 @@ func TestSleepDiscardsItsSnapshotIfTheUserStoppedFirst(t *testing.T) {
 	store, client, _ := sessionstest.NewWithSnapshots(t, sessions.SnapshotOptions{Timeout: 2 * time.Second})
 	id := running(t, store, client)
 
-	err := store.Sleep(t.Context(), id, func() bool {
+	err := store.Sleep(t.Context(), id, sessions.StoppedByIdle, func() bool {
 		// While the snapshot was taken, the user stopped the session.
 		if err := store.Suspend(t.Context(), id, sessions.StoppedByUser); err != nil {
 			t.Error(err)
@@ -168,7 +168,7 @@ func TestSleepDiscardsItsSnapshotIfTheUserStoppedFirst(t *testing.T) {
 func asleep(t *testing.T, store *sessions.Store, client dynamic.Interface) string {
 	t.Helper()
 	id := running(t, store, client)
-	if err := store.Sleep(t.Context(), id, nil); err != nil {
+	if err := store.Sleep(t.Context(), id, sessions.StoppedByIdle, nil); err != nil {
 		t.Fatal(err)
 	}
 	sessionstest.SetStatus(t, client, id, sessionstest.Suspended())
@@ -328,7 +328,7 @@ func TestSnapshotsAreOffByDefault(t *testing.T) {
 	id := running(t, store, client)
 	before, _, _ := unstructured.NestedMap(sandbox(t, client, id).Object, "spec", "podTemplate")
 
-	if err := store.Sleep(ctx, id, func() bool { return true }); err != nil {
+	if err := store.Sleep(ctx, id, sessions.StoppedByIdle, func() bool { return true }); err != nil {
 		t.Fatal(err)
 	}
 	sessionstest.SetStatus(t, client, id, sessionstest.Suspended())

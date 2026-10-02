@@ -107,7 +107,7 @@ func (p *Proxy) listFiles(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s, err := p.Waker.Running(r.Context(), id)
+	s, err := p.running(r.Context(), id)
 	if errors.Is(err, ErrNotRunning) {
 		fileError(w, http.StatusConflict, "session is asleep")
 		return
@@ -179,7 +179,7 @@ func (p *Proxy) downloadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	done := p.Idle.Open(id)
 	defer done()
-	s, err := p.Waker.EnsureAwake(r.Context(), id)
+	s, err := p.awake(r.Context(), id)
 	if err != nil {
 		lookupFailed(w, r, id, err)
 		return
@@ -210,7 +210,8 @@ func (p *Proxy) uploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	done := p.Idle.Open(id)
 	defer done()
-	s, err := p.Waker.EnsureAwake(r.Context(), id)
+	defer p.flights.call(id)()
+	s, err := p.awake(r.Context(), id)
 	if err != nil {
 		lookupFailed(w, r, id, err)
 		return
@@ -231,7 +232,7 @@ func (p *Proxy) deleteFile(w http.ResponseWriter, r *http.Request) {
 	}
 	done := p.Idle.Open(id)
 	defer done()
-	s, err := p.Waker.EnsureAwake(r.Context(), id)
+	s, err := p.awake(r.Context(), id)
 	if err != nil {
 		lookupFailed(w, r, id, err)
 		return
@@ -277,7 +278,7 @@ func (p *Proxy) copyFiles(w http.ResponseWriter, r *http.Request) {
 	}
 	done := p.Idle.Open(id)
 	defer done()
-	s, err := p.Waker.EnsureAwake(r.Context(), id)
+	s, err := p.awake(r.Context(), id)
 	if err != nil {
 		lookupFailed(w, r, id, err)
 		return
