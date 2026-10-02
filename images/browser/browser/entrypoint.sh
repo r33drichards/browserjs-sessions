@@ -11,6 +11,9 @@ VNC_USER="${VNC_USER:-admin}"
 PORT="${PORT:-8080}"
 DATA_DIR="${DATA_DIR:-/data}"
 PROFILE_DIR="$DATA_DIR/chrome"
+# Where Chromium downloads to and its file chooser opens, and what the session
+# page lists (files.js). In the profile's volume, so it outlives the pod.
+export FILES_DIR="${FILES_DIR:-$PROFILE_DIR/Downloads}"
 SCREEN="${SCREEN_GEOMETRY:-1280x800x24}"
 # WxHxDepth, the size before any viewer asks for another; Chromium wants its
 # window size as "W,H".
@@ -152,6 +155,8 @@ pids+=($!)
       sed -i 's/"exit_type":"[A-Za-z]*"/"exit_type":"Normal"/' "$prefs" ||
         echo "warning: could not mark $prefs as cleanly exited; Chromium may ask before restoring tabs" >&2
     fi
+    browser-mcp download-dir "$PROFILE_DIR" "$FILES_DIR" ||
+      echo "warning: could not point Chromium's downloads at $FILES_DIR" >&2
     # A start URL is opened next to the restored tabs, so with a session to
     # restore pass none (or every restart would add one more blank tab).
     start_url=about:blank

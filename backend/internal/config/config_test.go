@@ -82,7 +82,7 @@ func TestFromEnvReportsEachMissingVariable(t *testing.T) {
 
 func TestFromEnvRejectsNonsenseValues(t *testing.T) {
 	for _, c := range []struct{ k, v string }{
-		{"MAX_SESSIONS_PER_USER", "0"}, {"IDLE_AFTER", "0s"}, {"READY_TIMEOUT", "-1m"},
+		{"MAX_SESSIONS_PER_USER", "0"}, {"MAX_FILE_BYTES", "0"}, {"MAX_FILE_BYTES", "100MB"}, {"IDLE_AFTER", "0s"}, {"READY_TIMEOUT", "-1m"},
 		{"PUBLIC_URL", "app.example.com"},
 		{"SESSION_URL_TEMPLATE", "http://sessions.localtest.me:8080"},
 		{"SESSION_URL_TEMPLATE", "http://sessions.localtest.me:8080/s/{id}"},
@@ -109,7 +109,7 @@ func TestFromEnvRejectsNonsenseValues(t *testing.T) {
 func TestFromEnvOverrides(t *testing.T) {
 	m := valid()
 	for k, v := range map[string]string{
-		"IDLE_AFTER": "5m", "MAX_SESSIONS_PER_USER": "2", "ADDR": ":9000", "SIGN_OUT_URL": "https://app.example.com/bye",
+		"IDLE_AFTER": "5m", "MAX_SESSIONS_PER_USER": "2", "MAX_FILE_BYTES": "2048", "ADDR": ":9000", "SIGN_OUT_URL": "https://app.example.com/bye",
 	} {
 		m[k] = v
 	}
@@ -117,7 +117,7 @@ func TestFromEnvOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.IdleAfter != 5*time.Minute || c.MaxSessionsPerUser != 2 || c.Addr != ":9000" || c.SignOutURL != "https://app.example.com/bye" {
+	if c.IdleAfter != 5*time.Minute || c.MaxSessionsPerUser != 2 || c.MaxFileBytes != 2048 || c.Addr != ":9000" || c.SignOutURL != "https://app.example.com/bye" {
 		t.Errorf("overrides not applied: %+v", c)
 	}
 	m["IDLE_AFTER"] = "soon"

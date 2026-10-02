@@ -1,0 +1,43 @@
+/* The files of a session, under its clipboard. Wireframe style: see
+   ../wireframe.css for the pencil variables. */
+.wf-files {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 2px dashed var(--pencil);
+}
+.wf-files.wf-files-over {
+  outline: 2px dashed var(--ink);
+  outline-offset: 6px;
+}
+.wf-files input[type="file"] {
+  display: none;
+}
+.wf-files-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.wf-files-list li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 0;
+  border-bottom: 1px dashed var(--pencil);
+}
+.wf-files-list li:last-child {
+  border-bottom: 0;
+}
+.wf-files-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wf-files progress {
+  width: 120px;
+  accent-color: var(--ink);
+}
+.wf-files-error {
+  font-size: 13px;
+}

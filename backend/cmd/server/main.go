@@ -157,8 +157,9 @@ func newHandler(cfg config.Config, verifier auth.Verifier, store *sessions.Store
 		Authz:    owners,
 		Waker: &proxy.Waker{Store: store, Timeout: cfg.ReadyTimeout, RestoreTimeout: cfg.RestoreTimeout,
 			Poll: time.Second, RunningTTL: 2 * time.Second},
-		Idle: tracker,
-		URLs: cfg.SessionURLs,
+		Idle:         tracker,
+		URLs:         cfg.SessionURLs,
+		MaxFileBytes: cfg.MaxFileBytes,
 	}
 
 	apiMux := http.NewServeMux()
