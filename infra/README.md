@@ -153,7 +153,21 @@ This replaces every record Namecheap served for the domain: mail (MX), any
 existing site. Recreate what you still need in the Cloud DNS zone first.
 Certificates cannot be issued until the delegation is live.
 
-## 6. Hand over to `deploy/`
+## 6. Image pushes (once)
+
+After the apply that creates the `images-push` service account, set two more
+repository variables from the apply run's outputs:
+
+```sh
+gh variable set IMAGE_PUSH_SA  --body "<images_push_service_account_email>"
+gh variable set IMAGE_REGISTRY --body "<registry_url>"
+```
+
+`.github/workflows/images.yml` then builds and pushes the three images from
+`main`. Until both are set, its push job fails at sign-in. See
+`docs/build-pipeline.md`.
+
+## 7. Hand over to `deploy/`
 
 Run the `get_credentials_command` and `docker_login_command` outputs on your
 machine. Using `kubectl` and pushing images needs your own Google account to
