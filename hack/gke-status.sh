@@ -39,6 +39,10 @@ printf '```\n'
 section "Agent Sandbox admission policies"
 show kubectl get validatingadmissionpolicies,validatingadmissionpolicybindings -o wide
 
+section "Release"
+echo "The last release the canary passed (docs/releases.md): what a failed release goes back to."
+show kubectl -n "$NS" get configmap release -o 'jsonpath={.data.commit}{"  "}{.data.time}{"\n"}{.data.images}{"\n"}'
+
 section "Pods"
 for ns in "${namespaces[@]}"; do
   show kubectl -n "$ns" get pods -o wide

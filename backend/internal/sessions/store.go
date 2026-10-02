@@ -112,7 +112,14 @@ func (s *Store) CreateWithPolicy(ctx context.Context, name, owner string, asked 
 	default:
 		policy = asked
 	}
-	if s.warmPool != "" {
+	// A canary session has images no warm pod runs: it starts cold.
+	canary := imageDigests(ctx)
+	if canary != nil {
+		if err := CheckImageDigests(canary); err != nil {
+			return Session{}, err
+		}
+	}
+	if s.warmPool != "" && canary == nil {
 		warm, err := s.createWarm(ctx, name, owner, policy)
 		if err == nil {
 			return warm, nil
@@ -132,6 +139,14 @@ func (s *Store) CreateWithPolicy(ctx context.Context, name, owner string, asked 
 		return Session{}, fmt.Errorf("parse blueprint: %w", err)
 	}
 	spec["operatingMode"] = "Running"
+	// Its idle period starts now (activity.go).
+	annotations := map[string]any{AnnName: name, AnnOwner: owner, AnnLastActive: time.Now().UTC().Format(timeLayout)}
+	if canary != nil {
+		if err := applyImageDigests(spec, canary); err != nil {
+			return Session{}, err
+		}
+		annotations[AnnCanary] = canaryAnnotation(canary)
+	}
 	// Stamp the owner on the pod as well as the Sandbox.
 	if err := unstructured.SetNestedField(spec, OwnerLabel(owner), "podTemplate", "metadata", "labels", LabelOwner); err != nil {
 		return Session{}, fmt.Errorf("blueprint podTemplate.metadata.labels: %w", err)
@@ -149,10 +164,9 @@ func (s *Store) CreateWithPolicy(ctx context.Context, name, owner string, asked 
 		"apiVersion": SandboxGVR.GroupVersion().String(),
 		"kind":       "Sandbox",
 		"metadata": map[string]any{
-			"name":   id,
-			"labels": map[string]any{LabelOwner: OwnerLabel(owner)},
-			// Its idle period starts now (activity.go).
-			"annotations": map[string]any{AnnName: name, AnnOwner: owner, AnnLastActive: time.Now().UTC().Format(timeLayout)},
+			"name":        id,
+			"labels":      map[string]any{LabelOwner: OwnerLabel(owner)},
+			"annotations": annotations,
 		},
 		"spec": spec,
 	}}

@@ -22,6 +22,7 @@ import (
 	"github.com/r33drichards/computer-use/backend/internal/authz"
 	"github.com/r33drichards/computer-use/backend/internal/sessions"
 	"github.com/r33drichards/computer-use/backend/internal/sessions/sessionstest"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type fixture struct {
@@ -614,5 +615,55 @@ func TestGeneratedNameAvoidsTheUsersOwn(t *testing.T) {
 	if rec := f.do(bob, "POST", "/api/sessions", `{}`); rec.Code != http.StatusCreated ||
 		decode[session](t, rec).Name != "brave-otter" {
 		t.Errorf("exhausted tries: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// "canary" starts a session on other digests of the session images. It is
+// for the addresses SetCanary names and nobody else, whatever else they are.
+func TestCanaryIsForTheNamedAddressesOnly(t *testing.T) {
+	store, client := sessionstest.NewPinned(t)
+	mux := http.NewServeMux()
+	a := api.New(store, authz.NewOwners(store, 0), sessionstest.URLs(), 2)
+	a.SetCanary([]string{"root@example.com"})
+	a.Register(mux)
+	f := &fixture{t: t, handler: mux, api: a, store: store, client: client}
+
+	const digest = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+	body := `{"name":"canary","canary":{"mcp-js":"` + digest + `"}}`
+	// A token is never an admin: it is the address that counts.
+	token := auth.User{Subject: "root@example.com"}
+	rec := f.do(token, "POST", "/api/sessions", body)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("the named address: %d %s", rec.Code, rec.Body)
+	}
+	id := decode[session](t, rec).ID
+	obj, err := client.Resource(sessions.SandboxGVR).Namespace(sessionstest.Namespace).Get(t.Context(), id, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := obj.GetAnnotations()[sessions.AnnCanary]; got != "mcp-js="+digest {
+		t.Errorf("annotation = %q", got)
+	}
+
+	for name, c := range map[string]struct {
+		user auth.User
+		body string
+		want int
+	}{
+		"somebody else":         {alice, body, http.StatusForbidden},
+		"an admin not named":    {auth.User{Subject: "other@example.com", Admin: true}, body, http.StatusForbidden},
+		"not a digest":          {token, `{"canary":{"mcp-js":"latest"}}`, http.StatusBadRequest},
+		"nothing named":         {token, `{"canary":{}}`, http.StatusBadRequest},
+		"no such container":     {token, `{"canary":{"sidecar":"` + digest + `"}}`, http.StatusBadRequest},
+		"a whole image instead": {token, `{"canary":{"mcp-js":"evil.test/x@` + digest + `"}}`, http.StatusBadRequest},
+	} {
+		rec := f.do(c.user, "POST", "/api/sessions", c.body)
+		if rec.Code != c.want {
+			t.Errorf("%s: %d %s, want %d", name, rec.Code, rec.Body, c.want)
+		}
+	}
+	list, err := client.Resource(sessions.SandboxGVR).Namespace(sessionstest.Namespace).List(t.Context(), metav1.ListOptions{})
+	if err != nil || len(list.Items) != 1 {
+		t.Errorf("sandboxes = %d, %v: the refusals are to make nothing", len(list.Items), err)
 	}
 }

@@ -82,6 +82,21 @@ func New(t *testing.T) (*sessions.Store, dynamic.Interface) {
 	return newStore(t, Blueprint)
 }
 
+// OldDigest is the digest both images of NewPinned's blueprint are named by.
+const OldDigest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+
+// NewPinned is New with a blueprint that names its images by digest, as a
+// deployment's does: registry.test/browser@OldDigest and
+// registry.test/mcp-js@OldDigest.
+func NewPinned(t *testing.T) (*sessions.Store, dynamic.Interface) {
+	t.Helper()
+	blueprint := strings.NewReplacer(
+		"image: browser:test", "image: registry.test/browser@"+OldDigest,
+		"image: mcp-js:test", "image: registry.test/mcp-js@"+OldDigest,
+	).Replace(Blueprint)
+	return newStore(t, blueprint)
+}
+
 func newStore(t *testing.T, blueprint string) (*sessions.Store, dynamic.Interface) {
 	t.Helper()
 	client := dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),

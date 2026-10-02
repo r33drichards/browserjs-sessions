@@ -44,7 +44,7 @@ if [ -z "$(image_id browserjs/mcp-js:dev)" ]; then
   docker build -t browserjs/mcp-js:dev images/mcp-js
 fi
 if [ -z "$(image_id browserjs/browser:dev)" ]; then
-  MIN_FREE_GB=25 check_disk "building the browser image (about 14 GB)"
+  MIN_FREE_GB="${BROWSER_MIN_FREE_GB:-25}" check_disk "building the browser image (about 14 GB)"
   docker build -t browserjs/browser:dev images/browser
 fi
 
