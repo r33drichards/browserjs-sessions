@@ -50,3 +50,32 @@ resource "google_service_account_iam_member" "images_push_github" {
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/projects/${local.project_number}/locations/global/workloadIdentityPools/${var.github_wif_pool_id}/attribute.repo_ref/${var.github_repository}@${var.images_push_ref}"
 }
+
+# --- Deploys from GitHub Actions -----------------------------------------------------
+
+# The identity .github/workflows/deploy.yml and cluster-info.yml reach the
+# cluster with. Like images-push it has no key and can only be used by a
+# workflow of this repository running on one ref.
+resource "google_service_account" "deployer" {
+  account_id   = "deployer"
+  display_name = "Deploys to the cluster (GitHub Actions, ${var.deploy_ref} only)"
+}
+
+# Kubernetes Engine Admin, because the deploy creates what Kubernetes Engine
+# Developer may not: ClusterRoles and their bindings (Dex, cert-manager),
+# Roles that grant more than the caller holds, and cert-manager's admission
+# webhooks. Developer has only get and list on all of those. This role is
+# also allowed to change and delete clusters; nothing narrower covers the
+# Kubernetes objects, and the cluster has deletion protection. It reaches no
+# other Google Cloud service.
+resource "google_project_iam_member" "deployer_cluster" {
+  project = var.project_id
+  role    = "roles/container.admin"
+  member  = google_service_account.deployer.member
+}
+
+resource "google_service_account_iam_member" "deployer_github" {
+  service_account_id = google_service_account.deployer.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/projects/${local.project_number}/locations/global/workloadIdentityPools/${var.github_wif_pool_id}/attribute.repo_ref/${var.github_repository}@${var.deploy_ref}"
+}

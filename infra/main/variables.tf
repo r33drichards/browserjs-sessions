@@ -477,7 +477,7 @@ variable "cert_manager_service_account" {
 # --- GitHub Actions ------------------------------------------------------------------------
 
 variable "github_repository" {
-  description = "The GitHub repository whose workflows may push images, as owner/name. It must be the repository bootstrap.sh restricted the Workload Identity provider to."
+  description = "The GitHub repository whose workflows may push images and deploy, as owner/name. It must be the repository bootstrap.sh restricted the Workload Identity provider to."
   type        = string
   default     = "r33drichards/browserjs-sessions"
 
@@ -505,6 +505,17 @@ variable "images_push_ref" {
 
   validation {
     condition     = startswith(var.images_push_ref, "refs/heads/") || startswith(var.images_push_ref, "refs/tags/")
+    error_message = "A full ref: refs/heads/<branch> or refs/tags/<tag>. Never a refs/pull/ ref."
+  }
+}
+
+variable "deploy_ref" {
+  description = "The one git ref whose workflows may deploy to the cluster."
+  type        = string
+  default     = "refs/heads/main"
+
+  validation {
+    condition     = startswith(var.deploy_ref, "refs/heads/") || startswith(var.deploy_ref, "refs/tags/")
     error_message = "A full ref: refs/heads/<branch> or refs/tags/<tag>. Never a refs/pull/ ref."
   }
 }
