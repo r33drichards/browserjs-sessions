@@ -1,0 +1,21 @@
+# The backend is not told where the policy operator is, which is how it
+# knows session policies are off: sessions are made and shown exactly as
+# before the feature. Listed in kustomization.yaml in the stages off and
+# serving.
+#
+# It goes together with the pod templates: a backend that keeps policies
+# refuses a warm pod that does not ask OPA and starts the session cold, so
+# hack/policy-stage.sh gke enforcing  takes this out of the list and writes
+# MCP_V8_POLICIES_JSON into the templates in one step (docs/policy-deployment.md).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  template:
+    spec:
+      containers:
+        - name: backend
+          env:
+            - name: POLICY_OPERATOR_URL
+              $patch: delete

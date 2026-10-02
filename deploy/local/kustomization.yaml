@@ -10,6 +10,8 @@ resources:
 images:
   - name: browserjs/backend
     newTag: dev
+  - name: browserjs/policy-operator
+    newTag: dev
 
 configMapGenerator:
   - name: session-blueprint
@@ -29,3 +31,9 @@ patches:
   - path: patch-backend.yaml
   - path: patch-pomerium.yaml
   - path: patch-services.yaml
+  - path: patch-policy.yaml
+  # The stage of session policies: off with both lines, serving with the
+  # second only, enforcing with neither. They are the last patches, and are
+  # switched by hack/policy-stage.sh (docs/policy-deployment.md).
+  - path: patch-policy-off.yaml
+  - path: patch-policy-backend-off.yaml

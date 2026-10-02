@@ -8,6 +8,13 @@ resources:
   - networkpolicy.yaml
   - pomerium.yaml
   - dex.yaml
+  # Session policies (docs/policy-deployment.md).
+  - crd-sessionpolicy.yaml
+  - crd-apitoken.yaml
+  - opa.yaml
+  - policy-operator.yaml
+  # ConfigMap opa-config, from the contract files where they are.
+  - ../../docs/contracts/policy
 
 configMapGenerator:
   - name: session-blueprint
