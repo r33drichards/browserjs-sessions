@@ -152,6 +152,7 @@ export function SessionDetail({ id }: { id: string }) {
         ) : (
           <div className="wf-placeholder">
             <div>
+              {session.state === "starting" && <span className="wf-spinner" aria-hidden="true" />}
               <p>{PLACEHOLDER[session.state]}</p>
               {session.message && <p className="wf-mono">{session.message}</p>}
             </div>

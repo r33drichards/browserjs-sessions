@@ -281,7 +281,8 @@ before deploying.
    `google_service_account_iam_member.deployer_github`), one output, and
    `google_container_cluster.this` updated in place (`min_master_version`).
    Anything else, stop.
-3. Merge. Start `infra apply` on `main`, confirm `apply`. Expect it to sit in
+3. Merge. `infra apply` starts by itself on `main` (a merge that changes
+   `infra/main` is the approval). Expect it to sit in
    the cluster update for the length of the control plane upgrade.
 4. Set the variable, and check the version:
 
