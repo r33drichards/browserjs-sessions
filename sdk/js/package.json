@@ -1,0 +1,45 @@
+{
+  "name": "computeruse",
+  "version": "0.1.0",
+  "description": "Client for Computer Use (computeruse.site): serverless, resumable desktop containers for agents. Sessions, policies and run_js over MCP.",
+  "license": "Apache-2.0",
+  "author": "Robert Wendt",
+  "homepage": "https://computeruse.site/reference/sdk",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/r33drichards/browserjs-sessions.git",
+    "directory": "sdk/js"
+  },
+  "keywords": ["computer-use", "mcp", "agents", "browser", "sandbox", "uniffi"],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./prebuilds/*": "./prebuilds/*",
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "prebuilds", "README.md", "LICENSE"],
+  "engines": {
+    "node": ">=20"
+  },
+  "os": ["darwin", "linux"],
+  "cpu": ["arm64", "x64"],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/smoke.test.mjs"
+  },
+  "dependencies": {
+    "@ubjs/core": "0.31.0-6",
+    "@ubjs/node": "0.31.0-6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.0"
+  }
+}

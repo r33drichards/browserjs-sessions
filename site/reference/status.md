@@ -10,6 +10,7 @@ date.
 | Simple | One MCP URL per session, `https://sessions.computeruse.site/<id>/mcp` | Live |
 | Simple | Create and manage sessions with one API call, using API tokens on `api.computeruse.site` | Coming |
 | Simple | Terraform provider | Coming |
+| Simple | SDK for Rust, Python, JavaScript and Go | Coming |
 | Stateful | Persistent disk per session | Live |
 | Stateful | Sleep to a snapshot; wake with the screen and processes as they were | Live |
 | Stateful | **Sleep** and **Wake** buttons, and `POST /sessions/{id}/sleep` and `/wake` | Live |
