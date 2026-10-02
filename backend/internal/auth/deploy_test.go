@@ -44,10 +44,11 @@ func TestAllowedEmailsMirrorPomeriumsPolicy(t *testing.T) {
 				}
 			}
 			// Only the API's paths get through, each matched whole.
-			// The fourth is Stripe's webhook: the request's signature is its
-			// credential (docs/contracts/billing/deploy.md).
-			if len(api) != 4 || api["api"].Prefix != "/v1/" || api["api-token"].Path != "/oauth/token" ||
-				api["api-mcp"].Regex != `^/s-[a-z0-9]+/mcp(/.*)?$` || api["api-stripe-webhook"].Path != "/stripe/webhook" {
+			// The other two are Stripe's and Metronome's webhooks: the request's
+			// signature is its credential (docs/contracts/billing/deploy.md).
+			if len(api) != 5 || api["api"].Prefix != "/v1/" || api["api-token"].Path != "/oauth/token" ||
+				api["api-mcp"].Regex != `^/s-[a-z0-9]+/mcp(/.*)?$` || api["api-stripe-webhook"].Path != "/stripe/webhook" ||
+				api["api-metronome-webhook"].Path != "/metronome/webhook" {
 				t.Errorf("the API host's routes are %+v", api)
 			}
 			for name, route := range api {

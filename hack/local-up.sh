@@ -174,9 +174,8 @@ unset client_secret
 kubectl apply -k deploy/local
 # The policy operator looks its resource up once, when it starts.
 kubectl wait --for=condition=Established crd/sessionpolicies.browserjs.dev --timeout=60s
-# Billing: the backend, in any stage but off, wants the three served.
-kubectl wait --for=condition=Established --timeout=60s \
-  crd/accounts.browserjs.dev crd/grants.browserjs.dev crd/usageperiods.browserjs.dev
+# Billing: the backend, in any stage but off, wants it served.
+kubectl wait --for=condition=Established --timeout=60s crd/accounts.browserjs.dev
 [ -z "$backend_changed" ] || kubectl -n "$NS" rollout restart deploy/backend
 # A new CA: Pomerium must serve the new certificate and the backend trust it.
 [ -z "$new_certificate" ] || kubectl -n "$NS" rollout restart statefulset/pomerium deploy/backend
@@ -189,14 +188,9 @@ kubectl -n agent-sandbox-system rollout status deploy/agent-sandbox-controller -
 # returns at once; OPA is ready only once it has the operator's bundle.
 kubectl -n "$NS" rollout status deploy/policy-operator --timeout=300s
 kubectl -n "$NS" rollout status deploy/opa --timeout=300s
-# Billing (hack/billing-stage.sh; deploy/local meters). Without the
-# operator's image there is nothing to run: no pod, and nothing is metered.
-if [ -n "$have_billing" ]; then
-  kubectl -n "$NS" rollout status deploy/billing-operator --timeout=300s
-else
-  echo "images/billing-operator is not in the tree: the billing operator is left without pods"
-  kubectl -n "$NS" scale deploy/billing-operator --replicas=0
-fi
+# Billing (hack/billing-stage.sh). Off, as deploy/local is by default, the
+# operator has no pods and this returns at once.
+kubectl -n "$NS" rollout status deploy/billing-operator --timeout=300s
 
 cat <<EOF
 

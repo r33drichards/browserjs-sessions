@@ -1,7 +1,8 @@
-# The billing operator (images/billing-operator): every TICK it looks at the
-# session Sandboxes, charges each Account for what was awake and what was on
-# disk, and writes the ledger to Account.status
-# (docs/contracts/billing/metering.md). Nothing calls it.
+# The billing operator (images/billing-operator), the OBSERVER: every TICK it
+# lists the session Sandboxes, counts the seconds each was awake and the
+# GB-seconds each kept on disk, and sends them to Metronome, which prices
+# them and keeps the credit (docs/contracts/billing/metronome.md). It reads
+# and writes no Account. Nothing calls it.
 #
 # BILLING IS OFF here: no pods, and no BILLING variable. An overlay turns it
 # on with its patch-billing-meter.yaml, which hack/billing-stage.sh lists
@@ -12,34 +13,27 @@ metadata:
   name: billing-operator
 ---
 # Pomerium's and Dex's ConfigMaps and every Secret are in this namespace
-# too. The operator reads none of them, the Stripe keys least of all: its
-# rights name the three billing resources, the Sandboxes it counts, and
-# events. It never writes an Account's spec and never makes a Grant; the
-# backend never writes an Account's status.
+# too. The observer reads none of them through the API (its Metronome token
+# is handed to it by the kubelet), and has no right on Accounts: it sees
+# the Sandboxes it counts, keeps one Lease as its heartbeat, and makes
+# events.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: billing-operator
 rules:
-  - apiGroups: ["browserjs.dev"]
-    resources: ["accounts"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["browserjs.dev"]
-    resources: ["accounts/status"]
-    verbs: ["get", "patch", "update"]
-  # delete: the daily retention pass.
-  - apiGroups: ["browserjs.dev"]
-    resources: ["grants"]
-    verbs: ["get", "list", "watch", "delete"]
-  - apiGroups: ["browserjs.dev"]
-    resources: ["grants/status"]
-    verbs: ["patch"]
-  - apiGroups: ["browserjs.dev"]
-    resources: ["usageperiods"]
-    verbs: ["get", "list", "create", "delete"]
   - apiGroups: ["agents.x-k8s.io"]
     resources: ["sandboxes"]
     verbs: ["get", "list", "watch"]
+  # The Lease billing-observer, renewed after each delivered tick. RBAC
+  # cannot hold a create to a name, so that verb is a rule of its own.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    resourceNames: ["billing-observer"]
+    verbs: ["get", "update"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create"]
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create"]
@@ -88,8 +82,8 @@ metadata:
     app: billing-operator
 spec:
   # Off. On, it is exactly one and never two at once (kopf runs standalone,
-  # and two meters would charge twice). While it is away nothing is charged:
-  # the time is lost in the users' favour, up to MAX_GAP a session.
+  # and two observers would send every second twice). While it is away
+  # nothing is sent: the time is lost in the users' favour.
   replicas: 0
   strategy:
     type: Recreate
@@ -134,8 +128,20 @@ spec:
             # or a missed tick costs the product, not the user.
             - name: MAX_GAP
               value: 150s
+            # For sessionDiskGB only: the prices are Metronome's.
             - name: BILLING_CATALOGUE
               value: /etc/browserjs/catalogue.yaml
+            - name: METRONOME_URL
+              value: https://api.metronome.com
+            # The token only, not the webhook secret. Optional so that the
+            # manifest applies before the Secret exists; the deploy workflow
+            # writes it whenever billing is not off.
+            - name: METRONOME_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: metronome
+                  key: METRONOME_API_TOKEN
+                  optional: true
           ports:
             - name: liveness
               containerPort: 8081

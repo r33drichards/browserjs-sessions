@@ -21,11 +21,15 @@ name: deploy
 # Pomerium's own secrets are generated in the cluster's first run and never
 # again: new ones would sign everybody out.
 #
-# Stripe (docs/billing-deployment.md). The repository VARIABLE STRIPE_MODE is
+# Billing (docs/billing-deployment.md). The repository VARIABLE STRIPE_MODE is
 # test, live or not set. Not set, no Stripe secret is needed or looked at.
 # Set, the two secrets of that mode (STRIPE_TEST_API_KEY and
-# STRIPE_TEST_WEBHOOK_SECRET, or the STRIPE_LIVE_ pair) must be set, or the
-# run stops before it touches the cluster.
+# STRIPE_TEST_WEBHOOK_SECRET, or the STRIPE_LIVE_ pair) must be set.
+# Metronome's two secrets are needed once billing is not off in deploy/gke
+# (hack/billing-stage.sh): METRONOME_SANDBOX_API_TOKEN and
+# METRONOME_SANDBOX_WEBHOOK_SECRET, or the METRONOME_PRODUCTION_ pair when
+# STRIPE_MODE is live. A missing one stops the run before it touches the
+# cluster.
 
 on:
   workflow_dispatch:
@@ -96,17 +100,22 @@ jobs:
         run: hack/policy-stage.sh --check
 
       # off, meter or enforce, and that the files agree on which; that the
-      # stage can go with STRIPE_MODE; and that the mode's secrets are set.
-      - name: Billing stage and Stripe
+      # stage can go with STRIPE_MODE; and that the secrets the stage and
+      # the mode need are set.
+      - name: Billing stage and secrets
         env:
           STRIPE_MODE: ${{ vars.STRIPE_MODE }}
           STRIPE_TEST_API_KEY: ${{ secrets.STRIPE_TEST_API_KEY }}
           STRIPE_TEST_WEBHOOK_SECRET: ${{ secrets.STRIPE_TEST_WEBHOOK_SECRET }}
           STRIPE_LIVE_API_KEY: ${{ secrets.STRIPE_LIVE_API_KEY }}
           STRIPE_LIVE_WEBHOOK_SECRET: ${{ secrets.STRIPE_LIVE_WEBHOOK_SECRET }}
+          METRONOME_SANDBOX_API_TOKEN: ${{ secrets.METRONOME_SANDBOX_API_TOKEN }}
+          METRONOME_SANDBOX_WEBHOOK_SECRET: ${{ secrets.METRONOME_SANDBOX_WEBHOOK_SECRET }}
+          METRONOME_PRODUCTION_API_TOKEN: ${{ secrets.METRONOME_PRODUCTION_API_TOKEN }}
+          METRONOME_PRODUCTION_WEBHOOK_SECRET: ${{ secrets.METRONOME_PRODUCTION_WEBHOOK_SECRET }}
         run: |
           hack/billing-stage.sh --check
-          hack/stripe-secret.sh --check
+          hack/billing-secrets.sh --check
 
       - name: OAuth secrets are set
         env:
@@ -271,15 +280,20 @@ jobs:
 
       # Stripe's mode and keys, together: the Secret "stripe" and the
       # ConfigMap "billing-mode", or neither while STRIPE_MODE is not set.
-      - name: Stripe
-        id: stripe
+      # Metronome's: the Secret "metronome", or none while billing is off.
+      - name: Billing secrets
+        id: billing
         env:
           STRIPE_MODE: ${{ vars.STRIPE_MODE }}
           STRIPE_TEST_API_KEY: ${{ secrets.STRIPE_TEST_API_KEY }}
           STRIPE_TEST_WEBHOOK_SECRET: ${{ secrets.STRIPE_TEST_WEBHOOK_SECRET }}
           STRIPE_LIVE_API_KEY: ${{ secrets.STRIPE_LIVE_API_KEY }}
           STRIPE_LIVE_WEBHOOK_SECRET: ${{ secrets.STRIPE_LIVE_WEBHOOK_SECRET }}
-        run: hack/stripe-secret.sh
+          METRONOME_SANDBOX_API_TOKEN: ${{ secrets.METRONOME_SANDBOX_API_TOKEN }}
+          METRONOME_SANDBOX_WEBHOOK_SECRET: ${{ secrets.METRONOME_SANDBOX_WEBHOOK_SECRET }}
+          METRONOME_PRODUCTION_API_TOKEN: ${{ secrets.METRONOME_PRODUCTION_API_TOKEN }}
+          METRONOME_PRODUCTION_WEBHOOK_SECRET: ${{ secrets.METRONOME_PRODUCTION_WEBHOOK_SECRET }}
+        run: hack/billing-secrets.sh
 
       - name: Apply
         env:
@@ -291,7 +305,7 @@ jobs:
           # The policy operator looks its resource up once, when it starts.
           kubectl wait --for=condition=Established --timeout=60s \
             crd/sessionpolicies.browserjs.dev crd/apitokens.browserjs.dev \
-            crd/accounts.browserjs.dev crd/grants.browserjs.dev crd/usageperiods.browserjs.dev
+            crd/accounts.browserjs.dev
 
       - name: Certificate
         run: |
@@ -364,9 +378,13 @@ jobs:
             fi
           done
 
-      # With billing off it has no pods, and this passes at once.
+      # With billing off it has no pods, and this passes at once. It reads
+      # its Metronome token at start only.
       - name: Billing operator
+        env:
+          METRONOME_CHANGED: ${{ steps.billing.outputs.metronome_changed }}
         run: |
+          [ "$METRONOME_CHANGED" != true ] || kubectl -n "$NS" rollout restart deployment/billing-operator
           if ! kubectl -n "$NS" rollout status deployment/billing-operator --timeout=300s; then
             echo "::error::deployment/billing-operator did not become ready; see the status below and docs/billing-deployment.md"
             kubectl -n "$NS" describe deployment/billing-operator || true
@@ -378,7 +396,7 @@ jobs:
         env:
           ISSUER: ${{ inputs.issuer }}
           POMERIUM_RESTARTED: ${{ steps.edge.outputs.restarted }}
-          STRIPE_CHANGED: ${{ steps.stripe.outputs.stripe_changed }}
+          BILLING_CHANGED: ${{ steps.billing.outputs.stripe_changed == 'true' || steps.billing.outputs.metronome_changed == 'true' }}
         run: |
           # The backend fetches Pomerium's signing keys when it starts, and
           # after a failure only every few minutes. One that started before
@@ -387,8 +405,8 @@ jobs:
             -o jsonpath='{.status.conditions[?(@.type=="Ready")].lastTransitionTime}')"
           backend_started="$(kubectl -n "$NS" get pods -l app=backend \
             -o jsonpath='{.items[0].status.startTime}' 2>/dev/null || true)"
-          # It reads Stripe's mode and keys at start only, too.
-          if [ "$POMERIUM_RESTARTED" = true ] || [ "$STRIPE_CHANGED" = true ] || [ -z "$backend_started" ] || [[ "$backend_started" < "$pomerium_ready" ]]; then
+          # It reads Stripe's and Metronome's values at start only, too.
+          if [ "$POMERIUM_RESTARTED" = true ] || [ "$BILLING_CHANGED" = true ] || [ -z "$backend_started" ] || [[ "$backend_started" < "$pomerium_ready" ]]; then
             kubectl -n "$NS" rollout restart deployment/backend
           fi
           kubectl -n "$NS" rollout status deployment/backend --timeout=300s

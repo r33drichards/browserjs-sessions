@@ -207,9 +207,9 @@ spec:
         - port: 6443
           protocol: TCP
 ---
-# The billing operator reads Sandboxes and writes the ledger: the API server
-# and DNS, nothing else in the cluster, and nothing reaches it (the kubelet's
-# probe is not subject to this).
+# The billing operator reads Sandboxes and sends usage to Metronome: the API
+# server, DNS and the internet on 443; nothing else in the cluster, and
+# nothing reaches it (the kubelet's probe is not subject to this).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -242,8 +242,9 @@ spec:
           protocol: UDP
         - port: 53
           protocol: TCP
-    # The API server: those two ports, anywhere, for the reason given with
-    # policy-operator.
+    # The API server (those two ports, anywhere, for the reason given with
+    # policy-operator) and Metronome's API on 443: a NetworkPolicy cannot
+    # name a host.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0

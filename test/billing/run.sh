@@ -8,18 +8,18 @@
 #                                             that second, empty cluster
 #   RESULTS=out.md test/billing/run.sh        also writes what was seen
 #
-# Real: the three CRDs and their rules, deploy/base's Roles, NetworkPolicy,
+# Real: the Account CRD and its rules, deploy/base's Roles, NetworkPolicy,
 # catalogue ConfigMap and the way the backend and the operator mount it, the
-# backend's Stripe variables, hack/stripe-secret.sh, the export CronJob of
-# deploy/gke and hack/billing-restore.sh. Stand-ins (stub.py): the backend
+# two pods' Stripe and Metronome variables, hack/billing-secrets.sh, the
+# export CronJob of deploy/gke and hack/billing-restore.sh. Stand-ins (stub.py): the backend
 # and the billing operator themselves, which are other tracks' work; the
 # operator's is the placeholder image until its own exists.
 #
 # Needs: a cluster whose CNI enforces NetworkPolicy (kind 0.24 or later),
 # kubectl and jq. It creates and deletes things in the namespace
 # browserjs-sessions: never point it at a cluster that matters.
-# .github/workflows/billing-kind.yml runs it. No Stripe key is involved: the
-# two "keys" below are made up here.
+# .github/workflows/billing-kind.yml runs it. No Stripe key and no Metronome token is
+# involved: the values below are made up here.
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 
@@ -80,13 +80,14 @@ if ! kubectl apply -k test/billing >"$work/apply.log" 2>&1; then
   echo "apply failed: a CRD the API server does not accept is a contract problem"
   exit 1
 fi
-accepts "the three CRDs are accepted and established" \
-  kubectl wait --for=condition=Established --timeout=60s \
-  crd/accounts.browserjs.dev crd/grants.browserjs.dev crd/usageperiods.browserjs.dev
-# Neither Stripe object exists, and both pods start: the three references
-# are optional.
-is "no secret/stripe and no configmap/billing-mode to begin with" "" \
-  "$(k get secret/stripe configmap/billing-mode --ignore-not-found -o name)"
+accepts "the Account CRD is accepted and established" \
+  kubectl wait --for=condition=Established --timeout=60s crd/accounts.browserjs.dev
+is "the superseded Grant and UsagePeriod CRDs are not installed" "" \
+  "$(kubectl get crd grants.browserjs.dev usageperiods.browserjs.dev --ignore-not-found -o name)"
+# None of the three objects exists, and both pods start: every reference
+# to them is optional.
+is "no secret/stripe, secret/metronome or configmap/billing-mode to begin with" "" \
+  "$(k get secret/stripe secret/metronome configmap/billing-mode --ignore-not-found -o name)"
 for deployment in backend billing-operator; do
   if ! k rollout status "deploy/$deployment" --timeout=240s; then
     k describe pods | tail -60
@@ -94,7 +95,7 @@ for deployment in backend billing-operator; do
     exit 1
   fi
 done
-pass "the backend and the operator start with no Stripe Secret and no mode"
+pass "the backend and the operator start with no Stripe or Metronome Secret and no mode"
 
 # --- 1. the CRDs' rules --------------------------------------------------------
 step "1. CRD rules"
@@ -118,23 +119,6 @@ spec:
   ownerHash: "$2"
 YAML
 }
-grant() { # name, source, extra spec lines
-  cat <<YAML
-apiVersion: browserjs.dev/v1alpha1
-kind: Grant
-metadata:
-  name: $1
-  labels:
-    browserjs.dev/owner: "$HASH"
-spec:
-  account: $ACCOUNT
-  source: $2
-  amountMicros: 5000000
-  validFrom: "2026-10-01T00:00:00Z"
-  key: $2/$1
-$3
-YAML
-}
 apply() { k apply -f -; }
 
 refuses "an Account whose name is not its hash" "an Account is named acct-<spec.ownerHash>" \
@@ -155,45 +139,16 @@ refuses "a signupCredit changed once set" "the sign-up credit is decided once" \
 accepts "any other field of an Account's spec still changes" \
   merge accounts "$ACCOUNT" '{"spec":{"paymentMethod":{"present":true,"ids":["pm_Test1"],"readAt":"2026-10-01T00:00:00Z"}}}'
 
-accepts "a Grant with an expiry" apply <<<"$(grant g-purchase purchase '  expiresAt: "2027-10-01T00:00:00Z"')"
-refuses "a changed Grant (its amount)" "a grant is immutable; it can only be revoked" \
-  merge grants g-purchase '{"spec":{"amountMicros":9000000}}'
-refuses "a changed Grant (its expiry removed)" "a grant is immutable; it can only be revoked" \
-  merge grants g-purchase '{"spec":{"expiresAt":null}}'
-accepts "a Grant revoked" \
-  merge grants g-purchase '{"spec":{"revoked":{"reason":"refund","at":"2026-10-02T00:00:00Z"}}}'
-refuses "an un-revoked Grant" "a revoked grant stays revoked" \
-  merge grants g-purchase '{"spec":{"revoked":null}}'
-refuses "a non-admin Grant with no expiry" "only an admin's grant may have no expiry" \
-  apply <<<"$(grant g-signup signup '')"
-accepts "an admin's Grant with no expiry" apply <<<"$(grant g-admin admin '')"
-
-period() { # charged
-  cat <<YAML
-apiVersion: browserjs.dev/v1alpha1
-kind: UsagePeriod
-metadata:
-  name: up-$HASH-202609
-  labels:
-    browserjs.dev/owner: "$HASH"
-spec:
-  account: $ACCOUNT
-  start: "2026-09-01T00:00:00Z"
-  end: "2026-10-01T00:00:00Z"
-  plan: payg
-  awakeSeconds: 3600
-  awakeMicros: 200000
-  diskMicros: 1400000
-  chargedMicros: $1
-  bySource:
-    signup: $1
-  days:
-    - date: "2026-09-30"
-      awakeSeconds: 3600
-YAML
-}
-accepts "a UsagePeriod" apply <<<"$(period 1600000)"
-refuses "a changed UsagePeriod" "a closed period is immutable" apply <<<"$(period 1)"
+accepts "metronomeCustomerId set for the first time" \
+  merge accounts "$ACCOUNT" '{"spec":{"metronomeCustomerId":"d7abd0cd-4ae9-4db7-8676-e986a4ebd8dc"}}'
+refuses "a changed metronomeCustomerId" "metronomeCustomerId cannot be changed once set" \
+  merge accounts "$ACCOUNT" '{"spec":{"metronomeCustomerId":"00000000-4ae9-4db7-8676-e986a4ebd8dc"}}'
+refuses "a removed metronomeCustomerId" "metronomeCustomerId cannot be changed once set" \
+  merge accounts "$ACCOUNT" '{"spec":{"metronomeCustomerId":null}}'
+accepts "the credit the balance pass writes" \
+  merge accounts "$ACCOUNT" '{"spec":{"credit":{"exhausted":false,"balanceMicros":3400000,"checkedAt":"2026-10-02T00:00:00Z"}}}'
+is "an Account has no status subresource any more" "" \
+  "$(kubectl get crd accounts.browserjs.dev -o jsonpath='{.spec.versions[0].subresources}')"
 
 # --- 2. who may do what ----------------------------------------------------------
 step "2. RBAC"
@@ -211,28 +166,35 @@ may() { # ServiceAccount, yes|no, verb, resource, [subresource]
   note "| $1 | $what | ${got:-no answer} |"
   is "$1: $what is $2" "$2" "$got"
 }
-may backend no patch accounts.browserjs.dev status
-may backend no update accounts.browserjs.dev status
 may backend yes create accounts.browserjs.dev
 may backend yes patch accounts.browserjs.dev
-may backend yes create grants.browserjs.dev
-may backend no delete grants.browserjs.dev
-may backend no create usageperiods.browserjs.dev
-may billing-operator yes patch accounts.browserjs.dev status
-may billing-operator yes patch grants.browserjs.dev status
-may billing-operator no patch accounts.browserjs.dev
-may billing-operator no update accounts.browserjs.dev
-may billing-operator no create accounts.browserjs.dev
-may billing-operator no create grants.browserjs.dev
-may billing-operator no patch grants.browserjs.dev
-may billing-operator yes delete grants.browserjs.dev
-may billing-operator yes create usageperiods.browserjs.dev
+may backend yes list accounts.browserjs.dev
+may backend no watch accounts.browserjs.dev
+may backend no delete accounts.browserjs.dev
+for verb in get list watch patch create; do
+  may billing-operator no "$verb" accounts.browserjs.dev
+done
 for account in backend billing-operator; do
   for verb in get list; do
     may "$account" no "$verb" secrets
     may "$account" no "$verb" configmaps
   done
 done
+# The Lease billing-observer: the operator's heartbeat, read by the backend.
+lease() { # ServiceAccount, yes|no, verb, lease name
+  local got
+  got="$(kubectl -n "$NS" auth can-i "$3" "leases.coordination.k8s.io/$4" --as="system:serviceaccount:$NS:$1" 2>/dev/null | tail -1)"
+  note "| $1 | $3 lease $4 | ${got:-no answer} |"
+  is "$1: $3 lease $4 is $2" "$2" "$got"
+}
+lease billing-operator yes get billing-observer
+lease billing-operator yes update billing-observer
+lease billing-operator no delete billing-observer
+lease billing-operator no update some-other-lease
+lease billing-operator no get some-other-lease
+lease backend yes get billing-observer
+lease backend no update billing-observer
+lease backend no get some-other-lease
 
 # The same, as requests and not as questions.
 as() { # ServiceAccount, kubectl arguments
@@ -240,23 +202,33 @@ as() { # ServiceAccount, kubectl arguments
   shift
   k --as="system:serviceaccount:$NS:$account" "$@"
 }
-refuses "the backend's request to patch an Account's status" "Forbidden" \
-  as backend patch accounts.browserjs.dev "$ACCOUNT" --subresource=status --type=merge -p '{"status":{"level":"ok"}}'
-refuses "the operator's request to patch an Account's spec" "Forbidden" \
+refuses "the operator's request to read an Account" "Forbidden" as billing-operator get accounts.browserjs.dev "$ACCOUNT"
+refuses "the operator's request to patch an Account" "Forbidden" \
   as billing-operator patch accounts.browserjs.dev "$ACCOUNT" --type=merge -p '{"spec":{"exempt":true}}'
-refuses "the operator's request to create a Grant" "Forbidden" \
-  as billing-operator apply -f - <<<"$(grant g-operator admin '')"
 refuses "the operator's request to read a Secret" "Forbidden" as billing-operator get secrets
-STATUS='{"status":{"level":"ok","plan":"payg","balanceMicros":3400000,"meter":{"observedAt":"2026-10-02T00:00:00Z","consumed":[{"grant":"g-admin","micros":1600000}]}}}'
-accepts "the operator's request to patch an Account's status" \
-  as billing-operator patch accounts.browserjs.dev "$ACCOUNT" --subresource=status --type=merge -p "$STATUS"
-is "a patch of the status leaves the spec alone" "alice@example.com true" \
-  "$(k get accounts.browserjs.dev "$ACCOUNT" -o jsonpath='{.spec.owner} {.spec.paymentMethod.present}')"
-# A Grant's status the operator may patch and not get (asked above), which
-# kubectl's patch cannot do: it reads first. Written here as the admin, for
-# the export further down.
-accepts "a Grant's status" \
-  k patch grants.browserjs.dev g-admin --subresource=status --type=merge -p '{"status":{"state":"active","consumedMicros":1600000}}'
+accepts "the backend's request to patch an Account" \
+  as backend patch accounts.browserjs.dev "$ACCOUNT" --type=merge -p '{"spec":{"termsVersion":"1"}}'
+accepts "the operator's request to make its Lease" as billing-operator apply -f - <<YAML
+apiVersion: coordination.k8s.io/v1
+kind: Lease
+metadata:
+  name: billing-observer
+spec:
+  holderIdentity: test
+  renewTime: "2026-10-02T00:00:00.000000Z"
+YAML
+# update, not patch: the verb it has.
+accepts "the operator's request to renew it" as billing-operator replace -f - <<YAML
+apiVersion: coordination.k8s.io/v1
+kind: Lease
+metadata:
+  name: billing-observer
+spec:
+  holderIdentity: test
+  renewTime: "2026-10-02T00:01:00.000000Z"
+YAML
+is "the backend reads the Lease's time" "2026-10-02T00:01:00.000000Z" \
+  "$(as backend get lease billing-observer -o jsonpath='{.spec.renewTime}')"
 # No Sandbox CRD on this cluster, so can-i cannot be asked: the rule itself.
 is "billing-operator: get, list, watch sandboxes, and no more" "get list watch" \
   "$(k get role billing-operator -o json | jq -r '[.rules[] | select(.resources == ["sandboxes"] and .apiGroups == ["agents.x-k8s.io"]) | .verbs[]] | join(" ")')"
@@ -313,9 +285,9 @@ expect "the operator (itself)" "$out" 127.0.0.1:8081 open
 out="$(k exec deploy/backend -- python3 -c "$PROBE" "$operator_ip:8081" 2>&1)"
 expect backend "$out" "$operator_ip:8081" closed
 note
-note "The operator's rule for the API server is ports 443 and 6443 to anywhere (a NetworkPolicy cannot name the API server), so the internet on 443 is not closed to it; everything else is."
+note "The operator's rule is ports 443 and 6443 to anywhere: the API server, and Metronome's API on 443 (a NetworkPolicy cannot name either). Everything else is closed."
 
-# --- 4. the catalogue, and Stripe's Secret -----------------------------------------
+# --- 4. the catalogue, and the Secrets --- -----------------------------------------
 step "4. catalogue"
 uids() { k get pods -l 'app in (backend,billing-operator)' -o jsonpath='{range .items[*]}{.metadata.uid} {.status.containerStatuses[0].restartCount}{"\n"}{end}' | sort; }
 before="$(uids)"
@@ -353,55 +325,114 @@ for pod in backend billing-operator; do
 done
 is "without a restart: the same pods, no container restarted" "$before" "$(uids)"
 
-step "4. hack/stripe-secret.sh"
-# Made up here, in the shape of the real ones. Never a real key.
-fake_key="rk_test_$(head -c 18 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-fake_secret="whsec_$(head -c 18 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-stripe() { # mode; output and $GITHUB_OUTPUT to files
+step "4. hack/billing-secrets.sh"
+# Made up here, in the shape of the real ones. Never a real key or token.
+random() { head -c 18 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+fake_key="rk_test_$(random)"
+fake_secret="whsec_$(random)"
+fake_token="$(random)"
+fake_hook="$(random)"
+fake_production="$(random)"
+# secrets <stage> <mode> [name=value ...]: the stage in place of the files',
+# every secret set unless a name=value says otherwise; output and
+# $GITHUB_OUTPUT to files.
+secrets() {
+  local stage="$1" mode="$2"
+  shift 2
   : >"$work/github_output"
-  NS="$NS" STRIPE_MODE="$1" STRIPE_TEST_API_KEY="${2-$fake_key}" STRIPE_TEST_WEBHOOK_SECRET="${3-$fake_secret}" \
-    GITHUB_OUTPUT="$work/github_output" hack/stripe-secret.sh >"$work/stripe.log" 2>&1
+  env NS="$NS" BILLING_STAGE="$stage" STRIPE_MODE="$mode" GITHUB_OUTPUT="$work/github_output" \
+    STRIPE_TEST_API_KEY="$fake_key" STRIPE_TEST_WEBHOOK_SECRET="$fake_secret" \
+    METRONOME_SANDBOX_API_TOKEN="$fake_token" METRONOME_SANDBOX_WEBHOOK_SECRET="$fake_hook" \
+    "$@" hack/billing-secrets.sh >"$work/secrets.log" 2>&1
 }
 value() { k get "$1" -o "jsonpath={.data.$2}" 2>/dev/null; }
-silent() { # nothing of either value in what it wrote
-  if grep -qF -e "${fake_key#rk_test_}" -e "${fake_secret#whsec_}" "$work/stripe.log" "$work/github_output"; then
+objects() { k get secret/stripe secret/metronome configmap/billing-mode --ignore-not-found -o name | xargs; }
+outputs() { sort "$work/github_output" | xargs; }
+silent() { # nothing of any value in what it wrote
+  if grep -qF -e "${fake_key#rk_test_}" -e "${fake_secret#whsec_}" -e "$fake_token" -e "$fake_hook" -e "$fake_production" \
+    "$work/secrets.log" "$work/github_output"; then
     fail "$1 prints no value" "a value is in its output"
   else
     pass "$1 prints no value"
   fi
 }
 
-if stripe test "" ""; then fail "a missing secret stops it"; else
-  is "a missing secret stops it, naming both" "2" "$(grep -c '^::error::STRIPE_MODE is test and the repository secret STRIPE_TEST_' "$work/stripe.log")"
+# Off and no mode: nothing is needed, nothing is made.
+if secrets off "" STRIPE_TEST_API_KEY= STRIPE_TEST_WEBHOOK_SECRET= METRONOME_SANDBOX_API_TOKEN= METRONOME_SANDBOX_WEBHOOK_SECRET=; then
+  pass "billing off and no STRIPE_MODE needs no secret at all"
+else
+  fail "billing off and no STRIPE_MODE needs no secret at all" "$(tail -3 "$work/secrets.log")"
 fi
-is "and nothing was made" "" "$(k get secret/stripe configmap/billing-mode --ignore-not-found -o name)"
-if stripe test "rk_live_${fake_key#rk_test_}"; then fail "a live key in test mode stops it"; else pass "a live key in test mode stops it"; fi
-silent "the refusal"
-if stripe staging; then fail "an unknown mode stops it"; else pass "an unknown mode stops it"; fi
+is "and makes nothing" "" "$(objects)"
 
-if stripe test; then pass "STRIPE_MODE=test with both secrets"; else fail "STRIPE_MODE=test with both secrets" "$(tail -3 "$work/stripe.log")"; fi
+# What is needed and missing stops it before anything is made.
+if secrets meter "" METRONOME_SANDBOX_API_TOKEN= METRONOME_SANDBOX_WEBHOOK_SECRET=; then fail "meter without Metronome's secrets stops it"; else
+  is "meter without Metronome's secrets stops it, naming both" "2" "$(grep -c '^::error::billing is at meter .* the repository secret METRONOME_SANDBOX_' "$work/secrets.log")"
+fi
+if secrets meter test STRIPE_TEST_API_KEY= STRIPE_TEST_WEBHOOK_SECRET=; then fail "a missing Stripe secret stops it"; else
+  is "a missing Stripe secret stops it, naming both" "2" "$(grep -c '^::error::STRIPE_MODE is test and the repository secret STRIPE_TEST_' "$work/secrets.log")"
+fi
+if secrets meter live STRIPE_LIVE_API_KEY="rk_live_$(random)" STRIPE_LIVE_WEBHOOK_SECRET="whsec_$(random)"; then
+  fail "live with only the sandbox's Metronome secrets stops it"
+else
+  is "live with only the sandbox's Metronome secrets stops it, naming production's" "2" "$(grep -c 'the repository secret METRONOME_PRODUCTION_' "$work/secrets.log")"
+fi
+if secrets meter test STRIPE_TEST_API_KEY="rk_live_${fake_key#rk_test_}"; then fail "a live key in test mode stops it"; else pass "a live key in test mode stops it"; fi
+silent "the refusal"
+if secrets meter staging; then fail "an unknown mode stops it"; else pass "an unknown mode stops it"; fi
+is "and none of those made anything" "" "$(objects)"
+
+# Stage 1: meter, no Stripe.
+if secrets meter ""; then pass "meter with no STRIPE_MODE"; else fail "meter with no STRIPE_MODE" "$(tail -3 "$work/secrets.log")"; fi
+silent "making it"
+is "only secret/metronome exists" "secret/metronome" "$(objects)"
+is "secret/metronome has the sandbox's token" "$fake_token" "$(value secret/metronome METRONOME_API_TOKEN | base64 -d)"
+is "secret/metronome has the sandbox's webhook secret" "$fake_hook" "$(value secret/metronome METRONOME_WEBHOOK_SECRET | base64 -d)"
+is "secret/metronome has those two keys only" "METRONOME_API_TOKEN METRONOME_WEBHOOK_SECRET" "$(k get secret metronome -o json | jq -r '.data | keys | join(" ")')"
+is "the change is reported, for the restarts" "metronome_changed=true" "$(outputs)"
+
+# Stage 2: meter and test payments.
+if secrets meter test; then pass "meter with STRIPE_MODE=test"; else fail "meter with STRIPE_MODE=test" "$(tail -3 "$work/secrets.log")"; fi
 silent "making them"
 is "secret/stripe has the key" "$fake_key" "$(value secret/stripe STRIPE_API_KEY | base64 -d)"
 is "secret/stripe has the webhook secret" "$fake_secret" "$(value secret/stripe STRIPE_WEBHOOK_SECRET | base64 -d)"
 is "secret/stripe has those two keys only" "STRIPE_API_KEY STRIPE_WEBHOOK_SECRET" "$(k get secret stripe -o json | jq -r '.data | keys | join(" ")')"
 is "configmap/billing-mode says test" "test" "$(value configmap/billing-mode STRIPE_MODE)"
-is "a change is reported, for the backend's restart" "stripe_changed=true" "$(cat "$work/github_output")"
-stripe test
-is "the same again reports no change" "" "$(cat "$work/github_output")"
+is "only Stripe's change is reported" "stripe_changed=true" "$(outputs)"
+secrets enforce test
+is "the same again reports no change" "" "$(outputs)"
 
-# The backend's three variables are these objects' keys.
-k rollout restart deploy/backend >/dev/null
-k rollout status deploy/backend --timeout=180s >/dev/null
-is "the backend's STRIPE_MODE is the ConfigMap's" "test" "$(k exec deploy/backend -- printenv STRIPE_MODE)"
-is "the backend's STRIPE_API_KEY is the Secret's" "$fake_key" "$(k exec deploy/backend -- printenv STRIPE_API_KEY)"
-is "the backend's STRIPE_WEBHOOK_SECRET is the Secret's" "$fake_secret" "$(k exec deploy/backend -- printenv STRIPE_WEBHOOK_SECRET)"
-is "the operator has none of them" "" "$(k exec deploy/billing-operator -- sh -c 'env | grep -c STRIPE || true' | grep -v '^0$')"
+# The pods' variables are these objects' keys.
+k rollout restart deploy/backend deploy/billing-operator >/dev/null
+for deployment in backend billing-operator; do k rollout status "deploy/$deployment" --timeout=180s >/dev/null; done
+have() { k exec "deploy/$1" -- printenv "$2" 2>/dev/null; }
+is "the backend's STRIPE_MODE is the ConfigMap's" "test" "$(have backend STRIPE_MODE)"
+is "the backend's STRIPE_API_KEY is the Secret's" "$fake_key" "$(have backend STRIPE_API_KEY)"
+is "the backend's STRIPE_WEBHOOK_SECRET is the Secret's" "$fake_secret" "$(have backend STRIPE_WEBHOOK_SECRET)"
+is "the backend's METRONOME_API_TOKEN is the Secret's" "$fake_token" "$(have backend METRONOME_API_TOKEN)"
+is "the backend's METRONOME_WEBHOOK_SECRET is the Secret's" "$fake_hook" "$(have backend METRONOME_WEBHOOK_SECRET)"
+is "the operator's METRONOME_API_TOKEN is the Secret's" "$fake_token" "$(have billing-operator METRONOME_API_TOKEN)"
+is "the operator has the token and nothing else of either" "METRONOME_API_TOKEN METRONOME_URL" \
+  "$(k exec deploy/billing-operator -- sh -c 'env | grep -E "^(STRIPE|METRONOME)" | cut -d= -f1 | sort' | xargs)"
 
-if stripe ""; then pass "STRIPE_MODE empty"; else fail "STRIPE_MODE empty" "$(tail -3 "$work/stripe.log")"; fi
-is "both are removed when STRIPE_MODE is empty" "" "$(k get secret/stripe configmap/billing-mode --ignore-not-found -o name)"
-is "which is reported as a change" "stripe_changed=true" "$(cat "$work/github_output")"
-stripe ""
-is "and removing nothing is not" "" "$(cat "$work/github_output")"
+# Stage 4: live. Metronome's environment follows.
+if secrets enforce live STRIPE_LIVE_API_KEY="rk_live_$(random)" STRIPE_LIVE_WEBHOOK_SECRET="whsec_$(random)" \
+  METRONOME_PRODUCTION_API_TOKEN="$fake_production" METRONOME_PRODUCTION_WEBHOOK_SECRET="$(random)"; then
+  pass "enforce with STRIPE_MODE=live"
+else
+  fail "enforce with STRIPE_MODE=live" "$(tail -3 "$work/secrets.log")"
+fi
+silent "going live"
+is "secret/metronome is now production's" "$fake_production" "$(value secret/metronome METRONOME_API_TOKEN | base64 -d)"
+is "configmap/billing-mode says live" "live" "$(value configmap/billing-mode STRIPE_MODE)"
+is "both changes are reported" "metronome_changed=true stripe_changed=true" "$(outputs)"
+
+# And back to nothing.
+if secrets off ""; then pass "billing off and STRIPE_MODE empty"; else fail "billing off and STRIPE_MODE empty" "$(tail -3 "$work/secrets.log")"; fi
+is "all three are removed" "" "$(objects)"
+is "which is reported as a change of both" "metronome_changed=true stripe_changed=true" "$(outputs)"
+secrets off ""
+is "and removing nothing is not" "" "$(outputs)"
 
 # --- 5. the export, and its restore ------------------------------------------------
 step "5. export"
@@ -411,10 +442,8 @@ is "the CronJob is suspended as deploy/gke has it with billing off" "true" \
 grep -q 'value: browserjs-sessions-billing-export$' deploy/gke/billing-export.yaml || fail "billing-export.yaml names no bucket to take out"
 sed 's|value: browserjs-sessions-billing-export$|value: ""|' deploy/gke/billing-export.yaml | k apply -f - >/dev/null
 may billing-export yes list accounts.browserjs.dev
-may billing-export yes list grants.browserjs.dev
-may billing-export yes list usageperiods.browserjs.dev
 may billing-export no delete accounts.browserjs.dev
-may billing-export no patch grants.browserjs.dev
+may billing-export no patch accounts.browserjs.dev
 may billing-export no get secrets
 k create job --from=cronjob/billing-export export-test >/dev/null
 if k wait --for=condition=Complete job/export-test --timeout=300s >/dev/null 2>&1; then
@@ -423,39 +452,37 @@ else
   fail "the export job completes" "$(k describe job export-test | tail -15; k logs job/export-test --tail=20 2>&1)"
 fi
 k logs job/export-test >"$work/export.yaml"
-is "the export has every object" "1 Account, 2 Grant, 1 UsagePeriod" \
+is "the export has every Account, and only Accounts" "1 Account" \
   "$(kubectl create --dry-run=client --validate=false -o json -f "$work/export.yaml" 2>/dev/null |
     jq -rs '[.[] | if .kind == "List" then .items[] else . end] | group_by(.kind) | map("\(length) \(.[0].kind)") | join(", ")')"
 
-# What a restore must bring back: names, labels, spec and status.
-ledger() { # of the current context
-  kubectl -n "$NS" get accounts.browserjs.dev,grants.browserjs.dev,usageperiods.browserjs.dev -o json |
-    jq -S '[.items[] | {kind, name: .metadata.name, labels: .metadata.labels, spec, status}] | sort_by(.kind + .name)'
+# What a restore must bring back: names, labels and spec.
+accounts() { # of the current context
+  kubectl -n "$NS" get accounts.browserjs.dev -o json |
+    jq -S '[.items[] | {kind, name: .metadata.name, labels: .metadata.labels, spec}] | sort_by(.name)'
 }
 if [ -z "$RESTORE_CONTEXT" ]; then
   echo "SKIP  the restore into a second cluster (RESTORE_CONTEXT is not set)"
 else
   here="$(kubectl config current-context)"
-  ledger >"$work/first.json"
+  accounts >"$work/first.json"
   kubectl config use-context "$RESTORE_CONTEXT" >/dev/null
-  kubectl apply -f deploy/base/namespace.yaml -f deploy/base/crd-account.yaml -f deploy/base/crd-grant.yaml \
-    -f deploy/base/crd-usageperiod.yaml >/dev/null
-  kubectl wait --for=condition=Established --timeout=60s \
-    crd/accounts.browserjs.dev crd/grants.browserjs.dev crd/usageperiods.browserjs.dev >/dev/null
-  is "the second cluster starts empty" "[]" "$(ledger | jq -c .)"
+  kubectl apply -f deploy/base/namespace.yaml -f deploy/base/crd-account.yaml >/dev/null
+  kubectl wait --for=condition=Established --timeout=60s crd/accounts.browserjs.dev >/dev/null
+  is "the second cluster starts empty" "[]" "$(accounts | jq -c .)"
   accepts "hack/billing-restore.sh applies the export to a second cluster" hack/billing-restore.sh "$work/export.yaml"
-  ledger >"$work/second.json"
+  accounts >"$work/second.json"
   if diff "$work/first.json" "$work/second.json" >"$work/diff"; then
-    pass "the second cluster has the same Accounts, Grants and UsagePeriods: labels, spec and status"
+    pass "the second cluster has the same Accounts: names, labels and spec"
   else
-    fail "the second cluster has the same Accounts, Grants and UsagePeriods" "$(head -20 "$work/diff")"
+    fail "the second cluster has the same Accounts" "$(head -20 "$work/diff")"
   fi
-  is "the ledger came with it (what was used of a grant)" "1600000" \
-    "$(kubectl -n "$NS" get accounts.browserjs.dev "$ACCOUNT" -o jsonpath='{.status.meter.consumed[0].micros}')"
-  is "and the record of the sign-up credit" "refused" \
-    "$(kubectl -n "$NS" get accounts.browserjs.dev "$ACCOUNT" -o jsonpath='{.spec.signupCredit.state}')"
+  is "the customer IDs came with it" "cus_Test1 d7abd0cd-4ae9-4db7-8676-e986a4ebd8dc" \
+    "$(kubectl -n "$NS" get accounts.browserjs.dev "$ACCOUNT" -o jsonpath='{.spec.stripeCustomerId} {.spec.metronomeCustomerId}')"
+  is "and the card's state and the sign-up credit's outcome" "true refused" \
+    "$(kubectl -n "$NS" get accounts.browserjs.dev "$ACCOUNT" -o jsonpath='{.spec.paymentMethod.present} {.spec.signupCredit.state}')"
   accepts "restoring a second time" hack/billing-restore.sh "$work/export.yaml"
-  ledger >"$work/third.json"
+  accounts >"$work/third.json"
   if diff -q "$work/first.json" "$work/third.json" >/dev/null; then pass "changes nothing"; else fail "changes nothing"; fi
   kubectl config use-context "$here" >/dev/null
 fi

@@ -1,9 +1,8 @@
-# The ledger's backup: once a day, every Account, Grant and UsagePeriod as
-# `kubectl get -o yaml` prints them, to a versioned bucket (infra/main,
-# billing.tf; its output billing_export_bucket). etcd is not a database: a
-# cluster that is recreated without this loses the usage counted in the
-# current period and, worse, the record of which cards have had the sign-up
-# credit. Everything paid for comes back from Stripe.
+# The Accounts' backup: once a day, every Account as `kubectl get -o yaml`
+# prints it, to a versioned bucket (infra/main, billing.tf; its output
+# billing_export_bucket). Usage and credit are in Metronome and are not lost
+# with the cluster; what a recreated cluster would lose without this is each
+# Account's card state, flags (exempt, blocked, terms) and customer IDs.
 #
 # SUSPENDED here: it starts with the stage "enforce"
 # (patch-billing-enforce.yaml, hack/billing-stage.sh). Restoring is
@@ -13,7 +12,7 @@ kind: ServiceAccount
 metadata:
   name: billing-export
 ---
-# Reads the three kinds and nothing else. The bucket is reached as this
+# Reads Accounts and nothing else. The bucket is reached as this
 # ServiceAccount through Workload Identity Federation: infra/main lets it
 # create objects there, and neither read nor delete them.
 apiVersion: rbac.authorization.k8s.io/v1
@@ -22,7 +21,7 @@ metadata:
   name: billing-export
 rules:
   - apiGroups: ["browserjs.dev"]
-    resources: ["accounts", "grants", "usageperiods"]
+    resources: ["accounts"]
     verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -155,7 +154,7 @@ spec:
                 - |
                   command -v kubectl curl jq >/dev/null
                   out=/tmp/export.yaml
-                  kubectl -n "$NAMESPACE" get accounts.browserjs.dev,grants.browserjs.dev,usageperiods.browserjs.dev -o yaml >"$out"
+                  kubectl -n "$NAMESPACE" get accounts.browserjs.dev -o yaml >"$out"
                   if [ -z "$BUCKET" ]; then
                     cat "$out"
                     exit 0

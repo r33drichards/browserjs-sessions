@@ -16,10 +16,8 @@ resources:
   # ConfigMap opa-config, from the contract files where they are.
   - ../../docs/contracts/policy
   # Metering and billing (docs/billing-deployment.md). Installed and off:
-  # nothing reads the three resources until an overlay sets BILLING.
+  # nothing reads the Account resource until an overlay sets BILLING.
   - crd-account.yaml
-  - crd-grant.yaml
-  - crd-usageperiod.yaml
   - billing-operator.yaml
 
 configMapGenerator:

@@ -1,8 +1,9 @@
-# The ledger's daily backup (deploy/gke/billing-export.yaml): every Account,
-# Grant and UsagePeriod, as YAML, one object a day. etcd is not a database:
-# without this, a cluster that is recreated loses the usage counted in the
-# current period and the record of which cards have had the sign-up credit.
-# Restoring is hack/billing-restore.sh (docs/billing-deployment.md).
+# The Accounts' daily backup (deploy/gke/billing-export.yaml): every Account,
+# as YAML, one object a day. Usage and credit are in Metronome; what a
+# recreated cluster would lose without this is each Account's card state,
+# flags and customer IDs. Restoring is hack/billing-restore.sh
+# (docs/billing-deployment.md). Nothing writes here until billing is
+# enforced: until then the bucket is empty and costs nothing.
 
 locals {
   billing_export_bucket_name = coalesce(var.billing_export_bucket_name, "${var.project_id}-billing-export")

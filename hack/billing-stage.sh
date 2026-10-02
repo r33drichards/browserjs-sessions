@@ -3,16 +3,16 @@
 # stages, what each needs first and what each does to existing sessions:
 # docs/billing-deployment.md.
 #
-#   off      installed, nothing runs: the three resources, the Roles, the
-#            catalogue and the webhook route are there, the billing operator
+#   off      installed, nothing runs: the Account resource, the Roles, the
+#            catalogue and the webhook routes are there, the billing operator
 #            has no pods, and the backend has no BILLING: it is exactly as
 #            it was before the feature
-#   meter    the operator has its pod and charges every account's ledger;
-#            the backend shows the usage (BILLING=meter on both). Nothing is
-#            refused and no session is stopped
+#   meter    the operator has its pod and sends usage to Metronome; the
+#            backend shows it (BILLING=meter on both). Nothing is refused
+#            and no session is stopped. Needs the Metronome secrets
 #   enforce  BILLING=enforce on both: no card, no session, and an account at
 #            zero has its sessions drained and put to sleep. On GKE the
-#            daily export of the ledger starts. Needs STRIPE_MODE
+#            daily export of the Accounts starts. Needs STRIPE_MODE
 #
 #   hack/billing-stage.sh                the stage of gke and of local
 #   hack/billing-stage.sh --check        the same, and fails if the files of
@@ -27,7 +27,7 @@
 # patch-billing-enforce.yaml" lines of the overlay's kustomization.yaml
 # (commented out or not). BILLING is set by those two patches and nowhere
 # else. Payments are not a stage of the files: they are the repository
-# variable STRIPE_MODE (hack/stripe-secret.sh).
+# variable STRIPE_MODE (hack/billing-secrets.sh).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -78,7 +78,7 @@ stage() { # overlay
   done
   if listed "$1" "$enforce"; then
     if ! listed "$1" "$meter"; then
-      echo "billing-stage: $1: $enforce is listed without $meter: the backend would enforce a ledger the operator, with no pods, never writes" >&2
+      echo "billing-stage: $1: $enforce is listed without $meter: the backend would enforce on usage the operator, with no pods, never sends" >&2
       return 1
     fi
     # The later patch wins: enforce has to come after meter.

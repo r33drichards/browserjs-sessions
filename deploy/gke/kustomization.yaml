@@ -17,7 +17,7 @@ resources:
   - warmpool.yaml
   - certificate.yaml
   - site.yaml
-  # The ledger's daily backup; suspended until billing is enforced.
+  # The Accounts' daily backup; suspended until billing is enforced.
   - billing-export.yaml
 
 # THE ONE PLACE the deployed images are chosen. Each digest is what the

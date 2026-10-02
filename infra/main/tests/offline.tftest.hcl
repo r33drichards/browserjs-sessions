@@ -131,7 +131,7 @@ run "defaults_pomerium_nlb" {
 
   assert {
     condition     = google_storage_bucket.billing_export.name == "browserjs-sessions-test-billing-export" && google_storage_bucket.billing_export.versioning[0].enabled && one(google_storage_bucket.billing_export.lifecycle_rule[0].condition).age == 90
-    error_message = "The ledger's export bucket is <project>-billing-export, versioned, and keeps 90 days."
+    error_message = "The Accounts' export bucket is <project>-billing-export, versioned, and keeps 90 days."
   }
 
   assert {

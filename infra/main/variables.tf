@@ -416,7 +416,7 @@ variable "snapshot_bucket_force_destroy" {
 # --- Billing export ---------------------------------------------------------------------
 
 variable "billing_export_bucket_name" {
-  description = "Name of the bucket the ledger is exported to daily. The default is <project_id>-billing-export; deploy/gke/billing-export.yaml (BUCKET) must name it."
+  description = "Name of the bucket the Accounts are exported to daily. The default is <project_id>-billing-export; deploy/gke/billing-export.yaml (BUCKET) must name it."
   type        = string
   default     = null
 

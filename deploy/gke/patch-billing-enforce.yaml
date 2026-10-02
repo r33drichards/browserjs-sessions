@@ -3,7 +3,7 @@
 # card, no session; at zero credit the sessions are drained and put to
 # sleep. The backend refuses to start in this stage without STRIPE_MODE.
 #
-# It also starts the daily export of the ledger (billing-export.yaml), which
+# It also starts the daily export of the Accounts (billing-export.yaml), which
 # needs the bucket of infra/main.
 #
 # Switched by hack/billing-stage.sh (docs/billing-deployment.md).

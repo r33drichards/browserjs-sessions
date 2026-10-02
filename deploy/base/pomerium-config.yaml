@@ -137,3 +137,12 @@ routes:
     to: http://backend
     allow_public_unauthenticated_access: true
     preserve_host_header: true
+
+  # Metronome's webhook, the same way (docs/contracts/billing/metronome.md).
+  # The backend serves it only while BILLING is on.
+  - name: api-metronome-webhook
+    from: https://api.example.com
+    path: /metronome/webhook
+    to: http://backend
+    allow_public_unauthenticated_access: true
+    preserve_host_header: true

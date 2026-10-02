@@ -111,7 +111,7 @@ output "session_service_account" {
 # --- Billing export ---
 
 output "billing_export_bucket" {
-  description = "Bucket of the ledger's daily export: BUCKET in deploy/gke/billing-export.yaml."
+  description = "Bucket of the Accounts' daily export: BUCKET in deploy/gke/billing-export.yaml."
   value       = google_storage_bucket.billing_export.name
 }
 

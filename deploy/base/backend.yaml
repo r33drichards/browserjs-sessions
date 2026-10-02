@@ -32,18 +32,17 @@ rules:
   - apiGroups: ["browserjs.dev"]
     resources: ["apitokens/status"]
     verbs: ["patch"]
-  # Billing (docs/contracts/billing/deploy.md). An Account's spec and the
-  # Grants are the backend's; accounts/status, the ledger, is the billing
-  # operator's alone, and a closed period is only read.
+  # Billing (docs/contracts/billing/deploy.md). Accounts are the backend's
+  # and nobody else's; usage and credit are in Metronome. No watch: there is
+  # no informer, every decision reads the Account.
   - apiGroups: ["browserjs.dev"]
     resources: ["accounts"]
-    verbs: ["get", "list", "watch", "create", "update", "patch"]
-  - apiGroups: ["browserjs.dev"]
-    resources: ["grants"]
-    verbs: ["get", "list", "watch", "create", "patch"]
-  - apiGroups: ["browserjs.dev"]
-    resources: ["usageperiods"]
-    verbs: ["get", "list"]
+    verbs: ["get", "list", "create", "update", "patch"]
+  # The observer's heartbeat, to say when metering is stale.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    resourceNames: ["billing-observer"]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -140,8 +139,28 @@ spec:
               value: 5m
             - name: BILLING_DRAIN_TIMEOUT
               value: 10m
-            - name: BILLING_STALE_AFTER
-              value: 10m
+            # How often the balance pass reads Metronome.
+            - name: BILLING_BALANCE_PASS
+              value: 5m
+            # Metronome: the meter and the credit ledger
+            # (docs/contracts/billing/metronome.md). The Secret is written by
+            # the deploy workflow whenever billing is not off
+            # (hack/billing-secrets.sh); with BILLING set the backend refuses
+            # to start without the two.
+            - name: METRONOME_URL
+              value: https://api.metronome.com
+            - name: METRONOME_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: metronome
+                  key: METRONOME_API_TOKEN
+                  optional: true
+            - name: METRONOME_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: metronome
+                  key: METRONOME_WEBHOOK_SECRET
+                  optional: true
             - name: MAX_AWAKE_SESSIONS
               value: "10"
             - name: WAKES_PER_HOUR
@@ -157,7 +176,7 @@ spec:
             - name: BILLING_CATALOGUE
               value: /etc/browserjs/catalogue.yaml
             # Stripe. The mode and the two keys are written together by the
-            # deploy workflow (hack/stripe-secret.sh), and are absent until
+            # deploy workflow (hack/billing-secrets.sh), and are absent until
             # the repository variable STRIPE_MODE is set: no checkout, no
             # webhook route.
             - name: STRIPE_MODE

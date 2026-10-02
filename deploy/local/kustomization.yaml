@@ -36,8 +36,9 @@ patches:
   - path: patch-policy.yaml
   # The stage of billing: off with neither line, meter (shadow) with the
   # first, enforce with both. Switched by hack/billing-stage.sh
-  # (docs/billing-deployment.md). Local development meters.
-  - path: patch-billing-meter.yaml
+  # (docs/billing-deployment.md). Off by default here too: meter needs a
+  # developer's own Metronome sandbox token.
+  # - path: patch-billing-meter.yaml
   # - path: patch-billing-enforce.yaml
   # The stage of session policies: off with both lines, serving with the
   # second only, enforcing with neither. They are the last patches, and are
