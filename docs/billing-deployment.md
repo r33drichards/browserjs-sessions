@@ -172,7 +172,7 @@ read-only workflow; its summary has a "Billing" section.
 | 1. Meter | tracks A and D merged; the `images` run on `main` has published `billing-operator`, and the pinned backend is one that knows `BILLING`; `infra/billing` applied to Metronome's sandbox (the rate card exists: the backend checks at start); the two `METRONOME_SANDBOX_` secrets | `hack/pin-images.sh billing-operator=sha256:… backend=sha256:…` and `hack/billing-stage.sh gke meter` | `billing-operator` READY 1 on the system node, no restarts. `BILLING=meter` on both. Secret `metronome` with two keys. Lease `billing-observer` RENEWED under two minutes ago. After a sign-in: an Account with a METRONOME customer |
 | 2. Test payments | track C merged and pinned; `infra/billing` applied to Stripe's sandbox; the webhook endpoint and the two `STRIPE_TEST_` secrets | none: set the variable `STRIPE_MODE` to `test`, run `deploy` | ConfigMap `billing-mode` says `test`; Secret `stripe` has two keys; the backend restarted and is ready. In Stripe's Dashboard the webhook endpoint's deliveries are 200 |
 | 3. Enforce | stage 2 checked by hand | `hack/billing-stage.sh gke enforce` | `BILLING=enforce` on both. CronJob SUSPENDED false; the day after, LAST-SUCCESS set and a job `Complete` |
-| 4. Live payments | the product owner's steps for live mode; `infra/billing` applied to production of both; the `STRIPE_LIVE_` and `METRONOME_PRODUCTION_` secrets; the sandbox customer IDs cleared from the Accounts (below) | none: the variable `STRIPE_MODE` to `live`, run `deploy` | `billing-mode` says `live`; both Secrets changed; the backend and the operator restarted and are ready |
+| 4. Live payments | the product owner's steps for live mode; `infra/billing` applied to production of both; the `STRIPE_LIVE_` and `METRONOME_PRODUCTION_` secrets | none: the variable `STRIPE_MODE` to `live`, run `deploy` | `billing-mode` says `live`; both Secrets changed; the backend and the operator restarted and are ready |
 
 Rollback, each one `deploy` run:
 
@@ -200,15 +200,11 @@ changes either does: a few seconds in which requests fail and screens
 reconnect. No session pod, disk, snapshot or warm pod is touched, and the
 backend behaves as before.
 
-**Stage 4 and `metronomeCustomerId`: an open contract question.** The
-contract's stage 4 says every Account's `metronomeCustomerId` and `credit`
-are "cleared by the documented command" when the environment changes from
-sandbox to production. The Account CRD's rule "metronomeCustomerId cannot
-be changed once set" refuses exactly that (the kind job shows the refusal
-of a removal). As the contracts stand the only way is to delete the
-Accounts and let the backend make them again, which also loses the
-recorded outcome of the sign-up credit. This needs a contract pull request
-before stage 4; nothing here works around it.
+**Stage 4 clears nothing.** An Account keeps Stripe's and Metronome's
+state per mode, side by side: `spec.stripe.test` and `spec.stripe.live`,
+`spec.metronome.sandbox` and `spec.metronome.production`. Going live, the
+backend starts filling the live and production halves; the test and sandbox
+halves stay as they were, and going back finds them.
 
 ## The catalogue
 
@@ -313,8 +309,10 @@ labels, volumes and variables:
 
 1. The Account CRD is accepted, with no status subresource. Each rule
    refuses what its message says: an Account not named by its hash, a
-   changed owner, a changed and a removed `stripeCustomerId`, a changed and
-   a removed `metronomeCustomerId`, a changed `signupCredit`; and the
+   changed owner; in each of the four modes (`stripe.test`, `stripe.live`,
+   `metronome.sandbox`, `metronome.production`) a changed and a removed
+   `customerId`; in each Stripe mode a changed `signupCredit`; a removed
+   mode, and a removed `spec.stripe` or `spec.metronome`; and the
    allowed changes beside them (the card state, `credit`) are accepted.
 2. RBAC, asked (`kubectl auth can-i`) and tried (requests as each
    ServiceAccount): the backend cannot watch or delete Accounts; the

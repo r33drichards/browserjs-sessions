@@ -5,6 +5,10 @@
 # CHANGED 2026-10-02 (metronome.md): the ledger is Metronome's. `status` is
 # no longer written by anything and is removed; `spec` gains
 # metronomeCustomerId and credit.
+# CHANGED 2026-10-02 (per mode): everything read from Stripe is under
+# spec.stripe.<test|live>, and the Metronome customer and credit under
+# spec.metronome.<sandbox|production>. Each customerId is immutable once
+# set, in its own mode. The printer columns show the test and sandbox pair.
 # Contract: docs/contracts/billing/README.md. Track B copies this file to
 # deploy/base/crd-account.yaml unchanged.
 apiVersion: apiextensions.k8s.io/v1
@@ -29,19 +33,19 @@ spec:
           jsonPath: .spec.owner
         - name: Card
           type: boolean
-          jsonPath: .spec.paymentMethod.present
+          jsonPath: .spec.stripe.test.paymentMethod.present
         - name: Plan
           type: string
-          jsonPath: .spec.subscription.priceLookupKey
+          jsonPath: .spec.stripe.test.subscription.priceLookupKey
         - name: Exhausted
           type: boolean
-          jsonPath: .spec.credit.exhausted
+          jsonPath: .spec.metronome.sandbox.credit.exhausted
         - name: Balance (µ$)
           type: integer
-          jsonPath: .spec.credit.balanceMicros
+          jsonPath: .spec.metronome.sandbox.credit.balanceMicros
         - name: Checked
           type: date
-          jsonPath: .spec.credit.checkedAt
+          jsonPath: .spec.metronome.sandbox.credit.checkedAt
           priority: 1
         - name: Blocked
           type: string
@@ -61,12 +65,10 @@ spec:
               x-kubernetes-validations:
                 - rule: self.owner == oldSelf.owner && self.ownerHash == oldSelf.ownerHash
                   message: owner and ownerHash cannot be changed
-                - rule: "!has(oldSelf.stripeCustomerId) || (has(self.stripeCustomerId) && self.stripeCustomerId == oldSelf.stripeCustomerId)"
-                  message: stripeCustomerId cannot be changed once set
-                - rule: "!has(oldSelf.metronomeCustomerId) || (has(self.metronomeCustomerId) && self.metronomeCustomerId == oldSelf.metronomeCustomerId)"
-                  message: metronomeCustomerId cannot be changed once set
-                - rule: "!has(oldSelf.signupCredit) || (has(self.signupCredit) && self.signupCredit == oldSelf.signupCredit)"
-                  message: the sign-up credit is decided once
+                - rule: "!has(oldSelf.stripe) || has(self.stripe)"
+                  message: stripe cannot be removed
+                - rule: "!has(oldSelf.metronome) || has(self.metronome)"
+                  message: metronome cannot be removed
               properties:
                 owner:
                   description: The user's email address, lower case, as on their sessions (browserjs.dev/owner-id).
@@ -76,162 +78,378 @@ spec:
                   description: sessions.OwnerLabel(owner), the value of the label browserjs.dev/owner on the user's sessions.
                   type: string
                   pattern: "^[0-9a-f]{32}$"
-                stripeCustomerId:
-                  description: The Stripe Customer, made the first time the user is sent to Stripe. Absent until then.
-                  type: string
-                  pattern: "^cus_[A-Za-z0-9]+$"
-                paymentMethod:
+                stripe:
                   description: >-
-                    What the backend last read from Stripe about the customer's
-                    saved payment methods. Always written from a fresh list of
-                    them, never from an event's payload. Absent, or present
-                    false: the account has no card and can create and wake
-                    nothing (enforcement.md).
+                    What the backend knows from Stripe, kept apart for each of Stripe's
+                    modes. The backend reads and writes only the mode STRIPE_MODE names
+                    (test while it is unset); the other is left as it is. So switching
+                    from test to live clears nothing: the account has nothing in live
+                    yet and goes through the gate again, and switching back finds test
+                    as it was.
                   type: object
-                  required: ["present", "readAt"]
+                  x-kubernetes-validations:
+                    - rule: "!has(oldSelf.test) || has(self.test)"
+                      message: a mode's state cannot be removed
+                    - rule: "!has(oldSelf.live) || has(self.live)"
+                      message: a mode's state cannot be removed
                   properties:
-                    present:
-                      description: At least one payment method is attached to the customer.
-                      type: boolean
-                    ids:
-                      description: The attached PaymentMethod IDs. A payment_method.detached event names no customer; this list is how its account is found.
-                      type: array
-                      maxItems: 20
-                      x-kubernetes-list-type: set
-                      items:
-                        type: string
-                        pattern: "^pm_[A-Za-z0-9]+$"
-                    default:
-                      type: string
-                    readAt:
-                      type: string
-                      format: date-time
-                    removedAt:
-                      description: When present last became false after having been true. Cleared when a card is back.
-                      type: string
-                      format: date-time
-                signupCredit:
-                  description: The outcome of the one-time sign-up credit, written when the first card is saved and never again.
-                  type: object
-                  required: ["state", "at"]
-                  properties:
-                    state:
-                      type: string
-                      enum: ["granted", "refused"]
-                    reason:
-                      description: "For refused: card-used (this card already earned a credit on some account), prepaid, wallet, no-fingerprint."
-                      type: string
-                      enum: ["card-used", "prepaid", "wallet", "no-fingerprint"]
-                    at:
-                      type: string
-                      format: date-time
-                subscription:
-                  description: >-
-                    What the backend last read from Stripe about the user's one
-                    subscription. Absent for a user who never subscribed. Always
-                    written from a fresh read of the Subscription.
-                  type: object
-                  required: ["id", "status", "priceLookupKey"]
-                  properties:
-                    id:
-                      type: string
-                      pattern: "^sub_[A-Za-z0-9]+$"
-                    status:
-                      type: string
-                      enum: ["incomplete", "incomplete_expired", "trialing", "active", "past_due", "canceled", "unpaid", "paused"]
-                    priceLookupKey:
-                      description: The lookup_key of the subscription's one price (catalogue.yaml).
-                      type: string
-                    currentPeriodStart:
-                      type: string
-                      format: date-time
-                    currentPeriodEnd:
-                      type: string
-                      format: date-time
-                    cancelAt:
-                      description: When the subscription ends, if the user cancelled. Absent otherwise.
-                      type: string
-                      format: date-time
-                    readAt:
-                      type: string
-                      format: date-time
-                autoRecharge:
-                  description: The user's automatic top-up (stripe.md, "Auto-recharge"). Absent or enabled false, nothing is ever charged without the user at a checkout.
-                  type: object
-                  required: ["enabled"]
-                  properties:
-                    enabled:
-                      type: boolean
-                    thresholdMicros:
-                      type: integer
-                      format: int64
-                      minimum: 0
-                    pack:
-                      description: The key of a pack in catalogue.yaml.
-                      type: string
-                    monthlyCapCents:
-                      type: integer
-                      format: int64
-                      minimum: 0
-                    agreedAt:
-                      description: When the user agreed to off-session charges, with the text shown (ui-states.md).
-                      type: string
-                      format: date-time
-                    month:
-                      description: The calendar month (yyyy-mm, UTC) that seq and chargedCents count.
-                      type: string
-                    seq:
-                      description: Automatic charges attempted in that month.
-                      type: integer
-                    chargedCents:
-                      type: integer
-                      format: int64
-                    last:
+                    test:
+                      description: Stripe test mode (the sandbox).
                       type: object
+                      x-kubernetes-validations:
+                        - rule: "!has(oldSelf.customerId) || (has(self.customerId) && self.customerId == oldSelf.customerId)"
+                          message: customerId cannot be changed once set
+                        - rule: "!has(oldSelf.signupCredit) || (has(self.signupCredit) && self.signupCredit == oldSelf.signupCredit)"
+                          message: the sign-up credit is decided once
                       properties:
-                        paymentIntent:
+                        customerId:
+                          description: The Stripe Customer, made the first time the user is sent to Stripe. Absent until then.
                           type: string
-                        status:
+                          pattern: "^cus_[A-Za-z0-9]+$"
+                        paymentMethod:
+                          description: >-
+                            What the backend last read from Stripe about the customer's
+                            saved payment methods. Always written from a fresh list of
+                            them, never from an event's payload. Absent, or present
+                            false: the account has no card and can create and wake
+                            nothing (enforcement.md).
+                          type: object
+                          required: ["present", "readAt"]
+                          properties:
+                            present:
+                              description: At least one payment method is attached to the customer.
+                              type: boolean
+                            ids:
+                              description: The attached PaymentMethod IDs. A payment_method.detached event names no customer; this list is how its account is found.
+                              type: array
+                              maxItems: 20
+                              x-kubernetes-list-type: set
+                              items:
+                                type: string
+                                pattern: "^pm_[A-Za-z0-9]+$"
+                            default:
+                              type: string
+                            readAt:
+                              type: string
+                              format: date-time
+                            removedAt:
+                              description: When present last became false after having been true. Cleared when a card is back.
+                              type: string
+                              format: date-time
+                        signupCredit:
+                          description: The outcome of the one-time sign-up credit, written when the first card is saved and never again.
+                          type: object
+                          required: ["state", "at"]
+                          properties:
+                            state:
+                              type: string
+                              enum: ["granted", "refused"]
+                            reason:
+                              description: "For refused: card-used (this card already earned a credit on some account), prepaid, wallet, no-fingerprint."
+                              type: string
+                              enum: ["card-used", "prepaid", "wallet", "no-fingerprint"]
+                            at:
+                              type: string
+                              format: date-time
+                        subscription:
+                          description: >-
+                            What the backend last read from Stripe about the user's one
+                            subscription. Absent for a user who never subscribed. Always
+                            written from a fresh read of the Subscription.
+                          type: object
+                          required: ["id", "status", "priceLookupKey"]
+                          properties:
+                            id:
+                              type: string
+                              pattern: "^sub_[A-Za-z0-9]+$"
+                            status:
+                              type: string
+                              enum: ["incomplete", "incomplete_expired", "trialing", "active", "past_due", "canceled", "unpaid", "paused"]
+                            priceLookupKey:
+                              description: The lookup_key of the subscription's one price (catalogue.yaml).
+                              type: string
+                            currentPeriodStart:
+                              type: string
+                              format: date-time
+                            currentPeriodEnd:
+                              type: string
+                              format: date-time
+                            cancelAt:
+                              description: When the subscription ends, if the user cancelled. Absent otherwise.
+                              type: string
+                              format: date-time
+                            readAt:
+                              type: string
+                              format: date-time
+                        autoRecharge:
+                          description: The user's automatic top-up (stripe.md, "Auto-recharge"). Absent or enabled false, nothing is ever charged without the user at a checkout.
+                          type: object
+                          required: ["enabled"]
+                          properties:
+                            enabled:
+                              type: boolean
+                            thresholdMicros:
+                              type: integer
+                              format: int64
+                              minimum: 0
+                            pack:
+                              description: The key of a pack in catalogue.yaml.
+                              type: string
+                            monthlyCapCents:
+                              type: integer
+                              format: int64
+                              minimum: 0
+                            agreedAt:
+                              description: When the user agreed to off-session charges, with the text shown (ui-states.md).
+                              type: string
+                              format: date-time
+                            month:
+                              description: The calendar month (yyyy-mm, UTC) that seq and chargedCents count.
+                              type: string
+                            seq:
+                              description: Automatic charges attempted in that month.
+                              type: integer
+                            chargedCents:
+                              type: integer
+                              format: int64
+                            last:
+                              type: object
+                              properties:
+                                paymentIntent:
+                                  type: string
+                                status:
+                                  type: string
+                                  enum: ["pending", "succeeded", "failed"]
+                                at:
+                                  type: string
+                                  format: date-time
+                            disabledReason:
+                              description: Set with enabled false when the backend turned it off.
+                              type: string
+                              enum: ["payment-failed", "authentication-required", "no-card", "cap-reached"]
+                    live:
+                      description: Stripe live mode.
+                      type: object
+                      x-kubernetes-validations:
+                        - rule: "!has(oldSelf.customerId) || (has(self.customerId) && self.customerId == oldSelf.customerId)"
+                          message: customerId cannot be changed once set
+                        - rule: "!has(oldSelf.signupCredit) || (has(self.signupCredit) && self.signupCredit == oldSelf.signupCredit)"
+                          message: the sign-up credit is decided once
+                      properties:
+                        customerId:
+                          description: The Stripe Customer, made the first time the user is sent to Stripe. Absent until then.
                           type: string
-                          enum: ["pending", "succeeded", "failed"]
-                        at:
-                          type: string
-                          format: date-time
-                    disabledReason:
-                      description: Set with enabled false when the backend turned it off.
-                      type: string
-                      enum: ["payment-failed", "authentication-required", "no-card", "cap-reached"]
-                metronomeCustomerId:
-                  description: The Metronome customer, made with the Account (metronome.md). Its ingest alias is the Account's name.
-                  type: string
-                  maxLength: 64
-                credit:
+                          pattern: "^cus_[A-Za-z0-9]+$"
+                        paymentMethod:
+                          description: >-
+                            What the backend last read from Stripe about the customer's
+                            saved payment methods. Always written from a fresh list of
+                            them, never from an event's payload. Absent, or present
+                            false: the account has no card and can create and wake
+                            nothing (enforcement.md).
+                          type: object
+                          required: ["present", "readAt"]
+                          properties:
+                            present:
+                              description: At least one payment method is attached to the customer.
+                              type: boolean
+                            ids:
+                              description: The attached PaymentMethod IDs. A payment_method.detached event names no customer; this list is how its account is found.
+                              type: array
+                              maxItems: 20
+                              x-kubernetes-list-type: set
+                              items:
+                                type: string
+                                pattern: "^pm_[A-Za-z0-9]+$"
+                            default:
+                              type: string
+                            readAt:
+                              type: string
+                              format: date-time
+                            removedAt:
+                              description: When present last became false after having been true. Cleared when a card is back.
+                              type: string
+                              format: date-time
+                        signupCredit:
+                          description: The outcome of the one-time sign-up credit, written when the first card is saved and never again.
+                          type: object
+                          required: ["state", "at"]
+                          properties:
+                            state:
+                              type: string
+                              enum: ["granted", "refused"]
+                            reason:
+                              description: "For refused: card-used (this card already earned a credit on some account), prepaid, wallet, no-fingerprint."
+                              type: string
+                              enum: ["card-used", "prepaid", "wallet", "no-fingerprint"]
+                            at:
+                              type: string
+                              format: date-time
+                        subscription:
+                          description: >-
+                            What the backend last read from Stripe about the user's one
+                            subscription. Absent for a user who never subscribed. Always
+                            written from a fresh read of the Subscription.
+                          type: object
+                          required: ["id", "status", "priceLookupKey"]
+                          properties:
+                            id:
+                              type: string
+                              pattern: "^sub_[A-Za-z0-9]+$"
+                            status:
+                              type: string
+                              enum: ["incomplete", "incomplete_expired", "trialing", "active", "past_due", "canceled", "unpaid", "paused"]
+                            priceLookupKey:
+                              description: The lookup_key of the subscription's one price (catalogue.yaml).
+                              type: string
+                            currentPeriodStart:
+                              type: string
+                              format: date-time
+                            currentPeriodEnd:
+                              type: string
+                              format: date-time
+                            cancelAt:
+                              description: When the subscription ends, if the user cancelled. Absent otherwise.
+                              type: string
+                              format: date-time
+                            readAt:
+                              type: string
+                              format: date-time
+                        autoRecharge:
+                          description: The user's automatic top-up (stripe.md, "Auto-recharge"). Absent or enabled false, nothing is ever charged without the user at a checkout.
+                          type: object
+                          required: ["enabled"]
+                          properties:
+                            enabled:
+                              type: boolean
+                            thresholdMicros:
+                              type: integer
+                              format: int64
+                              minimum: 0
+                            pack:
+                              description: The key of a pack in catalogue.yaml.
+                              type: string
+                            monthlyCapCents:
+                              type: integer
+                              format: int64
+                              minimum: 0
+                            agreedAt:
+                              description: When the user agreed to off-session charges, with the text shown (ui-states.md).
+                              type: string
+                              format: date-time
+                            month:
+                              description: The calendar month (yyyy-mm, UTC) that seq and chargedCents count.
+                              type: string
+                            seq:
+                              description: Automatic charges attempted in that month.
+                              type: integer
+                            chargedCents:
+                              type: integer
+                              format: int64
+                            last:
+                              type: object
+                              properties:
+                                paymentIntent:
+                                  type: string
+                                status:
+                                  type: string
+                                  enum: ["pending", "succeeded", "failed"]
+                                at:
+                                  type: string
+                                  format: date-time
+                            disabledReason:
+                              description: Set with enabled false when the backend turned it off.
+                              type: string
+                              enum: ["payment-failed", "authentication-required", "no-card", "cap-reached"]
+                metronome:
                   description: >-
-                    Whether the account has credit left, as last read from
-                    Metronome by ensureCredit (metronome.md). The decision at
-                    create, resume and wake reads this, never Metronome.
+                    The account in Metronome, kept apart for each of Metronome's
+                    environments. sandbox goes with Stripe's test mode and production
+                    with live; the backend reads and writes only the one that goes with
+                    STRIPE_MODE.
                   type: object
-                  required: ["exhausted"]
+                  x-kubernetes-validations:
+                    - rule: "!has(oldSelf.sandbox) || has(self.sandbox)"
+                      message: an environment's state cannot be removed
+                    - rule: "!has(oldSelf.production) || has(self.production)"
+                      message: an environment's state cannot be removed
                   properties:
-                    exhausted:
-                      description: No credit left. True from creation until the first grant.
-                      type: boolean
-                    exhaustedAt:
-                      description: When exhausted became true; absent while it is false. The stop sequence and the deletion of disks at zero count from it.
-                      type: string
-                      format: date-time
-                    balanceMicros:
-                      description: The balance as of checkedAt, for display when Metronome cannot be reached.
-                      type: integer
-                      format: int64
-                      minimum: 0
-                    nextExpiryAt:
-                      description: The earliest end of a credit that still has a balance. Past, the balance pass reads Metronome again.
-                      type: string
-                      format: date-time
-                    checkedAt:
-                      type: string
-                      format: date-time
+                    sandbox:
+                      description: Metronome's sandbox.
+                      type: object
+                      x-kubernetes-validations:
+                        - rule: "!has(oldSelf.customerId) || (has(self.customerId) && self.customerId == oldSelf.customerId)"
+                          message: customerId cannot be changed once set
+                      properties:
+                        customerId:
+                          description: The Metronome customer, made with the Account (metronome.md). Its ingest alias is the Account's name.
+                          type: string
+                          maxLength: 64
+                        credit:
+                          description: >-
+                            Whether the account has credit left, as last read from
+                            Metronome by ensureCredit (metronome.md). The decision at
+                            create, resume and wake reads this, never Metronome.
+                          type: object
+                          required: ["exhausted"]
+                          properties:
+                            exhausted:
+                              description: No credit left. True from creation until the first grant.
+                              type: boolean
+                            exhaustedAt:
+                              description: When exhausted became true; absent while it is false. The stop sequence and the deletion of disks at zero count from it.
+                              type: string
+                              format: date-time
+                            balanceMicros:
+                              description: The balance as of checkedAt, for display when Metronome cannot be reached.
+                              type: integer
+                              format: int64
+                              minimum: 0
+                            nextExpiryAt:
+                              description: The earliest end of a credit that still has a balance. Past, the balance pass reads Metronome again.
+                              type: string
+                              format: date-time
+                            checkedAt:
+                              type: string
+                              format: date-time
+                    production:
+                      description: Metronome's production environment.
+                      type: object
+                      x-kubernetes-validations:
+                        - rule: "!has(oldSelf.customerId) || (has(self.customerId) && self.customerId == oldSelf.customerId)"
+                          message: customerId cannot be changed once set
+                      properties:
+                        customerId:
+                          description: The Metronome customer, made with the Account (metronome.md). Its ingest alias is the Account's name.
+                          type: string
+                          maxLength: 64
+                        credit:
+                          description: >-
+                            Whether the account has credit left, as last read from
+                            Metronome by ensureCredit (metronome.md). The decision at
+                            create, resume and wake reads this, never Metronome.
+                          type: object
+                          required: ["exhausted"]
+                          properties:
+                            exhausted:
+                              description: No credit left. True from creation until the first grant.
+                              type: boolean
+                            exhaustedAt:
+                              description: When exhausted became true; absent while it is false. The stop sequence and the deletion of disks at zero count from it.
+                              type: string
+                              format: date-time
+                            balanceMicros:
+                              description: The balance as of checkedAt, for display when Metronome cannot be reached.
+                              type: integer
+                              format: int64
+                              minimum: 0
+                            nextExpiryAt:
+                              description: The earliest end of a credit that still has a balance. Past, the balance pass reads Metronome again.
+                              type: string
+                              format: date-time
+                            checkedAt:
+                              type: string
+                              format: date-time
                 exempt:
                   description: Metered, never refused, never stopped, needs no card. For admins and guests of the house; set by hand or from BILLING_EXEMPT_EMAILS.
                   type: boolean
@@ -257,6 +475,6 @@ spec:
                   type: string
                   maxLength: 32
                 deletedAt:
-                  description: The user deleted their account. Only owner, ownerHash, signupCredit and this are kept.
+                  description: The user deleted their account. Only owner, ownerHash, each mode's customerId and signupCredit, and this are kept.
                   type: string
                   format: date-time
