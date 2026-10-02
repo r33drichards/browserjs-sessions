@@ -1,21 +1,25 @@
 #!/usr/bin/env bash
 # mcp-v8 exits at startup when an upstream MCP server is unreachable, and in a
-# session pod the browser container starts alongside this one. Wait for the
-# browser MCP to accept connections, then start mcp-v8.
+# session pod the browser container, which runs both of them (the browser MCP
+# and mcp-exec, mcp-servers.json), starts alongside this one. Wait for each to
+# accept connections, then start mcp-v8.
 set -euo pipefail
 
 # As PID 1 bash ignores TERM unless it is trapped; without this a pod
 # shutdown during the wait hangs until the kill timeout.
 trap 'exit 143' TERM INT
-addr="${BROWSER_MCP_ADDR:-127.0.0.1:8081}"
-for _ in $(seq 1 "${BROWSER_MCP_WAIT_SECONDS:-120}"); do
-  if (exec 3<>"/dev/tcp/${addr%:*}/${addr##*:}") 2>/dev/null; then
-    break
-  fi
-  sleep 1
+up() {
+  (exec 3<>"/dev/tcp/${1%:*}/${1##*:}") 2>/dev/null
+}
+# The seconds are shared: the second server is waited for with what is left.
+waited=0
+for addr in "${BROWSER_MCP_ADDR:-127.0.0.1:8081}" "${EXEC_MCP_ADDR:-127.0.0.1:8082}"; do
+  until up "$addr" || [ "$waited" -ge "${BROWSER_MCP_WAIT_SECONDS:-120}" ]; do
+    sleep 1
+    waited=$((waited + 1))
+  done
+  up "$addr" || echo "MCP server at $addr did not come up; starting mcp-v8 anyway" >&2
 done
-(exec 3<>"/dev/tcp/${addr%:*}/${addr##*:}") 2>/dev/null ||
-  echo "browser MCP at $addr did not come up; starting mcp-v8 anyway" >&2
 
 # mcp-v8 has no TERM handler, and a process that is PID 1 is not stopped by a
 # signal it does not handle: exec'd, it sat out every pod shutdown until the

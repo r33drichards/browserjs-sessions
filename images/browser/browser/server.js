@@ -22,7 +22,6 @@ import { createClipboard } from './clipboard.js';
 import { createFiles, setDownloadDir } from './files.js';
 import { mcpCallerRefusal } from './callers.js';
 import { DESKTOP_TOOL, createDesktop } from './desktop.js';
-import { SHELL_PROCESS_TOOL, SHELL_TOOL, createShell } from './shell.js';
 
 // `browser-mcp download-dir <profile> <folder>`: what the entrypoint runs
 // before each start of Chromium, instead of the server.
@@ -46,9 +45,6 @@ const files = process.env.FILES_DIR
 
 // The desktop_execute tool: nut.js on the X display, in a child process.
 const desktop = createDesktop();
-
-// The shell_execute and shell_process tools: commands on the desktop.
-const shell = createShell();
 
 const MAX_WAIT_MS = 30000;
 const NAV_TIMEOUT_MS = 45000;
@@ -339,8 +335,6 @@ const TOOLS = [
     },
   },
   DESKTOP_TOOL,
-  SHELL_TOOL,
-  SHELL_PROCESS_TOOL,
 ];
 
 function text(t, isError = false) {
@@ -349,8 +343,6 @@ function text(t, isError = false) {
 
 async function callTool(name, args = {}) {
   if (name === DESKTOP_TOOL.name) return desktop(args);
-  if (name === SHELL_TOOL.name) return shell.execute(args);
-  if (name === SHELL_PROCESS_TOOL.name) return shell.process(args);
   if (name !== 'browser_execute') return text(`Unknown tool: ${name}`, true);
   if (!Array.isArray(args.operations)) return text('Error: operations array is required', true);
 

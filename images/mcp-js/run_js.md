@@ -85,7 +85,7 @@ All operations return Promises and are subject to Rego policy evaluation. Policy
 - **No `fetch` or network access by default**: When the server is started with fetch policies configured via `--policies-json`, a `fetch(url, opts?)` function becomes available. `fetch()` follows the web standard Fetch API — it returns a Promise that resolves to a Response object. Use `await` to get the response: `const resp = await fetch(url)`. The response object has `.ok`, `.status`, `.statusText`, `.url`, `.headers.get(name)`, `.text()`, and `.json()` methods (`.text()` and `.json()` also return Promises). Each request is checked against policy before execution. If the server is also configured with `--fetch-header` or `--fetch-header-config`, matching requests may receive static headers or dynamically acquired OAuth client-credentials bearer tokens before policy evaluation. Headers set directly in JavaScript still win. Without fetch policies, there is no network access.
 - **No file system access by default**: Filesystem access requires server configuration with policies. See "Filesystem Access" above.
 - **No environment variables**: The runtime does not provide access to environment variables.
-- **No timers**: Functions like `setTimeout` and `setInterval` are not available.
+- **Timers**: `setTimeout`, `clearTimeout`, `setInterval` and `clearInterval` are available.
 - **No DOM or browser APIs**: This is not a browser environment; there is no access to `window`, `document`, or other browser-specific objects.
 
 Each execution starts with a fresh V8 isolate — no state is carried between calls.
@@ -262,102 +262,94 @@ prompts, extension popups), native dialogs such as the file chooser, pages
 that only react to real input, and other windows. The person watching sees
 the pointer move and can use the mouse and keyboard at the same time.
 
-### Shell — `mcp.callTool("browser", "shell_execute", …)`
+### Shell (mcp-exec) — `mcp.callTool("exec", "exec", …)`
 
-Commands run on the desktop Chromium runs on, as the desktop's user: the same
-home directory, files and `PATH` as a terminal there, and `DISPLAY` is set, so
-a command can open a window the person watching sees. (`child_process` is not
-available in `run_js`; this is the way to run a program.) Give exactly one of
-`argv` and `script`:
+Shell commands run on the desktop Chromium runs on, as the desktop's user: the
+same home directory, files and `PATH` as a terminal there, and `DISPLAY` is
+set, so a command can open a window the person watching sees.
+(`child_process` is not available in `run_js`; this is the way to run a
+program.) The server is [mcp-exec](https://github.com/r33drichards/mcp-exec),
+and it is asynchronous: `exec` starts the command and returns an id at once,
+`stream_logs` returns its output and status, `search_logs` greps its output.
 
 ```js
-// argv: the program and its arguments, run directly. No shell reads them, so
-// nothing needs quoting and nothing is expanded.
-const r = await mcp.callTool("browser", "shell_execute", {
-  argv: ["git", "clone", "--depth", "1", "https://github.com/octocat/Hello-World", "hello"],
-  timeout_ms: 120000,
-});
-const out = JSON.parse(r.content[0].text);
-// { exit_code: 0, signal: null, stdout: "", stderr: "Cloning into 'hello'...\n",
-//   truncated: false, duration_ms: 812, timed_out: false }
-if (out.exit_code !== 0) throw new Error(out.stderr);
+// Run a command and wait for it: exec, then stream_logs until it has ended.
+async function sh(cmd, timeout = 60) {
+  const call = async (tool, args) => JSON.parse((await mcp.callTool("exec", tool, args)).content[0].text);
+  const { id } = await call("exec", { cmd, timeout }); // { id: "<uuid>", status: "started" }
+  let logs = "", offset = 0;
+  for (;;) {
+    const r = await call("stream_logs", { id, offset }); // { logs, next_offset, status }
+    logs += r.logs;
+    offset = r.next_offset;
+    if (r.status !== "running") return { id, logs, status: r.status };
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+}
+const r = await sh("git clone --depth 1 https://github.com/octocat/Hello-World hello && ls hello");
+if (r.status !== "completed:0") throw new Error(`${r.status}\n${r.logs}`);
+console.log(r.logs);
 ```
 
 ```js
-// script: bash source (`bash -lc`), for pipes, redirection, globs and loops.
-const r = await mcp.callTool("browser", "shell_execute", {
-  script: "ls -1 *.csv | wc -l",
-  cwd: "/tmp",
-});
-console.log(JSON.parse(r.content[0].text).stdout);
+// A long command: start it in one run_js call, keep the id, look at it later.
+const start = await mcp.callTool("exec", "exec", { cmd: "cd ~/app && npm ci && npm test", timeout: 1800 });
+const { id } = JSON.parse(start.content[0].text);
+await fs.writeFile("/data/memory/last-build-id.txt", id);
+// ...in a later run_js call: the output from byte `offset` on, and the status.
+const r = JSON.parse((await mcp.callTool("exec", "stream_logs", { id, offset: 0 })).content[0].text);
+console.log(r.status, r.next_offset); // "running", then "completed:<exit code>"
 ```
 
 ```js
-// A long-running command: start it in the background, then poll and kill it.
-const start = await mcp.callTool("browser", "shell_execute", {
-  argv: ["python3", "-m", "http.server", "8000"],
-  background: true,
-});
-const { id } = JSON.parse(start.content[0].text); // { id: "p1", pid, started_at }
-// Later, in this or another run_js call: what it wrote since the last poll.
-const poll = await mcp.callTool("browser", "shell_process", { action: "poll", id, wait_ms: 1000 });
-console.log(poll.content[0].text); // { id, running: true, exit_code: null, stdout, stderr, ... }
-await mcp.callTool("browser", "shell_process", { action: "kill", id });
+// Find lines in a long log without reading all of it.
+const found = await mcp.callTool("exec", "search_logs", { id, pattern: "(?i)error|failed" });
+console.log(JSON.parse(found.content[0].text).matches); // [{ line, offset }]
 ```
 
-Arguments of `shell_execute`:
+The three tools (every argument is required):
 
-- `argv: ["program", "arg", ...]` or `script: "..."`, never both.
-- `cwd`: the working directory. An absolute path written exactly as the
-  directory is (no `..`, no trailing `/`, no symbolic link in it), inside the
-  home directory, `/data` or `/tmp`. Default: the home directory.
-- `env: { NAME: "value" }`: added to the environment. `PATH`, `LD_*`,
-  `BASH_ENV`, `ENV`, `BASH_FUNC_*`, `SHELLOPTS`, `BASHOPTS`, `PS4` and
-  `NODE_OPTIONS` are refused.
-- `stdin`: a string written to the command's input (up to 1 MiB). Without it
-  the input is empty.
-- `timeout_ms`: default 30000, at most 600000. Then the command and everything
-  it started are sent SIGTERM, and SIGKILL two seconds later; the result has
-  `timed_out: true`. Keep it under the `run_js` timeout (30 s unless you raise
-  `execution_timeout_secs`), or use `background`.
-- `max_output_bytes`: how much of stdout, and of stderr, is kept (default
-  1048576, at most 4194304). The rest is dropped and `truncated` is `true`.
-- `background: true`: return `{ id, pid, started_at }` at once. No timeout
-  unless `timeout_ms` is given (at most 86400000).
-
-`shell_process` follows background commands: `{ action: "list" }`,
-`{ action: "poll", id, wait_ms? }` (wait up to 30000 ms for it to exit) and
-`{ action: "kill", id, signal? }` (`SIGTERM` by default, or `SIGKILL`,
-`SIGINT`, `SIGHUP`; sent to the command and everything it started). `poll`
-and `kill` return the result shape below plus `id` and `running`, with the
-output written since the previous poll; once one has reported
-`running: false` the id is forgotten.
+- `exec { cmd, timeout }`: runs `sh -c <cmd>` and returns
+  `{ id, status: "started" }`. `cmd` is one shell command line: pipes,
+  redirection, `&&`, `cd`, `VAR=value program` all work. `timeout` is in
+  **seconds**. There is no working-directory or environment argument: a command
+  starts in the home directory with the desktop's environment, so write
+  `cd dir && …` and `VAR=value …` in `cmd`.
+- `stream_logs { id, offset }`: returns `{ logs, next_offset, status }`: the
+  output from byte `offset` to the end, and where to continue. `status` is
+  `"running"`, `"completed:<exit code>"`, `"timeout"`, `"failed:<reason>"` or
+  `"cancelled"`; `"error"` means the id is not known (the reason is in `logs`).
+- `search_logs { id, pattern }`: returns `{ matches: [{ line, offset }] }` for a
+  regular expression (Rust syntax; `(?i)` for case-insensitive).
 
 How it behaves:
 
-- **Result.** `r.content[0].text` is JSON: `{ exit_code, signal, stdout,
-  stderr, truncated, duration_ms, timed_out }`. `exit_code` is `null` when a
-  signal ended the command (`signal` then names it). A non-zero exit code is a
-  result, not an error: check it. `stdout` and `stderr` are text; a stream
-  that is not valid UTF-8 comes back base64 encoded, with `stdout_encoding`
-  or `stderr_encoding` set to `"base64"`. Nothing reaches the model unless you
-  print it: log the part you need, not megabytes of output.
-- **Failures.** The arguments are checked before anything runs. A refused
-  argument, a program that does not exist, or a policy that denies the call
-  makes `mcp.callTool` throw.
-- **No terminal.** Commands have no TTY: programs that prompt or draw a
-  screen (`vim`, `top`, `sudo`, `ssh` asking for a password) will not work.
-  Pass flags that make them non-interactive, or give the answer in `stdin`.
-- **What a command leaves behind.** When a foreground command exits, anything
-  it started that is still running (`cmd &`) is ended with it. For something
-  that must keep running (a server, a GUI application), use
-  `background: true`. At most 16 commands run at a time.
+- **Output.** stdout and stderr go to one log, line by line, in the order they
+  arrive. It must be text: at the first line that is not valid UTF-8 the rest
+  of that stream is lost, so pipe binary output through `base64` or into a
+  file. Nothing reaches the model unless you print it: read with offsets and
+  `search_logs`, and log the part you need.
+- **Exit code.** A command that fails is not an error of the call: check that
+  `status` is `"completed:0"`.
+- **Timeout.** After `timeout` seconds the shell is killed and the status
+  becomes `"timeout"`, but programs the shell had started keep running until
+  they end by themselves, and the status stays `"running"` until they do.
+  Prefix a single long-running program with `exec` (`exec sleep 600`) so that
+  it is the process that gets killed. There is no tool to stop a command: to
+  end one early, run `pkill -f <pattern>` as another command.
+- **No terminal, no input.** Commands have no TTY and no stdin you can write
+  to: programs that prompt will not work. Pass flags that make them
+  non-interactive.
+- **Polling.** Each call is quick; a `run_js` call itself is limited (30 s
+  unless you raise `execution_timeout_secs`), so for anything long keep the
+  id and come back, as in the second example.
+- **Logs are kept** on the session's disk for 7 days and survive the session
+  sleeping, so an id stays readable. Commands do not survive it: one that was
+  running then reads `"failed:interrupted: …"` afterwards.
 - **Limits.** Commands run as an unprivileged user with nothing to gain
   privileges with (no `sudo`, no package installation into the system), and
   reach the network the browser reaches.
 
-**Prefer `argv`.** It runs exactly the program and arguments you wrote, with
-no quoting to get wrong. It is also what a session's policy can read: a
-policy may allow only certain programs, hosts or directories, or deny the
-`script` form outright. When a call is denied by policy, do not look for
-another way to run the same thing; say what was refused.
+A session's policy may allow only certain commands, by matching the `cmd`
+string, or none. When a call is denied by policy, `mcp.callTool` throws; do
+not look for another way to run the same thing, say what was refused.

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://computeruse.site/contracts/policy/tools/stream_logs.schema.json",
+  "title": "stream_logs arguments (server \"exec\", tool \"stream_logs\")",
+  "description": "The arguments of mcp-exec's stream_logs tool (StreamLogsRequest): the output of a command that exec started, from a byte offset, and its status. It starts nothing.",
+  "type": "object",
+  "required": ["id", "offset"],
+  "properties": {
+    "id": { "type": "string", "description": "The execution's UUID, as exec returned it." },
+    "offset": { "type": "integer", "minimum": 0, "description": "Byte offset to read from; next_offset of the previous answer, or 0." }
+  }
+}

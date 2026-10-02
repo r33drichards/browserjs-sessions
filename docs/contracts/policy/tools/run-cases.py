@@ -2,7 +2,10 @@
 # the way the cluster does (rego-contract.md): the operator's tenant checks
 # (package, imports, no `data`, no `with`, the entry rule), `opa check` under
 # the capabilities file, the module rewritten into a tenant package, and each
-# case asked of the generated decision module.
+# case asked of the generated decision module. A case with `shell` is also
+# given to a real `sh`, which must split its command into exactly the words
+# listed: evidence that a command line a policy accepts as "one program with
+# plain arguments" is that to the shell too.
 #
 #   python3 docs/contracts/policy/tools/run-cases.py <opa> docs/contracts/policy
 import glob, json, os, subprocess, sys, tempfile
@@ -10,6 +13,16 @@ opa, d = sys.argv[1], sys.argv[2]
 sid = "s-ab2cd"; bad = 0; total = 0
 caps = os.path.join(d, "capabilities.json")
 tmpl = open(os.path.join(d, "decision-module.rego.tmpl")).read()
+
+def shell_words(command):
+    # `set -- <command>` makes the shell parse the text as the words of one
+    # simple command; anything it would expand, split or run differently
+    # shows up as different words (or as output before the marker).
+    with tempfile.TemporaryDirectory() as empty:
+        out = subprocess.run(["sh", "-c", "set -- " + command + "\nprintf 'WORDS'; printf '\\0%s' \"$@\""], cwd=empty, capture_output=True, timeout=10)
+    head, _, rest = out.stdout.partition(b"WORDS")
+    if out.returncode or head or out.stderr: return None
+    return [w.decode() for w in rest.split(b"\0")[1:]]
 
 def guard(path):
     ast = json.loads(subprocess.run([opa, "parse", "--format", "json", "--json-include", "locations", path], check=True, capture_output=True, text=True).stdout)
@@ -38,7 +51,7 @@ for cases in sorted(glob.glob(os.path.join(d, "tools", "examples", "*.cases.json
     errs = guard(src)
     assert not errs, (name, errs)
     subprocess.run([opa, "check", "--capabilities", caps, src], check=True)
-    n = 0; failed = 0
+    n = 0; failed = 0; shells = 0
     with tempfile.TemporaryDirectory() as t:
         open(t + "/tenant.rego", "w").write(rego.replace("package browserjs.policy\n", f'package browserjs.tenant["{sid}"]\n'))
         open(t + "/decision.rego", "w").write(tmpl.replace("{{SESSION_ID}}", sid))
@@ -49,6 +62,10 @@ for cases in sorted(glob.glob(os.path.join(d, "tools", "examples", "*.cases.json
             out = json.loads(subprocess.run([opa, "eval", "--capabilities", caps, "-d", t + "/tenant.rego", "-d", t + "/decision.rego", "-i", t + "/in.json", "-f", "json", f'data.browserjs.decision["{sid}"].mcp_tools'], check=True, capture_output=True, text=True).stdout)
             got = out["result"][0]["expressions"][0]["value"].get("allow")
             if got != c["allow"]: failed += 1; print(f"FAIL {name}: {c['name']}: want {c['allow']}, got {got}")
-    print(f"{name}: {n - failed}/{n} cases pass ({sum(1 for c in json.load(open(cases)) if c['allow'])} allow, {sum(1 for c in json.load(open(cases)) if not c['allow'])} deny)")
+            if "shell" in c:
+                shells += 1
+                words = shell_words(c["shell"]["command"])
+                if words != c["shell"]["argv"]: failed += 1; print(f"FAIL {name}: {c['name']}: sh splits it into {words}, not {c['shell']['argv']}")
+    print(f"{name}: {n - failed}/{n} cases pass ({sum(1 for c in json.load(open(cases)) if c['allow'])} allow, {sum(1 for c in json.load(open(cases)) if not c['allow'])} deny; {shells} checked against sh)")
     total += n; bad += failed
 print(f"{total - bad}/{total} cases pass"); sys.exit(1 if bad else 0)

@@ -2,9 +2,16 @@
   description = "Persistent, VNC-viewable Chromium exposed as MCP behind mcp-js";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  # Shell commands for run_js. Pinned to the commit of
+  # https://github.com/r33drichards/mcp-exec/pull/6 (--reject-browser-requests,
+  # which browser/exec-server.sh depends on); move to master once it is merged.
+  inputs.mcp-exec = {
+    url = "github:r33drichards/mcp-exec/38bb517fc037cd2d9a82ab3cd1e28b2d1d2be0ad";
+    flake = false;
+  };
 
   outputs =
-    { self, nixpkgs }:
+    { self, nixpkgs, mcp-exec }:
     let
       linuxSystems = [
         "x86_64-linux"
@@ -51,6 +58,9 @@
             '';
           };
 
+          # Built from its own package expression and Cargo.lock.
+          mcp-exec-pkg = pkgs.callPackage "${mcp-exec}/nix/package.nix" { };
+
           # Only the Xvnc server out of TigerVNC: the package also carries the
           # viewer and its toolkit, which the image has no use for.
           xvnc = pkgs.runCommand "xvnc-${pkgs.tigervnc.version}" { } ''
@@ -66,6 +76,9 @@
               pkgs.caddy
               pkgs.chromium
               pkgs.coreutils
+              # exec-server.sh: mcp-exec, and find to prune its old logs.
+              mcp-exec-pkg
+              pkgs.findutils
               pkgs.gnused
               pkgs.openbox
               pkgs.procps
@@ -81,6 +94,7 @@
               export NOVNC_WEB=${pkgs.novnc}/share/webapps/novnc
               export CADDYFILE=${./browser/Caddyfile}
               export OPENBOX_RC=${./browser/openbox-rc.xml}
+              export EXEC_SERVER=${./browser/exec-server.sh}
               export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
               export FONTCONFIG_FILE=${pkgs.makeFontsConf {
                 fontDirectories = [
@@ -128,16 +142,18 @@
                 touch $out
               '';
 
-          # The same for shell_execute and shell_process: the unit tests on
-          # the packaged shell.js, then the packaged server over HTTP, running
-          # commands and opening a window on the image's Xvnc and openbox
-          # (test/shell-smoke.mjs). The Dockerfile builds it before the image.
-          shell-smoke =
-            pkgs.runCommand "shell-smoke"
+          # The same for shell commands: mcp-exec as packaged, started by
+          # exec-server.sh as the entrypoint starts it, called over HTTP as
+          # mcp-js calls it (test/exec-smoke.mjs): a command end to end, a
+          # window opened on the image's Xvnc, and requests that look like a
+          # web page's refused. The Dockerfile builds it before the image.
+          exec-smoke =
+            pkgs.runCommand "exec-smoke"
               {
                 nativeBuildInputs = [
-                  browser-mcp
+                  mcp-exec-pkg
                   pkgs.bash
+                  pkgs.findutils
                   pkgs.nodejs_22
                   pkgs.openbox
                   pkgs.xdpyinfo
@@ -150,8 +166,6 @@
                 export HOME=$TMPDIR/home DISPLAY=:97
                 export FONTCONFIG_FILE=${pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; }}
                 mkdir -p "$HOME" /tmp/.X11-unix
-                SHELL_JS=${browser-mcp}/lib/node_modules/browser-mcp/shell.js \
-                  node --test ${./test/shell.test.mjs}
                 Xvnc :97 -geometry 1280x800 -depth 24 -nolisten tcp -ac \
                   -rfbport 5997 -localhost -UseIPv6=0 -SecurityTypes None &
                 trap 'kill $(jobs -p) 2>/dev/null || true' EXIT
@@ -161,12 +175,13 @@
                 done
                 xdpyinfo >/dev/null
                 openbox --sm-disable --config-file ${./browser/openbox-rc.xml} &
-                BROWSER_MCP=${browser-mcp}/bin/browser-mcp node ${./test/shell-smoke.mjs}
+                EXEC_SERVER=${./browser/exec-server.sh} node ${./test/exec-smoke.mjs}
                 touch $out
               '';
         in
         {
-          inherit browser-mcp runtime xvnc shell-smoke;
+          inherit browser-mcp runtime xvnc exec-smoke;
+          mcp-exec = mcp-exec-pkg;
           default = runtime;
         }
         // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isx86_64 { inherit desktop-smoke; }

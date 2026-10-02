@@ -1,0 +1,9 @@
+{
+  "operation": "mcp_call_tool",
+  "server": "exec",
+  "tool": "exec",
+  "arguments": {
+    "cmd": "cd /home/browser/work && git status",
+    "timeout": 60
+  }
+}
