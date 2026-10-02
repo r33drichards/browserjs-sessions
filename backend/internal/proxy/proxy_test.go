@@ -58,7 +58,8 @@ const uploadToken = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789a
 type env struct {
 	handler  http.Handler
 	id       string // alice's session
-	host     string // its host
+	host     string // the host it is asked at
+	base     string // what its paths start with there: "/<id>", or "" on a host of its own
 	calls    *[]upstreamCall
 	store    *sessions.Store
 	tracker  *idle.Tracker
@@ -89,9 +90,34 @@ func (e *env) clusterDown() {
 		})
 }
 
+// sessionsHost is where every session is; hostOf is the host a session used
+// to have to itself, which still answers.
+const sessionsHost = "sessions.example.com"
+
 func hostOf(id string) string { return id + ".sessions.example.com" }
 
-func newEnv(t *testing.T) *env {
+// newEnv is a deployment whose requests for sessions go to the sessions'
+// host, the session's ID first in the path.
+func newEnv(t *testing.T) *env { return newEnvAt(t, false) }
+
+// newLegacyEnv is the same deployment, asked at the sessions' old hosts.
+func newLegacyEnv(t *testing.T) *env { return newEnvAt(t, true) }
+
+// eachForm runs test against both.
+func eachForm(t *testing.T, test func(t *testing.T, e *env)) {
+	t.Run("path", func(t *testing.T) { test(t, newEnv(t)) })
+	t.Run("legacy host", func(t *testing.T) { test(t, newLegacyEnv(t)) })
+}
+
+// where is the host and path of path at session id.
+func (e *env) where(id, path string) (host, fullPath string) {
+	if e.base == "" {
+		return hostOf(id), path
+	}
+	return sessionsHost, "/" + id + path
+}
+
+func newEnvAt(t *testing.T, legacy bool) *env {
 	t.Helper()
 	ctx := t.Context()
 	store, client := sessionstest.New(t)
@@ -99,7 +125,10 @@ func newEnv(t *testing.T) *env {
 	sessionstest.SetStatus(t, client, s.ID, sessionstest.Ready("10.0.0.7"))
 
 	var calls []upstreamCall
-	e := &env{id: s.ID, host: hostOf(s.ID), calls: &calls, store: store, client: client}
+	e := &env{id: s.ID, host: sessionsHost, base: "/" + s.ID, calls: &calls, store: store, client: client}
+	if legacy {
+		e.host, e.base = hostOf(s.ID), ""
+	}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		e.mu.Lock()
@@ -127,11 +156,12 @@ func newEnv(t *testing.T) *env {
 	skew := &atomic.Int64{}
 	tracker := idle.New(15*time.Minute, func() time.Time { return time.Now().Add(time.Duration(skew.Load())) })
 	p := &Proxy{
-		Verifier: textVerifier{},
-		Authz:    authz.NewOwners(store, time.Minute),
-		Waker:    &Waker{Store: store, Timeout: time.Second, Poll: 5 * time.Millisecond},
-		Idle:     tracker,
-		URLs:     sessionstest.URLs(),
+		Verifier:   textVerifier{},
+		Authz:      authz.NewOwners(store, time.Minute),
+		Waker:      &Waker{Store: store, Timeout: time.Second, Poll: 5 * time.Millisecond},
+		Idle:       tracker,
+		URLs:       sessionstest.URLs(),
+		LegacyURLs: sessionstest.LegacyURLs(),
 		// Every pod port maps to the one test upstream.
 		Target: func(sessions.Session, int) string { return strings.TrimPrefix(upstream.URL, "http://") },
 	}
@@ -157,14 +187,15 @@ func request(method, host, path, user, body string) *http.Request {
 	return req
 }
 
-// doAt makes a request to the host of session id.
+// doAt makes a request for path at session id.
 func (e *env) doAt(id, method, path, user, body string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
-	e.handler.ServeHTTP(rec, request(method, hostOf(id), path, user, body))
+	host, path := e.where(id, path)
+	e.handler.ServeHTTP(rec, request(method, host, path, user, body))
 	return rec
 }
 
-// do makes a request to the host of alice's session.
+// do makes a request for path at alice's session.
 func (e *env) do(method, path, user, body string) *httptest.ResponseRecorder {
 	return e.doAt(e.id, method, path, user, body)
 }
@@ -179,7 +210,8 @@ func (e *env) app(method, path, user, body string) *httptest.ResponseRecorder {
 // doUpgrade is do for a websocket handshake. The recorder cannot be
 // hijacked, so it only suits handshakes the backend itself refuses.
 func (e *env) doUpgrade(id, path string) *httptest.ResponseRecorder {
-	req := request("GET", hostOf(id), path, "", "")
+	host, path := e.where(id, path)
+	req := request("GET", host, path, "", "")
 	req.Header.Set("Connection", "Upgrade")
 	req.Header.Set("Upgrade", "websocket")
 	rec := httptest.NewRecorder()
@@ -214,7 +246,7 @@ func (e *env) websocket(t *testing.T, path string) (*http.Response, net.Conn, *b
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
-	_, _ = io.WriteString(conn, "GET "+path+" HTTP/1.1\r\nHost: "+e.host+"\r\n"+
+	_, _ = io.WriteString(conn, "GET "+e.base+path+" HTTP/1.1\r\nHost: "+e.host+"\r\n"+
 		"Connection: Upgrade\r\nUpgrade: websocket\r\n\r\n")
 	br := bufio.NewReader(conn)
 	resp, err := http.ReadResponse(br, nil)
@@ -224,8 +256,9 @@ func (e *env) websocket(t *testing.T, path string) (*http.Response, net.Conn, *b
 	return resp, conn, br
 }
 
-func TestMCPProxy(t *testing.T) {
-	e := newEnv(t)
+func TestMCPProxy(t *testing.T) { eachForm(t, testMCPProxy) }
+
+func testMCPProxy(t *testing.T, e *env) {
 
 	rec := e.do("POST", "/mcp", alice, `{"jsonrpc":"2.0"}`)
 	if rec.Code != http.StatusOK || rec.Body.String() != "upstream-ok" {
@@ -263,9 +296,10 @@ func TestMCPProxy(t *testing.T) {
 
 // The pod is whatever its user's agent runs. It is not told who is calling,
 // and is handed nothing it could present to the backend as them.
-func TestCallerIdentityIsNotForwarded(t *testing.T) {
-	e := newEnv(t)
-	req := request("POST", e.host, "/mcp", alice, "{}")
+func TestCallerIdentityIsNotForwarded(t *testing.T) { eachForm(t, testCallerIdentityIsNotForwarded) }
+
+func testCallerIdentityIsNotForwarded(t *testing.T, e *env) {
+	req := request("POST", e.host, e.base+"/mcp", alice, "{}")
 	req.Header.Set("Authorization", "Bearer token")
 	req.Header.Set("Cookie", "_pomerium=abc")
 	req.Header.Set("X-Pomerium-Claim-Email", alice)
@@ -288,8 +322,9 @@ func TestCallerIdentityIsNotForwarded(t *testing.T) {
 
 // Whatever is wrong with a request to the MCP endpoint, the answer is not
 // 401: on Pomerium's MCP route an upstream 401 comes out as a 502.
-func TestMCPNeverAnswers401(t *testing.T) {
-	e := newEnv(t)
+func TestMCPNeverAnswers401(t *testing.T) { eachForm(t, testMCPNeverAnswers401) }
+
+func testMCPNeverAnswers401(t *testing.T, e *env) {
 	down := newEnv(t)
 	down.clusterDown()
 	stopped := newEnv(t)
@@ -320,7 +355,10 @@ func TestMCPNeverAnswers401(t *testing.T) {
 // A session's host has the session's routes and nothing else: not the rest
 // of the pod's API, and not the app.
 func TestSessionHostServesOnlyTheSession(t *testing.T) {
-	e := newEnv(t)
+	eachForm(t, testSessionHostServesOnlyTheSession)
+}
+
+func testSessionHostServesOnlyTheSession(t *testing.T, e *env) {
 	for _, c := range []struct{ method, path string }{
 		{"GET", "/"}, {"GET", "/index.html"}, {"GET", "/config.js"}, {"GET", "/healthz"},
 		{"GET", "/api/me"}, {"GET", "/api/sessions"}, {"POST", "/api/sessions"},
@@ -340,7 +378,7 @@ func TestSessionHostServesOnlyTheSession(t *testing.T) {
 		t.Errorf("%d of them reached the pod", n)
 	}
 	// And the app's hosts have none of the session's routes.
-	for _, host := range []string{appHost, "localhost:8080", "10.0.0.5:8080", "sessions.example.com", e.id + ".example.com"} {
+	for _, host := range []string{appHost, "localhost:8080", "10.0.0.5:8080", "x.app.example.com", e.id + ".example.com"} {
 		for _, c := range []struct{ method, path string }{
 			{"POST", "/mcp"}, {"PUT", "/api/artifact-uploads/" + uploadToken}, {"GET", "/vnc?ticket=x"},
 		} {
@@ -363,19 +401,20 @@ func TestSessionHostServesOnlyTheSession(t *testing.T) {
 	}
 }
 
-// The host names the session, however it is spelled.
-func TestSessionHostSpellings(t *testing.T) {
-	e := newEnv(t)
+// The host is the sessions' (or the session's), however it is spelled.
+func TestSessionHostSpellings(t *testing.T) { eachForm(t, testSessionHostSpellings) }
+
+func testSessionHostSpellings(t *testing.T, e *env) {
 	for _, host := range []string{e.host, strings.ToUpper(e.host), e.host + ":443", e.host + "."} {
 		rec := httptest.NewRecorder()
-		e.handler.ServeHTTP(rec, request("POST", host, "/mcp", alice, "{}"))
+		e.handler.ServeHTTP(rec, request("POST", host, e.base+"/mcp", alice, "{}"))
 		if rec.Code != http.StatusOK {
 			t.Errorf("POST /mcp at %q: %d, want 200", host, rec.Code)
 		}
 	}
 	// Another port is not the session's host; nor is it the app's.
 	rec := httptest.NewRecorder()
-	e.handler.ServeHTTP(rec, request("POST", e.host+":8443", "/mcp", alice, "{}"))
+	e.handler.ServeHTTP(rec, request("POST", e.host+":8443", e.base+"/mcp", alice, "{}"))
 	if rec.Code != http.StatusNotFound || strings.Contains(rec.Body.String(), "the app") {
 		t.Errorf("POST /mcp at another port: %d %q, want 404", rec.Code, rec.Body)
 	}
@@ -393,8 +432,9 @@ func TestStoppedSessionIsNotWoken(t *testing.T) {
 	}
 }
 
-func TestUploadNeedsNoLogin(t *testing.T) {
-	e := newEnv(t)
+func TestUploadNeedsNoLogin(t *testing.T) { eachForm(t, testUploadNeedsNoLogin) }
+
+func testUploadNeedsNoLogin(t *testing.T, e *env) {
 	rec := e.do("PUT", "/api/artifact-uploads/"+uploadToken, "", "file-bytes")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("upload: %d", rec.Code)
@@ -409,8 +449,9 @@ func TestUploadNeedsNoLogin(t *testing.T) {
 	}
 }
 
-func TestVNCTicket(t *testing.T) {
-	e := newEnv(t)
+func TestVNCTicket(t *testing.T) { eachForm(t, testVNCTicket) }
+
+func testVNCTicket(t *testing.T, e *env) {
 	ticketPath := "/api/sessions/" + e.id + "/vnc-ticket"
 
 	if rec := e.app("POST", ticketPath, bob, ""); rec.Code != http.StatusNotFound || strings.Contains(rec.Body.String(), "ticket") {
@@ -433,8 +474,8 @@ func TestVNCTicket(t *testing.T) {
 	}
 	var body ticketBody
 	_ = json.Unmarshal(rec.Body.Bytes(), &body)
-	// The URL is the session's own host: the screen is not on the app's.
-	if want := "wss://" + e.host + "/vnc?ticket=" + body.Ticket; body.Ticket == "" || body.URL != want {
+	// The URL is on the sessions' host: the screen is not on the app's.
+	if want := "wss://" + sessionsHost + "/" + e.id + "/vnc?ticket=" + body.Ticket; body.Ticket == "" || body.URL != want {
 		t.Fatalf("ticket response = %+v, want url %q", body, want)
 	}
 
@@ -465,8 +506,9 @@ func TestVNCTicket(t *testing.T) {
 }
 
 // A ticket opens the screen of the session it was issued for, and no other.
-func TestVNCTicketIsForOneSession(t *testing.T) {
-	e := newEnv(t)
+func TestVNCTicketIsForOneSession(t *testing.T) { eachForm(t, testVNCTicketIsForOneSession) }
+
+func testVNCTicketIsForOneSession(t *testing.T, e *env) {
 	other, err := e.store.Create(t.Context(), "b", bob)
 	if err != nil {
 		t.Fatal(err)
@@ -522,7 +564,7 @@ func TestClientDisconnectIsNotATimeout(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	req := request("POST", e.host, "/mcp", alice, "{}").WithContext(ctx)
+	req := request("POST", e.host, e.base+"/mcp", alice, "{}").WithContext(ctx)
 	rec := httptest.NewRecorder()
 	w := &countingWriter{ResponseWriter: rec}
 	e.handler.ServeHTTP(w, req)
@@ -553,7 +595,7 @@ func TestVNCWebsocketKeepsSessionAwake(t *testing.T) {
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
-	_, _ = io.WriteString(conn, "GET /vnc?ticket="+ticket+" HTTP/1.1\r\nHost: "+e.host+"\r\n"+
+	_, _ = io.WriteString(conn, "GET "+e.base+"/vnc?ticket="+ticket+" HTTP/1.1\r\nHost: "+e.host+"\r\n"+
 		"Connection: Upgrade\r\nUpgrade: websocket\r\nAuthorization: Bearer token\r\n\r\n")
 	br := bufio.NewReader(conn)
 	resp, err := http.ReadResponse(br, nil)
@@ -595,8 +637,9 @@ func TestVNCWebsocketKeepsSessionAwake(t *testing.T) {
 
 // A host under the session domain that names no session never reaches the
 // cluster, on the routes with a sign-in and those without.
-func TestHostsThatNameNoSessionAre404(t *testing.T) {
-	e := newEnv(t)
+func TestHostsThatNameNoSessionAre404(t *testing.T) { eachForm(t, testHostsThatNameNoSessionAre404) }
+
+func testHostsThatNameNoSessionAre404(t *testing.T, e *env) {
 	fake := e.client.(*dynfake.FakeDynamicClient)
 	fake.ClearActions()
 	for _, id := range []string{"nope", "s-abcdefg189", "s-aaaaaaaaaaa", "x." + e.id, e.id + ".x"} {

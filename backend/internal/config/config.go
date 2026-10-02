@@ -16,8 +16,12 @@ type Config struct {
 	Namespace string // namespace holding session Sandboxes
 	PublicURL string // the app's (UI and API) base URL, no trailing slash
 
-	// SessionURLs is where sessions are reached: one host per session.
+	// SessionURLs is where sessions are reached: one host for all of them,
+	// each under its ID.
 	SessionURLs *sessions.URLTemplate
+	// LegacySessionURLs is where sessions were reached before, a host each,
+	// and still are for the URLs already handed out. nil for nowhere.
+	LegacySessionURLs *sessions.URLTemplate
 
 	PomeriumJWKSURL string   // where to fetch the keys Pomerium signs identities with
 	AdminEmails     []string // users who may see and manage every session
@@ -82,10 +86,28 @@ func FromEnv(get func(string) string) (Config, error) {
 	if c.SessionURLs, err = sessions.ParseURLTemplate(template); err != nil {
 		return Config{}, fmt.Errorf("SESSION_URL_TEMPLATE: %w", err)
 	}
+	if legacy := get("LEGACY_SESSION_URL_TEMPLATE"); legacy != "" {
+		if c.LegacySessionURLs, err = sessions.ParseURLTemplate(legacy); err != nil {
+			return Config{}, fmt.Errorf("LEGACY_SESSION_URL_TEMPLATE: %w", err)
+		}
+	}
 	// Requests are told apart by their host: the app must not live where the
-	// sessions do.
-	if _, session := c.SessionURLs.Match(public.Host); session {
-		return Config{}, fmt.Errorf("PUBLIC_URL %q is under the session domain of SESSION_URL_TEMPLATE %q", c.PublicURL, template)
+	// sessions do. Nor should it: what a session's pod answers must not be
+	// of the app's origin, and the browser's sign-in with the app must not
+	// reach a session's MCP endpoint.
+	for _, urls := range []struct {
+		name, template string
+		parsed         *sessions.URLTemplate
+	}{
+		{"SESSION_URL_TEMPLATE", template, c.SessionURLs},
+		{"LEGACY_SESSION_URL_TEMPLATE", get("LEGACY_SESSION_URL_TEMPLATE"), c.LegacySessionURLs},
+	} {
+		if urls.parsed == nil {
+			continue
+		}
+		if _, session := urls.parsed.Match(public.Host, "/"); session {
+			return Config{}, fmt.Errorf("PUBLIC_URL %q is a session host of %s %q", c.PublicURL, urls.name, urls.template)
+		}
 	}
 	for _, email := range strings.Split(get("ADMIN_EMAILS"), ",") {
 		if email = strings.ToLower(strings.TrimSpace(email)); email != "" {

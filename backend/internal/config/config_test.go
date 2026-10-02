@@ -43,8 +43,9 @@ func TestFromEnvDefaultsAndRequired(t *testing.T) {
 
 func valid() map[string]string {
 	return map[string]string{
-		"PUBLIC_URL": "http://app.localtest.me:8080", "SESSION_URL_TEMPLATE": "http://{id}.sessions.localtest.me:8080",
-		"POMERIUM_JWKS_URL": "j",
+		"PUBLIC_URL": "http://app.localtest.me:8080", "SESSION_URL_TEMPLATE": "http://sessions.localtest.me:8080/{id}",
+		"LEGACY_SESSION_URL_TEMPLATE": "http://{id}.old.localtest.me:8080",
+		"POMERIUM_JWKS_URL":           "j",
 	}
 }
 
@@ -86,10 +87,13 @@ func TestFromEnvRejectsNonsenseValues(t *testing.T) {
 		{"PUBLIC_URL", "app.example.com"},
 		{"SESSION_URL_TEMPLATE", "http://sessions.localtest.me:8080"},
 		{"SESSION_URL_TEMPLATE", "http://sessions.localtest.me:8080/s/{id}"},
+		{"LEGACY_SESSION_URL_TEMPLATE", "http://sessions.localtest.me:8080"},
 		{"SESSION_URL_TEMPLATE", "http://s-{id}.sessions.localtest.me:8080"},
 		// The app's own host must not read as a session's.
-		{"PUBLIC_URL", "http://app.sessions.localtest.me:8080"},
-		{"PUBLIC_URL", "http://s-abcdefg234.sessions.localtest.me"},
+		{"PUBLIC_URL", "http://sessions.localtest.me:8080"},
+		{"PUBLIC_URL", "http://sessions.localtest.me"},
+		{"PUBLIC_URL", "http://app.old.localtest.me:8080"},
+		{"PUBLIC_URL", "http://s-abcdefg234.old.localtest.me"},
 	} {
 		m := valid()
 		m[c.k] = c.v
@@ -178,5 +182,28 @@ func TestWarmPool(t *testing.T) {
 	}
 	if _, err := FromEnv(with("WARM_POOL_WAIT", "0s")); err == nil {
 		t.Error("WARM_POOL_WAIT=0s was accepted")
+	}
+}
+
+func TestSessionURLTemplates(t *testing.T) {
+	c, err := FromEnv(env(valid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.SessionURLs.MCP("s-abcdefg234"); got != "http://sessions.localtest.me:8080/s-abcdefg234/mcp" {
+		t.Errorf("a session's MCP URL = %q", got)
+	}
+	if c.LegacySessionURLs == nil || c.LegacySessionURLs.MCP("s-abcdefg234") != "http://s-abcdefg234.old.localtest.me:8080/mcp" {
+		t.Errorf("LegacySessionURLs = %+v", c.LegacySessionURLs)
+	}
+	// The old hosts are optional, and either form may be the one in use.
+	m := valid()
+	delete(m, "LEGACY_SESSION_URL_TEMPLATE")
+	if c, err := FromEnv(env(m)); err != nil || c.LegacySessionURLs != nil {
+		t.Errorf("without LEGACY_SESSION_URL_TEMPLATE: %+v, %v", c.LegacySessionURLs, err)
+	}
+	m["SESSION_URL_TEMPLATE"] = "http://{id}.sessions.localtest.me:8080"
+	if c, err := FromEnv(env(m)); err != nil || !c.SessionURLs.PerHost() {
+		t.Errorf("a host per session: %v", err)
 	}
 }

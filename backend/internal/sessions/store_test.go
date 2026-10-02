@@ -41,7 +41,7 @@ func TestCreateRendersBlueprint(t *testing.T) {
 	}
 	containers, _, _ := unstructured.NestedSlice(obj.Object, "spec", "podTemplate", "spec", "containers")
 	env := containers[1].(map[string]any)["env"].([]any)[0].(map[string]any)
-	if want := "https://" + s.ID + ".sessions.example.com"; env["value"] != want {
+	if want := "https://sessions.example.com/" + s.ID; env["value"] != want {
 		t.Errorf("public URL env = %v, want %s", env["value"], want)
 	}
 	// The owner label is also on the pod, for NetworkPolicy and debugging.
@@ -92,7 +92,7 @@ podTemplate:
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := "https://" + got["id"] + ".sessions.example.com"
+	base := "https://sessions.example.com/" + got["id"]
 	if got["session"] != base || got["mcp"] != base+"/mcp" || got["app"] != "https://app.example.com" {
 		t.Errorf("rendered = %v", got)
 	}

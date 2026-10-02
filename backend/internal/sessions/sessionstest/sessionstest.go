@@ -28,21 +28,28 @@ import (
 
 const Namespace = "browserjs-sessions"
 
-// Where the fake deployment lives: the app on one host, each session on its
-// own.
+// Where the fake deployment lives: the app on one host and the sessions on
+// another, each under its ID. LegacyURLTemplate is where they used to be, a
+// host each, and still answer.
 const (
-	PublicURL   = "https://app.example.com"
-	URLTemplate = "https://{id}.sessions.example.com"
+	PublicURL         = "https://app.example.com"
+	URLTemplate       = "https://sessions.example.com/{id}"
+	LegacyURLTemplate = "https://{id}.sessions.example.com"
 )
 
-// URLs is URLTemplate, parsed.
-func URLs() *sessions.URLTemplate {
-	urls, err := sessions.ParseURLTemplate(URLTemplate)
+func parsed(template string) *sessions.URLTemplate {
+	urls, err := sessions.ParseURLTemplate(template)
 	if err != nil {
 		panic(err)
 	}
 	return urls
 }
+
+// URLs is URLTemplate, parsed.
+func URLs() *sessions.URLTemplate { return parsed(URLTemplate) }
+
+// LegacyURLs is LegacyURLTemplate, parsed.
+func LegacyURLs() *sessions.URLTemplate { return parsed(LegacyURLTemplate) }
 
 const Blueprint = `
 podTemplate:

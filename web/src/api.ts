@@ -18,7 +18,7 @@ export interface Me {
 
 export interface VncTicket {
   ticket: string
-  url: string // websocket URL on the session's own host, ticket included
+  url: string // websocket URL on the sessions' host, ticket included
 }
 
 // A file in the session's folder: where its browser downloads to, and where

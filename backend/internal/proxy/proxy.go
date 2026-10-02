@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -48,8 +49,12 @@ type Proxy struct {
 	Authz    authz.Checker
 	Waker    *Waker
 	Idle     *idle.Tracker
-	// URLs tells a session's host from the app's, and names the session.
+	// URLs is where sessions are: it tells a request for a session from one
+	// for the app, names the session, and makes the URLs given out.
 	URLs *sessions.URLTemplate
+	// LegacyURLs is where sessions used to be, if anywhere: requests there
+	// are still served, by the same routes, but no URL given out leads there.
+	LegacyURLs *sessions.URLTemplate
 	// Target returns host:port for a port of a session's pod. Defaults to
 	// the pod IP; tests override it.
 	Target func(s sessions.Session, port int) string
@@ -104,40 +109,127 @@ func (p *Proxy) RegisterApp(mux *http.ServeMux) {
 	p.registerFiles(mux)
 }
 
-type sessionKey struct{}
-
-// sessionID is the session the request's host names.
-func sessionID(r *http.Request) string {
-	id, _ := r.Context().Value(sessionKey{}).(string)
-	return id
+// route is what a request for a session was matched to.
+type route struct {
+	id string
+	// base is the part of the request's path that named the session
+	// ("/<id>"), which the routes do not see. "" on a session's own host.
+	base string
+	// urls is the template the request matched.
+	urls *sessions.URLTemplate
 }
 
-// Handler is the server's whole handler. Every session has a host of its
-// own: a request to one gets the session's routes, and nothing else exists
-// there. Requests to any other host are the app's.
+type routeKey struct{}
+
+func routeOf(r *http.Request) route {
+	rt, _ := r.Context().Value(routeKey{}).(route)
+	return rt
+}
+
+// sessionID is the session the request names.
+func sessionID(r *http.Request) string { return routeOf(r).id }
+
+// sessionRoutes is the whole of what a session offers, in every form of
+// session URL: a new route to a session's pod is added here and nowhere
+// else. The patterns are relative to the session; r.URL has lost whatever
+// part of the path named it.
+func (p *Proxy) sessionRoutes(mux *http.ServeMux) {
+	// These answer with what the pod answers.
+	pod := func(pattern string, h http.HandlerFunc) { mux.Handle(pattern, notAPage(h)) }
+	pod("/mcp", p.mcp)
+	pod("/mcp/{rest...}", p.mcp)
+	pod("PUT /api/artifact-uploads/{token}", p.upload)
+	// A websocket and nothing else, which it sees to itself.
+	mux.HandleFunc("GET /vnc", p.vnc)
+	// The rest of a pod's API is not exposed, and the app is not served here.
+	mux.Handle("/", http.NotFoundHandler())
+}
+
+// notAPage refuses what a browser asks for in order to show or run it: a
+// navigation, or a script, image, frame or the like. Every session is served
+// from the same origin, so a pod's answer must not become a page of it. The
+// response headers see to that (neuter); this is the same thing said before
+// the pod is asked. Browsers state the kind of request in Sec-Fetch-Mode;
+// fetch() from a page (an MCP client that runs in one) is "cors", and
+// clients that are not browsers send nothing.
+func notAPage(next http.HandlerFunc) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch strings.ToLower(r.Header.Get("Sec-Fetch-Mode")) {
+		case "", "cors", "same-origin":
+			next(w, r)
+		default:
+			http.Error(w, "this is an API endpoint, not a page", http.StatusForbidden)
+		}
+	})
+}
+
+// match finds the template a request is for a session under, if any.
+func (p *Proxy) match(r *http.Request) (m sessions.Match, urls *sessions.URLTemplate) {
+	for _, urls := range []*sessions.URLTemplate{p.URLs, p.LegacyURLs} {
+		if urls == nil {
+			continue
+		}
+		if m, session := urls.Match(r.Host, r.URL.EscapedPath()); session {
+			return m, urls
+		}
+	}
+	return sessions.Match{}, nil
+}
+
+// cleanPath is what http.ServeMux would redirect path to, were they not the
+// same.
+func cleanPath(p string) string {
+	clean := path.Clean(p)
+	if strings.HasSuffix(p, "/") && clean != "/" {
+		clean += "/"
+	}
+	return clean
+}
+
+// Handler is the server's whole handler. A request that names a session (by
+// the first segment of its path on the sessions' host, or by a host of the
+// session's own) gets the session's routes, and nothing else exists there.
+// Every other request is the app's.
 func (p *Proxy) Handler(app http.Handler) http.Handler {
 	p.init()
 	session := http.NewServeMux()
-	session.HandleFunc("/mcp", p.mcp)
-	session.HandleFunc("/mcp/{rest...}", p.mcp)
-	session.HandleFunc("PUT /api/artifact-uploads/{token}", p.upload)
-	session.HandleFunc("GET /vnc", p.vnc)
-	p.oauthMetadata(session)
-	// The rest of a pod's API is not exposed, and the app is not served here.
-	session.Handle("/", http.NotFoundHandler())
+	p.sessionRoutes(session)
+	// A host per session has the same routes, and two documents more.
+	perHost := http.NewServeMux()
+	p.sessionRoutes(perHost)
+	p.oauthMetadata(perHost)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id, isSession := p.URLs.Match(r.Host)
+		m, urls := p.match(r)
 		switch {
-		case !isSession:
+		case urls == nil:
 			app.ServeHTTP(w, r)
-		case id == "":
-			// Under the session domain, but no session's host: answered
-			// without a cluster lookup.
+			return
+		case m.ID == "":
+			// A session host, but no session named: answered without a
+			// cluster lookup.
 			http.Error(w, "session not found", http.StatusNotFound)
-		default:
-			session.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), sessionKey{}, id)))
+			return
 		}
+		// The routes see the path without the part that named the session.
+		// It is taken off the path as it was sent, so what remains is still
+		// escaped as the caller escaped it (an encoded "/" stays one), and
+		// it is not cleaned: a mux redirects an unclean path to its clean
+		// spelling, which here would lack the session.
+		rest, err := url.PathUnescape(m.Path)
+		if err != nil || cleanPath(m.Path) != m.Path {
+			http.NotFound(w, r)
+			return
+		}
+		mux := session
+		if urls.PerHost() {
+			mux = perHost
+		}
+		r = r.WithContext(context.WithValue(r.Context(), routeKey{}, route{id: m.ID, base: m.Base, urls: urls}))
+		u := *r.URL
+		u.Path, u.RawPath = rest, m.Path
+		r.URL = &u
+		mux.ServeHTTP(w, r)
 	})
 }
 
@@ -197,6 +289,25 @@ func neuter(resp *http.Response) {
 	h.Set("Cross-Origin-Resource-Policy", "same-origin")
 }
 
+// rewriteLocation is where a redirect from the pod leads for the caller. The
+// pod knows its own paths only: a redirect within the pod (no scheme, no
+// host) is resolved against podPath, the path it was asked for, and put
+// under base, the session's prefix. A redirect to another origin is handed
+// on as it is.
+func rewriteLocation(loc, base, podPath string) string {
+	u, err := url.Parse(loc)
+	if base == "" || err != nil || u.IsAbs() || u.Host != "" {
+		return loc
+	}
+	// Resolving removes "." and "..", so the result cannot climb out of base.
+	resolved := (&url.URL{Path: podPath}).ResolveReference(u)
+	resolved.Path = base + resolved.Path
+	if resolved.RawPath != "" {
+		resolved.RawPath = base + resolved.RawPath
+	}
+	return resolved.String()
+}
+
 // forward proxies the request to path on port of the session's pod, and
 // returns the status the pod answered with (0 if it did not answer).
 func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, s sessions.Session, port int, path string, transport http.RoundTripper) int {
@@ -232,6 +343,9 @@ func (p *Proxy) forwardWith(w http.ResponseWriter, r *http.Request, s sessions.S
 				rewrite(resp)
 			}
 			neuter(resp)
+			if loc := resp.Header.Get("Location"); loc != "" {
+				resp.Header.Set("Location", rewriteLocation(loc, routeOf(r).base, path))
+			}
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
@@ -364,8 +478,8 @@ func (p *Proxy) upload(w http.ResponseWriter, r *http.Request) {
 }
 
 // vncTicket issues a one-time ticket for a session's screen, with the URL
-// to open. The screen is on the session's own host, where the browser's
-// sign-in with the app does not reach a websocket; the ticket stands in.
+// to open. The screen is on the sessions' host, where the browser's sign-in
+// with the app does not reach; the ticket stands in.
 func (p *Proxy) vncTicket(w http.ResponseWriter, r *http.Request) {
 	u, ok := auth.UserFrom(r.Context())
 	if !ok {
