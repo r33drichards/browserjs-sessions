@@ -221,6 +221,33 @@ jobs:
           project_id: ${{ vars.GCP_PROJECT_ID }}
           use_dns_based_endpoint: "true"
 
+      # The IDs of what was made, for the backend and the observer to read as
+      # configuration. Nothing in it is secret: sensitive outputs are dropped
+      # by the filter before anything is written, and the signing secret
+      # goes only to the Secret below.
+      - name: ConfigMap billing-iac
+        if: steps.target.outputs.sync == 'true'
+        env:
+          STATE_CREDENTIALS: ${{ steps.state.outputs.credentials_file_path }}
+        run: |
+          set -o pipefail
+          if ! kubectl get namespace "$NS" >/dev/null 2>&1; then
+            echo "::error::namespace $NS does not exist yet: run the deploy workflow, then this one again"
+            exit 1
+          fi
+          ids="${RUNNER_TEMP}/ids.json"
+          GOOGLE_APPLICATION_CREDENTIALS="$STATE_CREDENTIALS" tofu output -json |
+            jq 'with_entries(select(.value.sensitive | not) | .value = .value.value)' > "$ids"
+          kubectl -n "$NS" create configmap billing-iac --from-file=ids.json="$ids" --dry-run=client -o yaml |
+            kubectl apply -f -
+          {
+            echo "## ConfigMap billing-iac (ids.json)"
+            echo
+            echo '```json'
+            cat "$ids"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Secret stripe-webhook
         if: steps.target.outputs.sync == 'true'
         env:
