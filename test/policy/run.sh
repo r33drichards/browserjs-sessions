@@ -444,9 +444,9 @@ ok "calls are allowed again when OPA is reachable again" "$recovered"
 if [ -n "${OPERATOR_IMAGE:-}" ]; then
   step "5. the real operator ($OPERATOR_IMAGE)"
   session_policy() { # id, example name
-    jq -n --arg id "$1" --rawfile source "$contracts/examples/$2.policy.json" \
+    jq -n --arg id "$1" --rawfile source "$contracts/examples/$2.rego" \
       '{apiVersion: "browserjs.dev/v1alpha1", kind: "SessionPolicy", metadata: {name: $id},
-        spec: {sessionRef: {name: $id}, kind: "json", source: $source}}'
+        spec: {sessionRef: {name: $id}, kind: "rego", source: $source}}'
   }
   # until <seconds> <operation> <outcome>: the first time a call has it.
   until_outcome() {
@@ -482,7 +482,7 @@ if [ -n "${OPERATOR_IMAGE:-}" ]; then
   fi
   status="$(k get sessionpolicy "$WITH" -o json | jq -c '.status // {}')"
   is "it is loaded by both replicas" "2 of 2" "$(jq -r '"\(.loaded.replicas) of \(.loaded.total)"' <<<"$status")"
-  ok "its status has the hash and the generated Rego" "$(jq -r 'select((.hash // "") | startswith("sha256:")) | select((.rego // "") | contains("package browserjs.policy")) | "yes"' <<<"$status")" "$status"
+  ok "its status has the hash and the Rego" "$(jq -r 'select((.hash // "") | startswith("sha256:")) | select((.rego // "") | contains("package browserjs.policy")) | "yes"' <<<"$status")" "$status"
   is "an allowed call runs" ran "$(outcome "$(call $P_WITH url)")"
   is "a denied call does not" denied "$(outcome "$(call $P_WITH evaluate)")"
   is "the session without a SessionPolicy is denied" denied "$(outcome "$(call $P_WITHOUT url)")"
@@ -492,23 +492,25 @@ if [ -n "${OPERATOR_IMAGE:-}" ]; then
   ok "an edit applies with nothing restarted (${edited:-not} s after the patch)" "$edited"
 
   # The desktop tool (mouse, keyboard, screen). mcp-js's own file policy
-  # allows it, so the session's policy decides. A JSON policy is about
-  # browser_execute only: the unrestricted one too denies the desktop.
-  is "under the unrestricted JSON policy desktop_execute is denied" denied "$(outcome "$(TOOL=desktop_execute call $P_WITH click)")"
-  rego='package browserjs.policy\n\nimport rego.v1\n\nallow_tool_call if {\n\tinput.server == \"browser\"\n\tinput.tool in {\"browser_execute\", \"desktop_execute\"}\n}\n'
-  k patch sessionpolicy "$WITH" --type=merge -p "{\"spec\":{\"kind\":\"rego\",\"source\":\"$rego\"}}" >/dev/null
+  # allows it, so the session's policy decides, tool by tool
+  # (docs/contracts/policy/rego-contract.md): the unrestricted policy, which
+  # a new session gets, allows it; a policy that restricts the browser
+  # denies it, because the desktop could walk around its rules.
+  is "under the unrestricted policy desktop_execute runs" ran "$(outcome "$(TOOL=desktop_execute call $P_WITH mouse.click)")"
+  k patch sessionpolicy "$WITH" --type=merge -p "$(session_policy "$WITH" no-scripting | jq -c '{spec: {source: .spec.source}}')" >/dev/null
   desktop=""
   for _ in $(seq 1 60); do
-    [ "$(outcome "$(TOOL=desktop_execute call $P_WITH click)")" = ran ] && desktop=1 && break
+    [ "$(outcome "$(TOOL=desktop_execute call $P_WITH mouse.click)")" = denied ] && desktop=1 && break
     sleep 0.25
   done
-  ok "a Rego policy that names desktop_execute allows it" "$desktop" "$(k get sessionpolicy "$WITH" -o json | jq -c .status.errors)"
-  is "and still allows browser_execute" ran "$(outcome "$(call $P_WITH evaluate)")"
+  ok "under no-scripting desktop_execute is denied" "$desktop" "$(k get sessionpolicy "$WITH" -o json | jq -c .status.errors)"
+  is "and browser_execute still runs" ran "$(outcome "$(call $P_WITH url)")"
+  is "and no warning is reported for a preset" "[]" "$(k get sessionpolicy "$WITH" -o json | jq -c '.status.warnings // []')"
 
   # Shell commands: the "exec" server (mcp-exec), a second upstream server of
   # mcp-js. The same rule: its own file policy allows it, the session's
   # decides, and a policy that does not name it denies it.
-  is "a policy that does not name the exec server denies a command" denied "$(outcome "$(SERVER="exec" call $P_WITH 'git status')")"
+  is "under no-scripting, which does not name the exec server, a command is denied" denied "$(outcome "$(SERVER="exec" call $P_WITH 'git status')")"
   rego='package browserjs.policy\n\nimport rego.v1\n\nallow_tool_call if {\n\tinput.server == \"exec\"\n\tinput.tool == \"exec\"\n\tinput.arguments.bin == \"git\"\n\tinput.arguments.args[0] in {\"status\", \"log\"}\n}\n'
   k patch sessionpolicy "$WITH" --type=merge -p "{\"spec\":{\"kind\":\"rego\",\"source\":\"$rego\"}}" >/dev/null
   command=""
@@ -521,13 +523,13 @@ if [ -n "${OPERATOR_IMAGE:-}" ]; then
   is "a subcommand that is not on it is denied" denied "$(outcome "$(SERVER="exec" call $P_WITH 'git push')")"
   is "another program is denied" denied "$(outcome "$(SERVER="exec" call $P_WITH 'sh -c git')")"
   is "and so is the browser, which that policy does not name" denied "$(outcome "$(call $P_WITH url)")"
-  k patch sessionpolicy "$WITH" --type=merge -p "$(session_policy "$WITH" unrestricted | jq -c '{spec: {kind: "json", source: .spec.source}}')" >/dev/null
+  k patch sessionpolicy "$WITH" --type=merge -p "$(session_policy "$WITH" unrestricted | jq -c '{spec: {source: .spec.source}}')" >/dev/null
   back=""
   for _ in $(seq 1 60); do
-    [ "$(outcome "$(TOOL=desktop_execute call $P_WITH click)")" = denied ] && back=1 && break
+    [ "$(outcome "$(TOOL=desktop_execute call $P_WITH mouse.click)")" = ran ] && back=1 && break
     sleep 0.25
   done
-  ok "back on the JSON policy, desktop_execute is denied again" "$back"
+  ok "back on the unrestricted policy, desktop_execute runs again" "$back"
 
   k patch sessionpolicy "$WITH" --type=merge -p '{"spec":{"source":"{ this is not a policy"}}' >/dev/null
   if k wait --for=condition=Compiled=False "sessionpolicy/$WITH" --timeout=60s >/dev/null 2>&1; then

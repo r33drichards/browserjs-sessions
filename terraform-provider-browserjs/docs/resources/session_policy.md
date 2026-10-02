@@ -3,20 +3,26 @@
 page_title: "browserjs_session_policy Resource - browserjs"
 subcategory: ""
 description: |-
-  The policy of one session, managed as code: what an agent connected over MCP may ask the session's browser to do.
+  The policy of one session, managed as code: which tool calls an agent connected over MCP may make: the browser (browser_execute), desktop control (desktop_execute) and the shell (the exec server).
+  The policy is a Rego module of package browserjs.policy that defines allow_tool_call; what it is asked and the built-ins it may use are in docs/contracts/policy/rego-contract.md of the browserjs repository, and ready-made policies in docs/contracts/policy/examples/.
+  ~> A policy that restricts browser_execute must deny desktop_execute and the exec server. Either can drive the browser around the rules: the desktop through the address bar and DevTools, a shell command through the browser's own control ports. The API answers such a policy with a warning, which the plan and the apply show.
   Creating this resource puts the session's policy in managed-as-code mode: the UI shows it read-only with a link to managed_url. Destroying it resets the session to the unrestricted policy, editable in the UI again.
-  A change to the policy is applied in place and restarts nothing; it never replaces the session. The policy is checked at plan time, and errors are reported with their line and column.
+  A change to the policy is applied in place and restarts nothing; it never replaces the session. The policy is checked at plan time, and errors are reported with their line and column, warnings as warnings.
   If somebody chooses "Manage here instead" in the UI, the next plan shows managed_url changing from empty, and the apply takes the policy back.
   The API token needs the scopes policies:read and policies:write.
 ---
 
 # browserjs_session_policy (Resource)
 
-The policy of one session, managed as code: what an agent connected over MCP may ask the session's browser to do.
+The policy of one session, managed as code: which tool calls an agent connected over MCP may make: the browser (`browser_execute`), desktop control (`desktop_execute`) and the shell (the `exec` server).
+
+The policy is a Rego module of package `browserjs.policy` that defines `allow_tool_call`; what it is asked and the built-ins it may use are in `docs/contracts/policy/rego-contract.md` of the browserjs repository, and ready-made policies in `docs/contracts/policy/examples/`.
+
+~> **A policy that restricts `browser_execute` must deny `desktop_execute` and the `exec` server.** Either can drive the browser around the rules: the desktop through the address bar and DevTools, a shell command through the browser's own control ports. The API answers such a policy with a warning, which the plan and the apply show.
 
 Creating this resource puts the session's policy in managed-as-code mode: the UI shows it read-only with a link to `managed_url`. Destroying it resets the session to the unrestricted policy, editable in the UI again.
 
-A change to the policy is applied in place and restarts nothing; it never replaces the session. The policy is checked at plan time, and errors are reported with their line and column.
+A change to the policy is applied in place and restarts nothing; it never replaces the session. The policy is checked at plan time, and errors are reported with their line and column, warnings as warnings.
 
 If somebody chooses "Manage here instead" in the UI, the next plan shows `managed_url` changing from empty, and the apply takes the policy back.
 
@@ -25,20 +31,17 @@ The API token needs the scopes `policies:read` and `policies:write`.
 ## Example Usage
 
 ```terraform
-# A policy in the JSON format.
+# The policy is a Rego module, kept in a file beside the configuration. This
+# one restricts browser_execute, so it denies desktop_execute and the exec
+# server: either could drive the browser around its rules.
 resource "browserjs_session_policy" "research" {
   session_id  = browserjs_session.research.id
   managed_url = "https://github.com/example/infra/tree/main/browserjs"
-
-  json = jsonencode({
-    version = 1
-    allow   = { operations = ["*"] }
-    deny    = { operations = ["evaluate", "setContent"] }
-  })
+  rego        = file("${path.module}/one-site.rego")
 }
 
-# A policy in Rego, on a session that was made in the UI and is not managed
-# here: only its policy is.
+# A policy written in place, on a session that was made in the UI and is not
+# managed here: only its policy is. The whole browser, and nothing else.
 data "browserjs_session" "scratch" {
   name = "scratch"
 }
@@ -46,7 +49,17 @@ data "browserjs_session" "scratch" {
 resource "browserjs_session_policy" "scratch" {
   session_id  = data.browserjs_session.scratch.id
   managed_url = "https://github.com/example/infra/tree/main/browserjs"
-  rego        = file("${path.module}/one-site.rego")
+
+  rego = <<-EOT
+    package browserjs.policy
+
+    import rego.v1
+
+    allow_tool_call if {
+    	input.server == "browser"
+    	input.tool == "browser_execute"
+    }
+  EOT
 
   timeouts {
     update = "5m"
@@ -60,18 +73,17 @@ resource "browserjs_session_policy" "scratch" {
 ### Required
 
 - `managed_url` (String) The `https` URL of where this configuration lives, such as the repository directory. The UI links to it from the read-only policy.
+- `rego` (String) The policy: a Rego module of package `browserjs.policy`, usually `file("${path.module}/policy.rego")`. Compared as text, so a change of formatting is a change.
 - `session_id` (String) The session whose policy this is. Changing it forces a new resource (the old session's policy is reset).
 
 ### Optional
 
-- `json` (String) A policy in the JSON format (see `browserjs_policy_document`, or `jsonencode`). Compared as parsed JSON, so formatting and key order are not a change. Exactly one of `json` and `rego` is required.
-- `rego` (String) A policy as a Rego module of package `browserjs.policy`. Exactly one of `json` and `rego` is required.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 - `wait_for_ready` (Boolean) Whether apply waits for the policy to be in force. Defaults to `true`.
 
 ### Read-Only
 
-- `compiled_rego` (String) The Rego module in force. For `json`, the module generated from it.
+- `compiled_rego` (String) The Rego module in force: `rego`, or, while `state` is `invalid`, the last one that compiled.
 - `hash` (String) The hash of the policy in force.
 - `id` (String) Equal to `session_id`.
 - `state` (String) `ready`, `loading` or `invalid`.

@@ -1,7 +1,8 @@
 // Package fakeapi is an in-memory stand-in for the backend's API host, written
 // from docs/contracts/policy/backend-api.yaml. It is what the provider is
-// tested against until the real API exists, and it validates policies only
-// roughly: enough to answer with errors that have a row and a column.
+// tested against, and it checks policies only roughly: enough to answer
+// with errors that have a row and a column, and with the warnings about
+// tools that undo each other's rules. Policies are Rego only.
 package fakeapi
 
 import (
@@ -23,13 +24,22 @@ import (
 	"github.com/r33drichards/browserjs-sessions/terraform-provider-browserjs/internal/client"
 )
 
-// Unrestricted is the policy a new session has, and a reset one returns to.
-const Unrestricted = `{
-  "version": 1,
-  "description": "No restrictions: every browser operation, with any parameters.",
-  "allow": { "operations": ["*"] }
-}
+// Unrestricted is the policy a new session has, and a reset one returns to:
+// docs/contracts/policy/examples/unrestricted.rego, byte for byte.
+const Unrestricted = `# No restrictions: every operation in the browser, full control of the
+# desktop, and any shell command.
+package browserjs.policy
+
+import rego.v1
+
+# The platform asks a policy only about the tools it knows: browser_execute
+# and desktop_execute on server "browser"; exec, stream_logs and search_logs
+# on server "exec". This allows all of them, with any arguments.
+allow_tool_call := true
 `
+
+// kindRego is the only kind of policy; a request may leave it out.
+const kindRego = "rego"
 
 // Request is one request the fake received.
 type Request struct {
@@ -61,6 +71,9 @@ type Server struct {
 	CompileErrors []client.Diagnostic
 	// ValidateUnavailable makes validation answer 503.
 	ValidateUnavailable bool
+	// ReportKind, when set, is the kind a read of a policy reports instead of
+	// rego: an API that has a kind the provider does not know.
+	ReportKind string
 
 	sessions map[string]*session
 	order    []string
@@ -76,12 +89,12 @@ type session struct {
 }
 
 type policy struct {
-	kind, source, rego, hash string
-	version                  int64
-	mode, managedURL         string
-	loadingLeft              int
-	invalid                  []client.Diagnostic
-	updated, updatedBy       string
+	source, rego, hash string
+	version            int64
+	mode, managedURL   string
+	loadingLeft        int
+	invalid            []client.Diagnostic
+	updated, updatedBy string
 }
 
 // New makes a fake that accepts token.
@@ -148,16 +161,16 @@ func (s *Server) UIManageHere(id string) {
 
 // UIEdit is an edit made in the UI's editor: the mode becomes editor and the
 // source changes.
-func (s *Server) UIEdit(id, kind, source string) error {
+func (s *Server) UIEdit(id, source string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	v := Validate(kind, source)
+	v := Validate(source)
 	if !v.OK {
 		return errors.New(v.Errors[0].Message)
 	}
 	p := &s.sessions[id].policy
 	p.mode, p.managedURL = client.ModeEditor, ""
-	p.set(kind, source, v, "ui")
+	p.set(source, v, "ui")
 	return nil
 }
 
@@ -199,14 +212,14 @@ func (s *Server) add(name string) *session {
 	}
 	se := &session{id: id, name: name}
 	se.policy.mode = client.ModeEditor
-	se.policy.set("json", Unrestricted, Validate("json", Unrestricted), "ui")
+	se.policy.set(Unrestricted, Validate(Unrestricted), "ui")
 	s.sessions[id] = se
 	s.order = append(s.order, id)
 	return se
 }
 
-func (p *policy) set(kind, source string, v client.Validation, by string) {
-	p.kind, p.source, p.rego, p.hash = kind, source, v.Rego, v.Hash
+func (p *policy) set(source string, v client.Validation, by string) {
+	p.source, p.rego, p.hash = source, v.Rego, v.Hash
 	p.version++
 	p.invalid = nil
 	p.updated = time.Now().UTC().Format(time.RFC3339)
@@ -225,7 +238,7 @@ func (p *policy) state() string {
 
 func (p *policy) summary() *client.PolicySummary {
 	return &client.PolicySummary{
-		Kind: p.kind, Version: p.version, Hash: p.hash, State: p.state(),
+		Kind: kindRego, Version: p.version, Hash: p.hash, State: p.state(),
 		Management: &client.Management{Mode: p.mode, ManagedURL: p.managedURL},
 	}
 }
@@ -264,6 +277,15 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+// badKind answers 400 for a kind that is not rego, as the API does.
+func badKind(w http.ResponseWriter, kind string) bool {
+	if kind == "" || kind == kindRego {
+		return false
+	}
+	writeError(w, http.StatusBadRequest, "kind must be rego")
+	return true
 }
 
 // Handler serves the API under /v1, as the API host does.
@@ -324,7 +346,10 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	}
 	var v client.Validation
 	if body.Policy != nil {
-		if v = Validate(body.Policy.Kind, body.Policy.Source); !v.OK {
+		if badKind(w, body.Policy.Kind) {
+			return
+		}
+		if v = Validate(body.Policy.Source); !v.OK {
 			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "the policy does not validate", "errors": v.Errors, "warnings": v.Warnings})
 			return
 		}
@@ -332,7 +357,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	se := s.add(body.Name)
 	se.startingLeft = s.SessionStartingReads
 	if body.Policy != nil {
-		se.policy.set(body.Policy.Kind, body.Policy.Source, v, "token:fake")
+		se.policy.set(body.Policy.Source, v, "token:fake")
 		se.policy.version = 1
 		if m := body.Policy.Management; m != nil {
 			se.policy.mode, se.policy.managedURL = m.Mode, m.ManagedURL
@@ -390,6 +415,9 @@ func (s *Server) getPolicy(w http.ResponseWriter, _ *http.Request, se *session) 
 		return
 	}
 	v := se.policy.view()
+	if s.ReportKind != "" {
+		v.Kind = s.ReportKind
+	}
 	if se.policy.loadingLeft > 0 {
 		se.policy.loadingLeft--
 	}
@@ -429,6 +457,9 @@ func (s *Server) putPolicy(w http.ResponseWriter, r *http.Request, se *session) 
 		writeError(w, http.StatusBadRequest, "body must be JSON")
 		return
 	}
+	if badKind(w, in.Kind) {
+		return
+	}
 	if refuse(w, se, in.Management != nil && in.Management.Mode == client.ModeIaC) {
 		return
 	}
@@ -447,7 +478,7 @@ func (s *Server) putPolicy(w http.ResponseWriter, r *http.Request, se *session) 
 		writeError(w, http.StatusServiceUnavailable, "the policy operator could not be reached")
 		return
 	}
-	v := Validate(in.Kind, in.Source)
+	v := Validate(in.Source)
 	if !v.OK {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "the policy does not validate", "errors": v.Errors, "warnings": v.Warnings})
 		return
@@ -456,14 +487,14 @@ func (s *Server) putPolicy(w http.ResponseWriter, r *http.Request, se *session) 
 	if in.Management != nil {
 		mode, managedURL = in.Management.Mode, in.Management.ManagedURL
 	}
-	if in.Kind == p.kind && in.Source == p.source && mode == p.mode && managedURL == p.managedURL {
+	if in.Source == p.source && mode == p.mode && managedURL == p.managedURL {
 		out := p.view()
 		out.Warnings = v.Warnings
 		writeJSON(w, http.StatusOK, out)
 		return
 	}
 	p.mode, p.managedURL = mode, managedURL
-	p.set(in.Kind, in.Source, v, "token:fake")
+	p.set(in.Source, v, "token:fake")
 	status := http.StatusOK
 	if s.PolicyLoadingReads > 0 {
 		p.loadingLeft = s.PolicyLoadingReads
@@ -481,7 +512,7 @@ func (s *Server) resetPolicy(w http.ResponseWriter, _ *http.Request, se *session
 	}
 	p := &se.policy
 	p.mode, p.managedURL = client.ModeEditor, ""
-	p.set("json", Unrestricted, Validate("json", Unrestricted), "token:fake")
+	p.set(Unrestricted, Validate(Unrestricted), "token:fake")
 	writeJSON(w, http.StatusOK, p.view())
 }
 
@@ -515,127 +546,155 @@ func (s *Server) validate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "body must be JSON")
 		return
 	}
+	if badKind(w, in.Kind) {
+		return
+	}
 	if s.ValidateUnavailable {
 		writeError(w, http.StatusServiceUnavailable, "the policy operator could not be reached")
 		return
 	}
-	writeJSON(w, http.StatusOK, Validate(in.Kind, in.Source))
+	writeJSON(w, http.StatusOK, Validate(in.Source))
 }
 
-var operations = map[string]bool{
-	"click": true, "evaluate": true, "navigate": true, "press": true, "screenshot": true, "select": true,
-	"setContent": true, "setViewport": true, "type": true, "url": true, "wait": true,
+// maxSource is the most bytes a policy may have.
+const maxSource = 65536
+
+// guard is the code of the checks a tenant's module must pass.
+const guard = "policy_guard_error"
+
+var (
+	packageLine = regexp.MustCompile(`(?m)^package[ \t]+(\S+)[ \t]*$`)
+	// A rule that defines allow_tool_call, at the start of a line.
+	allowRule = regexp.MustCompile(`(?m)^allow_tool_call\b`)
+	// What a module that looks inside a call's arguments mentions: the
+	// operations of browser_execute, the command of exec.
+	readsOperations = regexp.MustCompile(`\boperations\b`)
+	readsCommand    = regexp.MustCompile(`\bcmd\b`)
+	namesDesktop    = regexp.MustCompile(`"desktop_execute"`)
+	namesShell      = regexp.MustCompile(`"exec"`)
+)
+
+// The warnings of docs/contracts/policy/rego-contract.md, about the policy
+// as a whole: they have no row and no column.
+var bypass = map[string]string{
+	"browser_bypass_desktop": "the policy refuses some browser_execute calls but allows desktop_execute to click or type: " +
+		"with the mouse and keyboard an agent can use the address bar and DevTools, so the rules on " +
+		"browser_execute can be walked around. Deny desktop_execute, or allow only its screen operations",
+	"browser_bypass_shell": "the policy refuses some browser_execute calls but allows exec to run arbitrary commands: a command " +
+		"can reach the browser's own control ports on 127.0.0.1 (8081, 9222), so the rules on browser_execute " +
+		"can be walked around. Deny exec, or allow only whole commands that cannot make requests or start programs",
+	"shell_bypass_desktop": "the policy refuses some exec commands but allows desktop_execute to click or type: an agent can open " +
+		"a terminal on the desktop and type any command. Deny desktop_execute, or allow only its screen operations",
 }
 
-var packageLine = regexp.MustCompile(`(?m)^package[ \t]+(\S+)[ \t]*$`)
+// blank is source with its comments, and when literals is set the insides
+// of its strings too, replaced by spaces. Offsets and line breaks are kept,
+// so a position in the result is a position in source.
+func blank(source string, literals bool) string {
+	out := []byte(source)
+	var in byte // 0 in code, else '#', '"' or '`'
+	for i := 0; i < len(out); i++ {
+		c := out[i]
+		switch {
+		case in == 0:
+			switch c {
+			case '#':
+				in, out[i] = c, ' '
+			case '"', '`':
+				in = c
+			}
+		case c == '\n':
+			if in != '`' {
+				in = 0
+			}
+		case in == '#':
+			out[i] = ' '
+		case c == in:
+			in = 0
+		default:
+			escape := in == '"' && c == '\\' && i+1 < len(out) && out[i+1] != '\n'
+			if literals {
+				out[i] = ' '
+				if escape {
+					out[i+1] = ' '
+				}
+			}
+			if escape {
+				i++
+			}
+		}
+	}
+	return string(out)
+}
 
-// Validate is the fake's rough check of a policy. The real one is the policy
-// operator's; this one knows JSON syntax, the top-level keys, the operation
-// names, and a Rego module's package line and brace balance.
-func Validate(kind, source string) client.Validation {
+// Validate is the fake's rough check of a Rego policy. The real one is the
+// policy operator's, which parses, compiles and evaluates the module; this
+// one reads the text. It knows the size limit, the package line, brace
+// balance outside comments and strings, and that allow_tool_call must be
+// defined. Its warnings are a guess from what the module mentions: one that
+// looks at the operations of browser_execute restricts the browser, one that
+// looks at the command of exec restricts the shell, and naming
+// "desktop_execute" or "exec" outside a comment allows it.
+func Validate(source string) client.Validation {
 	v := client.Validation{Errors: []client.Diagnostic{}, Warnings: []client.Diagnostic{}}
 	fail := func(row, col int, code, msg string) client.Validation {
 		v.Errors = append(v.Errors, client.Diagnostic{Row: row, Col: col, Code: code, Message: msg})
 		return v
 	}
-	switch kind {
-	case "json":
-		var doc struct {
-			Version     json.RawMessage `json:"version"`
-			Description string          `json:"description"`
-			Allow       *struct {
-				Operations []string          `json:"operations"`
-				Rules      []json.RawMessage `json:"rules"`
-			} `json:"allow"`
-			Deny *struct {
-				Operations []string `json:"operations"`
-			} `json:"deny"`
-		}
-		dec := json.NewDecoder(strings.NewReader(source))
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(&doc); err != nil {
-			var syn *json.SyntaxError
-			var typ *json.UnmarshalTypeError
-			switch {
-			case errors.As(err, &syn):
-				// Offset counts the bytes read, the offending one included.
-				row, col := position(source, int(syn.Offset)-1)
-				return fail(row, col, "json_syntax", syn.Error())
-			case errors.As(err, &typ):
-				row, col := position(source, int(typ.Offset))
-				return fail(row, col, "schema", fmt.Sprintf("%s must be %s", typ.Field, typ.Type))
-			}
-			if name, ok := strings.CutPrefix(err.Error(), "json: unknown field "); ok {
-				row, col := find(source, name)
-				return fail(row, col, "schema", "unknown property "+name)
-			}
-			return fail(1, 1, "json_syntax", err.Error())
-		}
-		if string(doc.Version) != "1" {
-			row, col := find(source, `"version"`)
-			return fail(row, col, "schema", "version must be 1")
-		}
-		var allowed, denied []string
-		if doc.Allow != nil {
-			allowed = doc.Allow.Operations
-		}
-		if doc.Deny != nil {
-			denied = doc.Deny.Operations
-		}
-		for _, op := range allowed {
-			if op != "*" && !operations[op] {
-				row, col := find(source, strconv.Quote(op))
-				fail(row, col, "schema", fmt.Sprintf("allow.operations: %q is not an operation", op))
-			}
-		}
-		for _, op := range denied {
-			if !operations[op] {
-				row, col := find(source, strconv.Quote(op))
-				fail(row, col, "schema", fmt.Sprintf("deny.operations: %q is not an operation", op))
-			}
-		}
-		if len(v.Errors) > 0 {
-			return v
-		}
-		for _, op := range allowed {
-			if op == "*" && len(denied) == 0 {
-				row, col := find(source, `"*"`)
-				v.Warnings = append(v.Warnings, client.Diagnostic{Row: row, Col: col, Code: "unrestricted", Message: "this policy allows every operation"})
-			}
-		}
-		var compact bytes.Buffer
-		_ = json.Compact(&compact, []byte(source))
-		v.Rego = "# Generated from a browserjs JSON policy (version 1). Edit the JSON, not this file.\npackage browserjs.policy\n\n# fake translation of " + compact.String() + "\n"
-	case "rego":
-		m := packageLine.FindStringSubmatchIndex(source)
-		if m == nil {
-			return fail(1, 1, "rego_parse_error", "package expected")
-		}
-		if name := source[m[2]:m[3]]; name != "browserjs.policy" {
-			row, col := position(source, m[2])
-			return fail(row, col, "package", fmt.Sprintf("the package must be browserjs.policy, not %s", name))
-		}
-		depth := 0
-		for i, c := range source {
-			switch c {
-			case '{':
-				depth++
-			case '}':
-				depth--
-			}
-			if depth < 0 {
-				row, col := position(source, i)
-				return fail(row, col, "rego_parse_error", "unexpected }")
-			}
-		}
-		if depth != 0 {
-			row, col := position(source, len(source))
-			return fail(row, col, "rego_parse_error", "unexpected end of file: } expected")
-		}
-		v.Rego = source
-	default:
-		return fail(0, 0, "kind", "kind must be json or rego")
+	if source == "" {
+		return fail(0, 0, "size_error", "the policy is empty")
 	}
+	if len(source) > maxSource {
+		return fail(0, 0, "size_error", fmt.Sprintf("the policy is larger than %d bytes", maxSource))
+	}
+	code := blank(source, false)
+	bare := blank(source, true)
+
+	m := packageLine.FindStringSubmatchIndex(bare)
+	if m == nil {
+		return fail(1, 1, "rego_parse_error", "package expected")
+	}
+	if name := source[m[2]:m[3]]; name != "browserjs.policy" {
+		row, col := position(source, m[2])
+		return fail(row, col, guard, fmt.Sprintf("the package must be browserjs.policy, not %s", name))
+	}
+	depth := 0
+	for i, c := range bare {
+		switch c {
+		case '{':
+			depth++
+		case '}':
+			depth--
+		}
+		if depth < 0 {
+			row, col := position(source, i)
+			return fail(row, col, "rego_parse_error", "unexpected }")
+		}
+	}
+	if depth != 0 {
+		row, col := position(source, len(source))
+		return fail(row, col, "rego_parse_error", "unexpected end of file: } expected")
+	}
+	if !allowRule.MatchString(bare) {
+		return fail(0, 0, guard, "the policy must define allow_tool_call")
+	}
+
+	warn := func(code string) {
+		v.Warnings = append(v.Warnings, client.Diagnostic{Code: code, Message: bypass[code]})
+	}
+	browser, shell := readsOperations.MatchString(bare), readsCommand.MatchString(bare)
+	desktop := namesDesktop.MatchString(code)
+	if browser && desktop {
+		warn("browser_bypass_desktop")
+	}
+	if browser && namesShell.MatchString(code) && !shell {
+		warn("browser_bypass_shell")
+	}
+	if shell && desktop {
+		warn("shell_bypass_desktop")
+	}
+
+	v.Rego = source
 	sum := sha256.Sum256([]byte(v.Rego))
 	v.Hash = hex.EncodeToString(sum[:])
 	v.OK = true
@@ -649,12 +708,4 @@ func position(source string, offset int) (int, int) {
 	row := strings.Count(before, "\n") + 1
 	col := offset - strings.LastIndex(before, "\n")
 	return row, col
-}
-
-func find(source, needle string) (int, int) {
-	i := strings.Index(source, needle)
-	if i < 0 {
-		return 1, 1
-	}
-	return position(source, i)
 }

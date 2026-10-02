@@ -1,26 +1,21 @@
 """Is this policy valid: the one implementation.
 
 `check` is what the reconcile of a SessionPolicy runs and what
-POST /v1/validate runs: size, JSON schema, JSON to Rego, the tenant checks
-of rego-contract.md, the hash, the package rewrite.
+POST /v1/validate runs: size, the tenant checks of rego-contract.md, the
+hash, the package rewrite, and the warnings about tools that undo each
+other's rules.
 """
 from __future__ import annotations
 
 import base64
-import functools
 import hashlib
 import json
-import math
 import re
 from dataclasses import dataclass, field
 from typing import Any
 
-import jsonschema
-
 from . import opa
 from .config import EVAL_DEADLINE_SECONDS, MAX_DIAGNOSTICS, MAX_SOURCE_BYTES, Config
-from .jsonpos import locate, positions
-from .translate import translate
 
 GUARD = "policy_guard_error"
 POLICY_PACKAGE = ["data", "browserjs", "policy"]
@@ -69,67 +64,17 @@ def diagnostic(code: str, message: str, row: int | None = None, col: int | None 
     return d
 
 
-def _from_opa(errors: list[dict], positioned: bool) -> list[dict]:
+def _from_opa(errors: list[dict]) -> list[dict]:
     out = []
     for e in errors:
         loc = e.get("location") or {}
         message = str(e.get("message", "")).strip() or "error"
-        code = str(e.get("code") or "rego_compile_error")
-        if positioned:
-            out.append(diagnostic(code, message, loc.get("row"), loc.get("col")))
-        else:
-            # The rows of generated Rego mean nothing in the JSON it came from.
-            out.append(diagnostic(code, "in the generated Rego: " + message))
+        out.append(diagnostic(str(e.get("code") or "rego_compile_error"), message, loc.get("row"), loc.get("col")))
     return out
 
 
 def _fail(errors: list[dict]) -> Validation:
     return Validation(ok=False, errors=errors[:MAX_DIAGNOSTICS])
-
-
-@functools.lru_cache(maxsize=4)
-def _validator(schema_path: str) -> jsonschema.Draft202012Validator:
-    with open(schema_path, encoding="utf-8") as f:
-        schema = json.load(f)
-    jsonschema.Draft202012Validator.check_schema(schema)
-    return jsonschema.Draft202012Validator(schema)
-
-
-def _path_text(path) -> str:
-    out = ""
-    for p in path:
-        out += f"[{p}]" if isinstance(p, int) else ("." if out else "") + str(p)
-    return out
-
-
-def _reject_constant(name: str):
-    raise ValueError(f"{name} is not JSON")
-
-
-def _finite(text: str) -> float:
-    value = float(text)
-    if not math.isfinite(value):
-        raise ValueError(f"the number {text} is out of range")
-    return value
-
-
-def _parse_json(cfg: Config, source: str) -> tuple[dict | None, dict, list[dict]]:
-    """The document, the positions of its values, and the errors."""
-    try:
-        doc = json.loads(source, parse_constant=_reject_constant, parse_float=_finite)
-    except json.JSONDecodeError as e:
-        return None, {}, [diagnostic("json_parse_error", e.msg, e.lineno, e.colno)]
-    except (ValueError, RecursionError) as e:
-        return None, {}, [diagnostic("json_parse_error", str(e) or "the document is nested too deeply")]
-    pos = positions(source)
-    errors = []
-    found = sorted(_validator(str(cfg.schema)).iter_errors(doc), key=lambda e: (list(map(str, e.absolute_path)), e.message))
-    for e in found:
-        where = _path_text(e.absolute_path)
-        message = e.message if len(e.message) <= 300 else e.message[:300] + "…"
-        at = locate(pos, tuple(e.absolute_path)) or (None, None)
-        errors.append(diagnostic("schema_error", f"{where}: {message}" if where else message, *at))
-    return doc, pos, errors
 
 
 # --- The tenant checks (rego-contract.md, 1 to 4) -------------------------
@@ -246,63 +191,130 @@ def rewrite_package(cfg: Config, source: str, ast: dict, session_id: str) -> str
     return rewritten
 
 
+# --- Warnings: tools that undo each other's rules (rego-contract.md) -------
+
+def _call(server: str, tool: str, arguments: dict) -> dict:
+    return {"operation": "mcp_call_tool", "server": server, "tool": tool, "arguments": arguments}
+
+
+def _operations(tool: str, *operations: tuple[str, dict]) -> list[dict]:
+    return [_call("browser", tool, {"operations": [{"type": t, "params": p}]}) for t, p in operations]
+
+
+# Calls the policy is asked about, to see what it does and not what it says.
+# A policy restricts the browser when it refuses one of the first; it leaves
+# the desktop, or the shell, open when it allows one of the others.
+BROWSER_PROBES = _operations(
+    "browser_execute",
+    ("evaluate", {"script": "document.title"}),
+    ("setContent", {"html": "<p>probe</p>"}),
+    ("navigate", {"url": "http://policy-probe.invalid/"}),
+    ("click", {"selector": "a"}),
+    ("type", {"selector": "input", "text": "probe"}),
+)
+DESKTOP_PROBES = _operations(
+    "desktop_execute",
+    ("mouse.click", {"x": 10, "y": 10}),
+    ("keyboard.type", {"text": "probe"}),
+    ("keyboard.pressKey", {"keys": ["LeftControl", "L"]}),
+)
+SHELL_PROBES = [
+    _call("exec", "exec", {"cmd": "curl -s http://127.0.0.1:9222/json/version", "timeout": 30}),
+    _call("exec", "exec", {"cmd": "bash -c 'id'", "timeout": 30}),
+]
+_PROBES = BROWSER_PROBES + DESKTOP_PROBES + SHELL_PROBES
+
+BYPASS = {
+    "browser_bypass_desktop": (
+        "the policy refuses some browser_execute calls but allows desktop_execute to click or type: "
+        "with the mouse and keyboard an agent can use the address bar and DevTools, so the rules on "
+        "browser_execute can be walked around. Deny desktop_execute, or allow only its screen operations"),
+    "browser_bypass_shell": (
+        "the policy refuses some browser_execute calls but allows exec to run arbitrary commands: a command "
+        "can reach the browser's own control ports on 127.0.0.1 (8081, 9222), so the rules on browser_execute "
+        "can be walked around. Deny exec, or allow only whole commands that cannot make requests or start programs"),
+    "shell_bypass_desktop": (
+        "the policy refuses some exec commands but allows desktop_execute to click or type: an agent can open "
+        "a terminal on the desktop and type any command. Deny desktop_execute, or allow only its screen operations"),
+}
+
+
+def lint(cfg: Config, rego: str) -> list[dict]:
+    """The warnings of a module that passed the checks. None stops a save."""
+    try:
+        allowed = opa.eval_many(cfg.opa_bin, cfg.capabilities, rego, _PROBES, EVAL_DEADLINE_SECONDS)
+    except opa.OpaTimeout:
+        return []
+    if allowed is None:
+        return []
+    b, d = len(BROWSER_PROBES), len(DESKTOP_PROBES)
+    browser, desktop, shell = allowed[:b], allowed[b:b + d], allowed[b + d:]
+    codes = []
+    if not all(browser) and any(desktop):
+        codes.append("browser_bypass_desktop")
+    if not all(browser) and any(shell):
+        codes.append("browser_bypass_shell")
+    if not all(shell) and any(desktop):
+        codes.append("shell_bypass_desktop")
+    return [diagnostic(code, BYPASS[code]) for code in codes]
+
+
 # --- check ----------------------------------------------------------------
 
-def check(cfg: Config, kind: str, source: str, session_id: str | None = None) -> Validation:
+def check(cfg: Config, kind: str, source: str, session_id: str | None = None, warn: bool = True) -> Validation:
     try:
-        return _check(cfg, kind, source, session_id)
+        return _check(cfg, kind, source, session_id, warn)
     except opa.OpaTimeout as e:
         return _fail([diagnostic("rego_compile_error", str(e))])
 
 
-def _check(cfg: Config, kind: str, source: str, session_id: str | None) -> Validation:
+def _check(cfg: Config, kind: str, source: str, session_id: str | None, warn: bool) -> Validation:
     if session_id is not None and not SESSION_ID.fullmatch(session_id):
         return _fail([diagnostic(GUARD, "the policy is not named after a session")])
-    if kind not in ("json", "rego"):
-        return _fail([diagnostic("schema_error", "kind must be json or rego")])
+    if kind != "rego":
+        return _fail([diagnostic("schema_error", "kind must be rego")])
     if not isinstance(source, str) or not source:
         return _fail([diagnostic("size_error", "the policy is empty")])
     if len(source.encode("utf-8")) > MAX_SOURCE_BYTES:
         return _fail([diagnostic("size_error", f"the policy is larger than {MAX_SOURCE_BYTES} bytes")])
-
-    warnings: list[dict] = []
-    positioned = kind == "rego"
-    if kind == "json":
-        doc, pos, errors = _parse_json(cfg, source)
-        if errors:
-            return _fail(errors)
-        rego, found = translate(doc)
-        for w in found[:MAX_DIAGNOSTICS]:
-            warnings.append(diagnostic(w["code"], w["message"], *(locate(pos, w["path"]) or (None, None))))
-        if len(rego.encode("utf-8")) > MAX_SOURCE_BYTES:
-            return _fail([diagnostic("size_error", f"the Rego generated from the policy is larger than {MAX_SOURCE_BYTES} bytes")])
-    else:
-        rego = source
+    rego = source
 
     ast, errors = opa.parse(cfg.opa_bin, rego)
     if errors or ast is None:
-        return _fail(_from_opa(errors, positioned))
+        return _fail(_from_opa(errors))
     guard = _guard(ast)
     if guard:
-        if not positioned:
-            guard = [diagnostic(GUARD, "in the generated Rego: " + g["message"]) for g in guard]
         return _fail(guard)
     errors = opa.check(cfg.opa_bin, cfg.capabilities, rego)
     if errors:
-        return _fail(_from_opa(errors, positioned))
+        return _fail(_from_opa(errors))
     sid = session_id or PLACEHOLDER_SESSION
     tenant = rewrite_package(cfg, rego, ast, sid)
     if tenant is None:
-        row, col = _loc(ast["package"])
-        return _fail([diagnostic(GUARD, "the package clause must be written as: package browserjs.policy",
-                                 *((row, col) if positioned else (None, None)))])
-    return Validation(ok=True, warnings=warnings, rego=rego, hash=policy_hash(rego),
+        return _fail([diagnostic(GUARD, "the package clause must be written as: package browserjs.policy", *_loc(ast["package"]))])
+    return Validation(ok=True, warnings=lint(cfg, rego) if warn else [], rego=rego, hash=policy_hash(rego),
                       tenant_module=tenant, session_id=sid)
 
 
+# decision-module.rego.tmpl: the servers of a session and their tools.
+KNOWN_TOOLS = {
+    "browser": {"browser_execute", "desktop_execute"},
+    "exec": {"exec", "search_logs", "stream_logs"},
+}
+
+
+def _known(input_doc) -> bool:
+    if not isinstance(input_doc, dict):
+        return False
+    server, tool = input_doc.get("server"), input_doc.get("tool")
+    return isinstance(server, str) and isinstance(tool, str) and tool in KNOWN_TOOLS.get(server, ())
+
+
 def evaluate(cfg: Config, kind: str, source: str, input_doc) -> dict:
-    """POST /v1/evaluate: {ok, allow?, errors}."""
-    v = check(cfg, kind, source)
+    """POST /v1/evaluate: {ok, allow?, errors}. What a session would be
+    answered: the policy's allow_tool_call, behind the decision module's
+    refusal of servers and tools it does not know."""
+    v = check(cfg, kind, source, warn=False)
     if not v.ok:
         return {"ok": False, "errors": v.errors}
     try:
@@ -318,8 +330,7 @@ def evaluate(cfg: Config, kind: str, source: str, input_doc) -> dict:
                 out.append(diagnostic("eval_timeout", f"the evaluation took longer than {EVAL_DEADLINE_SECONDS} seconds"))
             else:
                 loc = e.get("location") or {}
-                at = (loc.get("row"), loc.get("col")) if kind == "rego" else (None, None)
-                out.append(diagnostic("eval_error", message or "the evaluation failed", *at))
+                out.append(diagnostic("eval_error", message or "the evaluation failed", loc.get("row"), loc.get("col")))
         return {"ok": False, "errors": out}
     # As the decision module has it: true and nothing else.
-    return {"ok": True, "allow": value is True, "errors": []}
+    return {"ok": True, "allow": value is True and _known(input_doc), "errors": []}

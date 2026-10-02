@@ -40,7 +40,7 @@ export function PolicyEditor(props: MonacoEditorProps) {
   )
 }
 
-// Code that is only read (the generated Rego, a policy managed as code): a
+// Code that is only read (the Policy tab, a policy managed as code): a
 // plain block, not an editor.
 export function CodeView({ code, label, height }: { code: string; label: string; height?: number }) {
   return (

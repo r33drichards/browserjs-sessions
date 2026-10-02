@@ -391,5 +391,210 @@
       }
     },
     "allow": false
+  },
+  {
+    "name": "desktop: a screenshot",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "desktop_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "screen.grab"
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "desktop: click and type",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "desktop_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "mouse.click",
+            "params": {
+              "x": 640,
+              "y": 52
+            }
+          },
+          {
+            "type": "keyboard.type",
+            "params": {
+              "text": "javascript:alert(1)"
+            }
+          },
+          {
+            "type": "keyboard.type",
+            "params": {
+              "keys": [
+                "Enter"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "desktop: a key combination",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "desktop_execute",
+      "arguments": {
+        "operations": [
+          {
+            "type": "keyboard.pressKey",
+            "params": {
+              "keys": [
+                "LeftControl",
+                "LeftShift",
+                "J"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "desktop: null arguments",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "desktop_execute",
+      "arguments": null
+    },
+    "allow": false
+  },
+  {
+    "name": "shell: a command",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "cmd": "git status",
+        "timeout": 30
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "shell: a command that talks to the browser's debugging port",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": {
+        "cmd": "curl -s http://127.0.0.1:9222/json/version",
+        "timeout": 30
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "shell: null arguments",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "exec",
+      "arguments": null
+    },
+    "allow": false
+  },
+  {
+    "name": "shell: reading a command's output",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "stream_logs",
+      "arguments": {
+        "id": "3f0e8a52-5d2b-4a57-9f3b-0c1d2e3f4a5b",
+        "offset": 0
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "shell: searching a command's output",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "search_logs",
+      "arguments": {
+        "id": "3f0e8a52-5d2b-4a57-9f3b-0c1d2e3f4a5b",
+        "pattern": "error"
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "a tool the browser server does not have",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "file_write",
+      "arguments": {
+        "operations": []
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "a server nobody has heard of",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "other",
+      "tool": "exec",
+      "arguments": {
+        "cmd": "pwd",
+        "timeout": 5
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "exec on the browser server",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "browser",
+      "tool": "exec",
+      "arguments": {
+        "cmd": "pwd",
+        "timeout": 5
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "browser_execute on the exec server",
+    "input": {
+      "operation": "mcp_call_tool",
+      "server": "exec",
+      "tool": "browser_execute",
+      "arguments": {
+        "operations": []
+      }
+    },
+    "allow": false
+  },
+  {
+    "name": "no server and no tool",
+    "input": {
+      "operation": "mcp_call_tool",
+      "arguments": {
+        "operations": []
+      }
+    },
+    "allow": false
   }
 ]

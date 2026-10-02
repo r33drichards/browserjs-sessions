@@ -75,6 +75,7 @@ difference.
   where the agent may send the browser. A link on that site, or a redirect,
   can still lead elsewhere. Policy is not a network filter.
 - **A second way to do the same thing.** The desktop capability can do what
+<<<<<<< HEAD
   a person can, including things a rule on browser operations refused. So
   can a program started with `exec`: inside the session it can drive the
   browser directly, without passing the checkpoint. A policy that restricts
@@ -86,6 +87,12 @@ difference.
   Shells, `env`, `xargs`, interpreters and many ordinary tools given the
   right arguments run other programs. Allow specific programs with specific
   arguments, not a shell, when it matters.
+=======
+  a person can, including things a rule on browser operations refused. A
+  policy that restricts the browser must also refuse or restrict
+  `desktop_execute`, and the shell likewise. The ready-made restrictive
+  policies refuse both, and saving a policy that does not gives a warning.
+>>>>>>> a40aad5 (policies are Rego only, and cover every tool of a session)
 - **What the session is signed in to.** An allowed click acts with the
   session's logins. If the session is signed in to your email, an agent
   allowed to click can send email.

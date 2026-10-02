@@ -37,17 +37,35 @@ resource "browserjs_session" "research" {
 resource "browserjs_session_policy" "research" {
   session_id  = browserjs_session.research.id
   managed_url = "https://github.com/r33drichards/infra/tree/main/browserjs"
-
-  json = jsonencode({
-    version = 1
-    allow   = { operations = ["*"] }
-    deny    = { operations = ["evaluate", "setContent"] }
-  })
+  rego        = file("${path.module}/no-scripting.rego")
 }
 ```
 
-The whole example, with the same Rego policy on two more sessions, is
+The whole example, with another policy on two more sessions, is
 [`examples/session-policies/`](../terraform-provider-browserjs/examples/session-policies/main.tf).
+
+## Writing a policy
+
+A policy is a Rego module of package `browserjs.policy` that defines
+`allow_tool_call`. Rego is the only kind: there is no JSON format. The
+platform asks the policy about every tool call an agent makes, with
+`input.server`, `input.tool` and `input.arguments`: `browser_execute` and
+`desktop_execute` on server `browser`, and `exec`, `stream_logs` and
+`search_logs` on server `exec`. A call the policy does not allow is refused,
+so a policy covers the desktop and the shell by having a rule for them, or by
+having none. The reference is
+[`contracts/policy/rego-contract.md`](contracts/policy/rego-contract.md), and
+seven policies to start from are in
+[`contracts/policy/examples/`](contracts/policy/examples/).
+
+**A policy that restricts `browser_execute` must deny `desktop_execute` and
+the `exec` server.** Either can drive the browser around the rules: the
+desktop by typing into the address bar or DevTools, a shell command by
+reaching the browser's own control ports. The API does not refuse such a
+policy; it returns a warning (`browser_bypass_desktop`,
+`browser_bypass_shell`, and `shell_bypass_desktop` for a policy that
+restricts the shell and leaves the desktop open), which the provider shows
+as a warning on `rego` at plan and at apply.
 
 ## Signing in
 
@@ -67,7 +85,8 @@ warning, since the token would cross the network in the clear.
 ## What the resources do
 
 **`browserjs_session`** creates a session and waits until its policy is
-`ready` (the unrestricted policy is loaded), for at most `timeouts.create`,
+`ready` (the unrestricted policy, which allows the browser, desktop control
+and the shell, is loaded), for at most `timeouts.create`,
 5 minutes by default. The session is written to the state before the wait, so
 one that never becomes ready is tainted rather than lost. A rename is an
 update in place. Destroying a session deletes its disk and the browser's
@@ -87,13 +106,13 @@ replacement, and that replaces the policy resource, never a session.
 
 | Situation | What a plan shows |
 |---|---|
-| The JSON is reformatted or its keys reordered | nothing. `json` is compared as parsed JSON |
-| The policy text changes | an update in place; `version`, `hash`, `compiled_rego`, `state` known after apply |
+| The policy text changes, if only in its formatting or a comment | an update in place; `version`, `hash`, `compiled_rego`, `state` known after apply |
 | Only `wait_for_ready` or `timeouts` change | an update that sends nothing to the API |
 | Somebody chose "Manage here instead" in the UI | `managed_url` changing from `""`; the apply takes the policy back |
 | Somebody edited the policy in the UI | the source changing back, and `managed_url` from `""` |
 | The session is gone | the policy to be created again (and failing, unless the session is too) |
-| The policy does not validate | an error on `json` or `rego` with its line and column, from `POST /policies/validate` |
+| The policy does not validate | an error on `rego` with its line and column, from `POST /policies/validate` |
+| The policy leaves a way around its own rules | a warning on `rego`, with no line: it is about the policy as a whole |
 | The API cannot validate just now (503) | a warning; the apply validates again before saving |
 
 An apply waits for the policy to be in force: on `202` it polls until `ready`,
@@ -118,20 +137,16 @@ first apply puts it in `iac` mode.
   exactly one). The way to manage the policy of a session made in the UI
   without importing the session.
 - `browserjs_sessions`: all of the token owner's sessions.
-- `browserjs_policy_document`: renders the JSON policy format from HCL
-  blocks, as `aws_iam_policy_document` does for IAM. It calls nothing. The
-  five policies of `contracts/policy/examples/` are a test of it.
+
+There is no data source that builds a policy: a policy is a `.rego` file,
+read with `file()`, or a heredoc.
 
 ## Where the contract was silent
 
 - `timeouts.create` exists on `browserjs_session_policy` beside the
   contract's `timeouts.update`, with the same default.
-- `browserjs_policy_document` has `description`, which the JSON format has
-  and the contract's list of blocks leaves out.
-- A `constraint` block's `allowed` is a list of strings.
-  `allowed_numbers` and `allowed_booleans` carry the other two types the JSON
-  format allows there; all three render into one `allowed` array. The plugin
-  framework has no mixed-type list inside a block.
+- A read that finds a policy of a kind other than `rego` is an error. The
+  API has no other kind; the provider does not guess at one.
 - Renaming a session uses `PATCH /sessions/{id}` and deleting one
   `DELETE /sessions/{id}`, which exist today and which `backend-api.yaml`, a
   fragment, covers with "keep their behaviour".
@@ -145,7 +160,7 @@ OpenTofu 1.10.7 and Terraform 1.16.4. Until tracks C and E are merged and
 deployed, nothing has run against the real API: token authentication on the
 `api.` host, the operator's diagnostics (their `row` and `col`), how long a
 real policy takes to be `ready`, and whether the API returns `source` byte
-for byte as it was sent (the provider tolerates reformatted JSON, not
-reformatted Rego). The acceptance tests are the check:
+for byte as it was sent (`rego` is compared as text, so a reformatted one
+would plan a change). The acceptance tests are the check:
 `BROWSERJS_ENDPOINT=… BROWSERJS_TOKEN=… make testacc` against a local
 deployment.

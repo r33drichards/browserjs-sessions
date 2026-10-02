@@ -91,7 +91,7 @@ async def test_last_good_in_memory_stays_in_force(cfg):
 async def test_last_good_from_status_after_a_restart(cfg):
     op = Operator(cfg)
     await op.first_pass([resource("s-aaaaa", "rego", BROKEN, status={"rego": DENY_ALL, "hash": policy_hash(DENY_ALL)}),
-                         resource("s-bbbbb", "json", "{", status={})])
+                         resource("s-bbbbb", "json", "{}", status={})])
     assert loaded_document(op) == {"s-aaaaa": policy_hash(DENY_ALL)}
     assert not op.sessions["s-aaaaa"].validation.ok
 

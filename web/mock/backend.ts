@@ -3,11 +3,23 @@
 // State is in memory. It is the cookie caller: it may write a policy in
 // `editor` mode and is refused in `iac` mode.
 //
-// What it does not do: compile Rego. A JSON policy is checked against the
-// rules of the schema that matter to the UI and evaluated by the JSON
-// format's own semantics; its "generated Rego" is the contract's example when
-// the policy is one of the presets, and a placeholder otherwise. A Rego
-// policy is "valid" when it has the package and an allow_tool_call rule.
+// What it does not do: compile or run Rego. A policy is a Rego module and
+// this file has no Rego engine, so:
+//
+//   validate   checks three things: the package clause, a call to http.send
+//              (an error with a position), and a module with no
+//              allow_tool_call (a warning). It also warns, without a
+//              position, when a module that looks at the browser's
+//              operations names the exec server or desktop_execute, the way
+//              the real check warns about a restriction that another tool
+//              walks around. Everything else is "valid".
+//   evaluate   a server and tool the platform does not know are refused,
+//              as a session refuses them. Then, when the source is one of
+//              the presets and the input is one of that preset's cases
+//              (examples/<id>.cases.json), the answer is the case's. For
+//              anything else it is a placeholder, not the policy's answer:
+//              the unrestricted module allows, and every other module allows
+//              browser_execute and nothing else.
 
 import { createBillingMock } from "./billing"
 
@@ -33,7 +45,7 @@ interface Diagnostic {
 }
 
 interface Source {
-  kind: "json" | "rego"
+  kind?: "rego" // the only kind; may be left out
   source: string
 }
 
@@ -43,10 +55,11 @@ interface Management {
 }
 
 interface StoredPolicy extends Source {
+  kind: "rego"
   version: number
   management: Management
   state: "ready" | "loading" | "invalid"
-  rego: string
+  rego: string // the last source that compiled
   errors: Diagnostic[]
   updated: string
   updated_by: string
@@ -66,16 +79,23 @@ interface StoredSession {
   deleteAfter?: string
 }
 
-export interface Preset extends Source {
+export interface PresetCase {
+  name: string
+  input: unknown
+  allow: boolean
+}
+
+export interface Preset {
   id: string
   title: string
   description: string
-  rego: string // the contract's examples/<id>.rego
+  kind: "rego"
+  source: string // the contract's examples/<id>.rego
+  cases: PresetCase[] // examples/<id>.cases.json
 }
 
 export interface MockOptions {
   presets: Preset[] // `unrestricted` first
-  schema: unknown // json-policy.schema.json
   policies?: boolean // false: a backend with the feature off (default true)
   tokens?: boolean // false: a backend without /tokens (default true)
   seed?: boolean // sessions in every policy state (default true)
@@ -84,7 +104,9 @@ export interface MockOptions {
   now?: () => Date
 }
 
-const OPERATIONS = ["click", "evaluate", "navigate", "press", "screenshot", "select", "setContent", "setViewport", "type", "url", "wait"]
+// The tools a policy is asked about, by server. Any other pair is refused.
+const TOOLS: Record<string, string[]> = { browser: ["browser_execute", "desktop_execute"], exec: ["exec", "stream_logs", "search_logs"] }
+const UNRESTRICTED = "packagebrowserjs.policyimportrego.v1allow_tool_call:=true"
 const SCOPES = ["sessions:read", "sessions:write", "policies:read", "policies:write"]
 const ME = { email: "you@example.com", name: "You", admin: false }
 const SESSION_ID = /^s-([a-z2-7]{10}|[a-z0-9]{5})$/
@@ -100,80 +122,66 @@ function position(source: string, index: number) {
   return { row, col: before.length - before.lastIndexOf("\n") }
 }
 
-function closest(word: string): string | undefined {
-  return OPERATIONS.find(op => op.toLowerCase().startsWith(word.toLowerCase().slice(0, 3)))
+const withoutComments = (source: string) => source.replace(/#.*$/gm, "")
+
+// Key order aside, the same JSON value.
+function sameJson(a: unknown, b: unknown): boolean {
+  if (a === b) return true
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false
+  if (Array.isArray(a) !== Array.isArray(b)) return false
+  const [ka, kb] = [Object.keys(a), Object.keys(b)]
+  return ka.length === kb.length && ka.every(k => k in b && sameJson((a as any)[k], (b as any)[k]))
 }
 
 export function createMockBackend(options: MockOptions) {
-  const { presets, schema, policies = true, tokens: tokensOn = true, seed = true, now = () => new Date() } = options
+  const { presets, policies = true, tokens: tokensOn = true, seed = true, now = () => new Date() } = options
   const sessions = new Map<string, StoredSession>()
   const tokens: { id: string; name: string; scopes: string[]; created: string; expires: string; last_used?: string }[] = []
   let counter = 0
 
-  const presetRego = (source: string) => {
-    try {
-      const wanted = JSON.stringify(JSON.parse(source))
-      return presets.find(p => p.kind === "json" && JSON.stringify(JSON.parse(p.source)) === wanted)?.rego
-    } catch {
-      return undefined
-    }
-  }
-
-  function validate({ kind, source }: Source): { ok: boolean; rego?: string; hash?: string; errors: Diagnostic[]; warnings: Diagnostic[] } {
+  function validate({ source }: Source): { ok: boolean; rego?: string; hash?: string; errors: Diagnostic[]; warnings: Diagnostic[] } {
     const errors: Diagnostic[] = []
     const warnings: Diagnostic[] = []
-    let rego: string | undefined
-    if (kind === "json") {
-      let doc: any
-      try {
-        doc = JSON.parse(source)
-      } catch (e) {
-        const at = /position (\d+)/.exec(String((e as Error).message))
-        errors.push({ ...position(source, at ? Number(at[1]) : 0), code: "json_parse_error", message: (e as Error).message })
-      }
-      if (doc !== undefined) {
-        if (doc === null || typeof doc !== "object" || Array.isArray(doc)) {
-          errors.push({ row: 1, col: 1, code: "schema_error", message: "a policy is a JSON object" })
-        } else {
-          if (doc.version !== 1) errors.push({ ...position(source, source.indexOf('"version"')), code: "schema_error", message: "version must be 1" })
-          for (const key of Object.keys(doc)) {
-            if (!["version", "description", "allow", "deny"].includes(key))
-              errors.push({ ...position(source, source.indexOf(`"${key}"`)), code: "schema_error", message: `unknown property "${key}"` })
-          }
-          const named: string[] = [
-            ...(doc.allow?.operations ?? []),
-            ...(doc.deny?.operations ?? []),
-            ...(doc.allow?.rules ?? []).map((r: any) => r?.operation),
-          ]
-          for (const op of named) {
-            if (op === "*" || OPERATIONS.includes(op)) continue
-            const hint = closest(String(op))
-            errors.push({
-              ...position(source, source.indexOf(`"${op}"`)),
-              code: "unknown_operation",
-              message: `unknown operation "${op}"${hint ? `; did you mean "${hint}"?` : ""}`,
-            })
-          }
-          if (!doc.allow) warnings.push({ row: 1, col: 1, code: "allows_nothing", message: "this policy allows nothing: it has no allow section" })
-        }
-      }
-      if (errors.length === 0) {
-        rego =
-          presetRego(source) ??
-          "# Generated from a browserjs JSON policy (version 1). Edit the JSON, not this file.\n" +
-            "package browserjs.policy\n\nimport rego.v1\n\n# (mock backend: the real translation comes from the policy operator)\n"
-      }
-    } else {
-      if (!/^\s*package\s+browserjs\.policy\s*$/m.test(source))
-        errors.push({ row: 1, col: 1, code: "rego_package", message: "the module must be package browserjs.policy" })
-      const sent = source.indexOf("http.send")
-      if (sent >= 0) errors.push({ ...position(source, sent), code: "rego_type_error", message: "undefined function http.send" })
-      if (!/\ballow_tool_call\b/.test(source))
-        warnings.push({ row: 1, col: 1, code: "no_allow_rule", message: "no allow_tool_call rule: every call is refused" })
-      if (errors.length === 0) rego = source
+    const code = withoutComments(source)
+    if (!/^\s*package\s+browserjs\.policy\s*$/m.test(source))
+      errors.push({ row: 1, col: 1, code: "rego_package", message: "the module must be package browserjs.policy" })
+    const sent = source.indexOf("http.send")
+    if (sent >= 0) errors.push({ ...position(source, sent), code: "rego_type_error", message: "undefined function http.send" })
+    if (!/\ballow_tool_call\b/.test(code))
+      warnings.push({ row: 1, col: 1, code: "no_allow_rule", message: "no allow_tool_call rule: every call is refused" })
+    // A stand-in for the real check's bypass warnings, which have no position.
+    if (/\.arguments\.operations\b/.test(code)) {
+      if (code.includes('"desktop_execute"'))
+        warnings.push({
+          code: "browser_bypass_desktop",
+          message:
+            "this policy restricts what browser_execute may do and allows desktop_execute, which can type into the address bar or DevTools and so do in the browser what the policy refuses",
+        })
+      if (code.includes('"exec"'))
+        warnings.push({
+          code: "browser_bypass_shell",
+          message:
+            "this policy restricts what browser_execute may do and allows the shell, where a command can reach the browser's own control ports and so do in the browser what the policy refuses",
+        })
     }
     const ok = errors.length === 0
-    return { ok, ...(ok ? { rego, hash: hash(source) } : {}), errors, warnings }
+    return { ok, ...(ok ? { rego: source, hash: hash(source) } : {}), errors, warnings }
+  }
+
+  // The 400 of a request whose policy is not a Rego source.
+  const malformed = (input: any): MockResponse | undefined => {
+    if (input?.kind !== undefined && input.kind !== "rego") return error(400, 'kind must be "rego"')
+    if (typeof input?.source !== "string") return error(400, "source must be a string")
+    return undefined
+  }
+
+  // See the top of this file: a preset's cases, or a placeholder.
+  function evaluate(source: string, input: any): boolean {
+    if (!TOOLS[input?.server]?.includes(input?.tool)) return false
+    const expected = presets.find(p => p.source === source)?.cases.find(c => sameJson(c.input, input))
+    if (expected) return expected.allow
+    if (withoutComments(source).replace(/\s+/g, "") === UNRESTRICTED) return true
+    return input.tool === "browser_execute"
   }
 
   function hash(source: string): string {
@@ -182,47 +190,10 @@ export function createMockBackend(options: MockOptions) {
     return "sha256:" + (h >>> 0).toString(16).padStart(8, "0").repeat(8)
   }
 
-  // The JSON format's semantics (json-policy.schema.json's description).
-  function evaluateJson(doc: any, input: any): boolean {
-    if (input?.server !== "browser" || input?.tool !== "browser_execute") return false
-    const ops = input?.arguments?.operations
-    if (!Array.isArray(ops)) return false
-    const denied: string[] = doc.deny?.operations ?? []
-    const allowed: string[] = doc.allow?.operations ?? []
-    const rules: any[] = doc.allow?.rules ?? []
-    return ops.every(op => {
-      if (!OPERATIONS.includes(op?.type) || denied.includes(op.type)) return false
-      if (allowed.includes("*") || allowed.includes(op.type)) return true
-      return rules.some(rule => rule.operation === op.type && Object.entries(rule.constraints ?? {}).every(([name, c]) => passes(c, op.params?.[name])))
-    })
-  }
-
-  function passes(c: any, value: unknown): boolean {
-    if (value === undefined) return false
-    if (c.min !== undefined && !(typeof value === "number" && value >= c.min)) return false
-    if (c.max !== undefined && !(typeof value === "number" && value <= c.max)) return false
-    if (c.max_length !== undefined && !(typeof value === "string" && value.length <= c.max_length)) return false
-    if (c.pattern !== undefined && !(typeof value === "string" && new RegExp(c.pattern).test(value))) return false
-    if (c.allowed !== undefined && !c.allowed.includes(value)) return false
-    if (c.hosts !== undefined || c.schemes !== undefined) {
-      let url: URL
-      try {
-        url = new URL(String(value))
-      } catch {
-        return false
-      }
-      const schemes: string[] = c.schemes ?? ["http", "https"]
-      if (!schemes.includes(url.protocol.replace(":", ""))) return false
-      const host = url.hostname.toLowerCase()
-      if (c.hosts && !c.hosts.some((h: string) => (h.startsWith("*.") ? host.endsWith(h.slice(1)) : host === h))) return false
-    }
-    return true
-  }
-
   function store(input: Source, management: Management, by: string, previous?: StoredPolicy, loading = false): StoredPolicy {
     const verdict = validate(input)
     return {
-      kind: input.kind,
+      kind: "rego",
       source: input.source,
       version: (previous?.version ?? 0) + 1,
       management,
@@ -260,7 +231,7 @@ export function createMockBackend(options: MockOptions) {
       source: p.source,
       rego: p.rego,
       errors: p.errors,
-      warnings: [],
+      warnings: validate(p).warnings,
       loaded: { replicas: p.state === "ready" ? total : p.state === "loading" ? 1 : 0, total },
       updated: p.updated,
       updated_by: p.updated_by,
@@ -284,16 +255,15 @@ export function createMockBackend(options: MockOptions) {
     addSession("scratch", store(unrestricted, { mode: "editor" }, "ui"))
     addSession(
       "ci-runner",
-      store(
-        { kind: "rego", source: pick("observe-only").rego.replace(/^# Generated.*\n/, "") },
-        { mode: "iac", managed_url: "https://github.com/me/infra/blob/main/browserjs/main.tf" },
-        "token:ci",
-      ),
+      store(pick("observe-only"), { mode: "iac", managed_url: "https://github.com/me/infra/blob/main/browserjs/main.tf" }, "token:ci"),
     )
     addSession("just-saved", store(pick("no-scripting"), { mode: "editor" }, "ui", undefined, true))
+    // A source that stopped compiling: the one before it is still in force.
     const broken = addSession("broken", store(pick("form-filling"), { mode: "editor" }, "ui"))
+    const lines = broken.policy!.source.replace(/\n$/, "").split("\n")
+    broken.policy!.source += "\nallow_tool_call if http.send({})\n"
     broken.policy!.state = "invalid"
-    broken.policy!.errors = [{ row: 4, col: 21, code: "rego_compile_error", message: "the policy no longer compiles under the current capabilities" }]
+    broken.policy!.errors = [{ row: lines.length + 2, col: 20, code: "rego_type_error", message: "undefined function http.send" }]
     addSession("from-before", undefined, { unsupported: true, state: "asleep" })
   }
   const billing = createBillingMock({
@@ -329,6 +299,8 @@ export function createMockBackend(options: MockOptions) {
       if (policies) {
         const input: Source = body.policy ?? presets[0]
         const management: Management = body.policy?.management ?? { mode: "editor" }
+        const bad = malformed(input)
+        if (bad) return bad
         const verdict = validate(input)
         if (!verdict.ok) return error(422, "the policy does not validate", { errors: verdict.errors, warnings: verdict.warnings })
         if (management.mode === "iac" && !/^https:\/\//.test(management.managed_url ?? ""))
@@ -383,12 +355,14 @@ export function createMockBackend(options: MockOptions) {
           const ifMatch = req.headers?.["if-match"]
           if (ifMatch !== undefined && ifMatch !== `"${p.version}"`) return error(412, "the policy has changed since that version")
           const input: Source = method === "DELETE" ? presets[0] : { kind: body.kind, source: body.source }
+          const bad = malformed(input)
+          if (bad) return bad
           const verdict = validate(input)
           if (!verdict.ok) return error(422, "the policy does not validate", { errors: verdict.errors, warnings: verdict.warnings })
           // A request that changes nothing is 200 and does not raise the version.
-          if (p.kind === input.kind && p.source === input.source) return json(200, policyView(s))
-          // A policy whose description says "slow" stays `loading` for a while: the 202 path.
-          const slow = /"description":\s*"[^"]*slow/.test(input.source)
+          if (p.source === input.source) return json(200, policyView(s))
+          // A policy with a comment that says "slow" stays `loading` for a while: the 202 path.
+          const slow = /#.*\bslow\b/.test(input.source)
           s.policy = store(input, body.management ?? { mode: "editor" }, "ui", p, slow)
           return json(slow ? 202 : 200, policyView(s), { ETag: `"${s.policy.version}"` })
         }
@@ -404,15 +378,14 @@ export function createMockBackend(options: MockOptions) {
     }
 
     if (policies) {
-      if (route === "POST /policies/validate") return json(200, validate(body))
+      if (route === "POST /policies/validate") return malformed(body) ?? json(200, validate(body))
       if (route === "POST /policies/evaluate") {
+        const bad = malformed(body)
+        if (bad) return bad
         const verdict = validate(body)
         if (!verdict.ok) return json(200, { ok: false, errors: verdict.errors })
-        // Rego is not evaluated here: a module with an allow rule allows.
-        const allow = body.kind === "json" ? evaluateJson(JSON.parse(body.source), body.input) : /\ballow_tool_call\b/.test(body.source)
-        return json(200, { ok: true, allow })
+        return json(200, { ok: true, allow: evaluate(body.source, body.input) })
       }
-      if (route === "GET /policy-schema.json") return json(200, schema, { "Content-Type": "application/schema+json" })
       if (route === "GET /policy-presets")
         return json(200, presets.map(({ id, title, description, kind, source }) => ({ id, title, description, kind, source })))
     }
@@ -464,30 +437,36 @@ export function createMockBackend(options: MockOptions) {
 
 export type MockBackend = ReturnType<typeof createMockBackend>
 
-const TITLES: Record<string, string> = {
-  unrestricted: "No restrictions",
-  "no-scripting": "No scripting",
-  "observe-only": "Observe only",
-  "one-site": "One site",
-  "form-filling": "Form filling",
+// The titles that are not their id with spaces.
+const TITLES: Record<string, string> = { "read-only-shell": "Read-only shell" }
+
+// "No scripting" of "no-scripting".
+function presetTitle(id: string): string {
+  const words = id.replace(/-/g, " ")
+  return TITLES[id] ?? words[0].toUpperCase() + words.slice(1)
 }
 
-// The presets as the backend serves them: the contract's examples, `unrestricted` first.
+// The comment a preset begins with, as one line.
+export function presetDescription(source: string): string {
+  const words: string[] = []
+  for (const line of source.split("\n")) {
+    if (!line.startsWith("#")) break
+    words.push(...line.slice(1).split(/\s+/).filter(Boolean))
+  }
+  return words.join(" ")
+}
+
+// The presets as the backend serves them: the contract's examples/<id>.rego,
+// `unrestricted` first, each with its examples/<id>.cases.json.
 export function presetsFromExamples(files: Record<string, string>): Preset[] {
+  const file = (name: string) => files[Object.keys(files).find(n => n.split("/").pop() === name) ?? ""]
   const ids = Object.keys(files)
-    .map(name => /([^/]+)\.policy\.json$/.exec(name)?.[1])
+    .map(name => /([^/]+)\.rego$/.exec(name)?.[1])
     .filter((id): id is string => !!id)
-    .sort((a, b) => (a === "unrestricted" ? -1 : b === "unrestricted" ? 1 : a.localeCompare(b)))
+    .sort((a, b) => (a === "unrestricted" ? -1 : b === "unrestricted" ? 1 : a < b ? -1 : 1))
   return ids.map(id => {
-    const source = files[Object.keys(files).find(n => n.endsWith(`${id}.policy.json`))!]
-    const rego = files[Object.keys(files).find(n => n.endsWith(`${id}.rego`))!] ?? ""
-    return {
-      id,
-      title: TITLES[id] ?? id,
-      description: String(JSON.parse(source).description ?? ""),
-      kind: "json" as const,
-      source,
-      rego,
-    }
+    const source = file(`${id}.rego`)
+    const cases = file(`${id}.cases.json`)
+    return { id, title: presetTitle(id), description: presetDescription(source), kind: "rego", source, cases: cases ? JSON.parse(cases) : [] }
   })
 }

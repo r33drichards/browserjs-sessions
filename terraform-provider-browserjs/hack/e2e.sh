@@ -2,7 +2,8 @@
 # End to end, with a real tofu (or terraform) and no real API: builds the
 # provider and the fake API, installs the provider with dev_overrides, and
 # takes examples/session-policies through plan, apply, an in-place policy
-# edit, a policy that does not validate, and destroy.
+# edit, a policy the API warns about, a policy that does not validate, and
+# destroy.
 #
 #   hack/e2e.sh [tofu|terraform]
 set -euo pipefail
@@ -74,8 +75,16 @@ step "plan again: nothing to change"
 expect 0 "No changes." "$tf" plan -no-color -detailed-exitcode
 
 step "edit a policy: one update in place, no session touched"
-sed -i.bak 's/"evaluate", "setContent"\]/"evaluate", "setContent", "navigate"]/' main.tf
+sed -i.bak 's/"navigate", //' no-scripting.rego
 expect 2 "Plan: 0 to add, 1 to change, 0 to destroy." "$tf" plan -no-color -detailed-exitcode
+expect 0 "Apply complete! Resources: 0 added, 1 changed, 0 destroyed." "$tf" apply -auto-approve -no-color
+
+step "a policy that leaves the desktop open is applied, with a warning"
+cp no-scripting.rego no-scripting.rego.orig
+printf '\nallow_tool_call if {\n\tinput.server == "browser"\n\tinput.tool == "desktop_execute"\n}\n' >> no-scripting.rego
+expect 2 "(browser_bypass_desktop)" "$tf" plan -no-color -detailed-exitcode
+expect 0 "(browser_bypass_desktop)" "$tf" apply -auto-approve -no-color
+mv no-scripting.rego.orig no-scripting.rego
 expect 0 "Apply complete! Resources: 0 added, 1 changed, 0 destroyed." "$tf" apply -auto-approve -no-color
 
 step "a policy that does not validate fails the plan, with its line and column"

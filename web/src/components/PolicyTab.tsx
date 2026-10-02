@@ -109,7 +109,9 @@ export function PolicyTab({ sessionId, sessionName, summary }: Props) {
   }
 
   const copyOptions = others.map(s => ({ value: s.id, label: s.name }))
-  const fileName = policy.kind === "rego" ? "policy.rego" : "policy.json"
+  const warnings = policy.warnings ?? []
+  // A source that does not compile leaves the last one that did in force.
+  const inForce = policy.state === "invalid" && policy.rego && policy.rego !== policy.source ? policy.rego : ""
 
   return (
     <SpaceBetween size="m">
@@ -145,6 +147,15 @@ export function PolicyTab({ sessionId, sessionName, summary }: Props) {
           </ul>
         </Alert>
       )}
+      {warnings.length > 0 && (
+        <Alert type="warning" header={warnings.length === 1 ? "This policy has a warning" : "This policy has warnings"}>
+          <ul className="wf-problems" aria-label="Warnings">
+            {warnings.map((d, i) => (
+              <li key={i}>{problemLine(d)}</li>
+            ))}
+          </ul>
+        </Alert>
+      )}
       {notice ? (
         <Alert type="success" dismissible onDismiss={() => setNotice("")}>
           {notice}
@@ -161,7 +172,7 @@ export function PolicyTab({ sessionId, sessionName, summary }: Props) {
         header={
           <Header
             variant="h2"
-            description="What an agent connected over MCP may ask this browser to do. It does not restrict you at the screen."
+            description="What an agent connected over MCP may do in the browser, on the desktop and in the shell. It does not restrict you at the screen."
             actions={
               asCode ? (
                 <Button onClick={() => navigate(editPath)}>View source</Button>
@@ -218,20 +229,18 @@ export function PolicyTab({ sessionId, sessionName, summary }: Props) {
             </div>
           </ColumnLayout>
 
-          {isUnrestricted(policy) && <Box>No restrictions: an agent may use every browser operation.</Box>}
+          {isUnrestricted(policy) && <Box>No restrictions: an agent may use the browser, the desktop and the shell.</Box>}
 
-          <ColumnLayout columns={policy.kind === "json" ? 2 : 1}>
+          <div>
+            <Box variant="awsui-key-label">policy.rego (read-only)</Box>
+            <CodeView code={policy.source ?? ""} label="policy.rego, read-only" height={320} />
+          </div>
+          {inForce && (
             <div>
-              <Box variant="awsui-key-label">{fileName} (read-only)</Box>
-              <CodeView code={policy.source ?? ""} label={`${fileName}, read-only`} height={320} />
+              <Box variant="awsui-key-label">Policy in force (read-only)</Box>
+              <CodeView code={inForce} label="Policy in force, read-only" height={320} />
             </div>
-            {policy.kind === "json" && (
-              <div>
-                <Box variant="awsui-key-label">Generated Rego (read-only)</Box>
-                <CodeView code={policy.rego ?? ""} label="Generated Rego, read-only" height={320} />
-              </div>
-            )}
-          </ColumnLayout>
+          )}
         </SpaceBetween>
       </Container>
 
@@ -268,8 +277,8 @@ export function PolicyTab({ sessionId, sessionName, summary }: Props) {
             </Box>
           }
         >
-          The policy of {sessionName} is replaced by one with no restrictions: an agent may then use every browser
-          operation. The policy it has now is not kept.
+          The policy of {sessionName} is replaced by one with no restrictions: an agent may then use the browser,
+          the desktop and the shell. The policy it has now is not kept.
         </Modal>
       )}
 

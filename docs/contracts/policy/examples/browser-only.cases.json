@@ -34,44 +34,6 @@
     "allow": true
   },
   {
-    "name": "another server",
-    "input": {
-      "operation": "mcp_call_tool",
-      "server": "other",
-      "tool": "browser_execute",
-      "arguments": {
-        "operations": [
-          {
-            "type": "click",
-            "params": {
-              "selector": "a"
-            }
-          }
-        ]
-      }
-    },
-    "allow": false
-  },
-  {
-    "name": "another tool",
-    "input": {
-      "operation": "mcp_call_tool",
-      "server": "browser",
-      "tool": "other_tool",
-      "arguments": {
-        "operations": [
-          {
-            "type": "click",
-            "params": {
-              "selector": "a"
-            }
-          }
-        ]
-      }
-    },
-    "allow": false
-  },
-  {
     "name": "operation without a type",
     "input": {
       "operation": "mcp_call_tool",
@@ -181,7 +143,7 @@
         ]
       }
     },
-    "allow": true
+    "allow": false
   },
   {
     "name": "desktop: click and type",
@@ -215,7 +177,7 @@
         ]
       }
     },
-    "allow": true
+    "allow": false
   },
   {
     "name": "desktop: a key combination",
@@ -238,7 +200,7 @@
         ]
       }
     },
-    "allow": true
+    "allow": false
   },
   {
     "name": "desktop: null arguments",
@@ -248,7 +210,7 @@
       "tool": "desktop_execute",
       "arguments": null
     },
-    "allow": true
+    "allow": false
   },
   {
     "name": "shell: a command",
@@ -261,7 +223,7 @@
         "timeout": 30
       }
     },
-    "allow": true
+    "allow": false
   },
   {
     "name": "shell: a command that talks to the browser's debugging port",
@@ -274,7 +236,7 @@
         "timeout": 30
       }
     },
-    "allow": true
+    "allow": false
   },
   {
     "name": "shell: null arguments",
@@ -284,7 +246,7 @@
       "tool": "exec",
       "arguments": null
     },
-    "allow": true
+    "allow": false
   },
   {
     "name": "shell: reading a command's output",
@@ -297,7 +259,7 @@
         "offset": 0
       }
     },
-    "allow": true
+    "allow": false
   },
   {
     "name": "shell: searching a command's output",
@@ -310,7 +272,7 @@
         "pattern": "error"
       }
     },
-    "allow": true
+    "allow": false
   },
   {
     "name": "a tool the browser server does not have",

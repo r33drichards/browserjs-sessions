@@ -87,8 +87,9 @@ async def _policy_source(request: web.Request, limit: int):
         return None, _error("the body is not JSON")
     if not isinstance(doc, dict):
         return None, _error("the body must be a JSON object")
-    if doc.get("kind") not in ("json", "rego"):
-        return None, _error("kind must be json or rego")
+    # Rego is the only kind there is; the field may be left out.
+    if doc.setdefault("kind", "rego") != "rego":
+        return None, _error("kind must be rego")
     if not isinstance(doc.get("source"), str) or not doc["source"]:
         return None, _error("source must be a string that is not empty")
     return doc, None
@@ -120,13 +121,6 @@ async def evaluate_(request: web.Request) -> web.Response:
     return web.json_response(out)
 
 
-async def schema(request: web.Request) -> web.Response:
-    op = request.app[OPERATOR]
-    if not _authorized(request, op.cfg.api_token):
-        return _unauthorized()
-    return web.Response(body=op.cfg.schema.read_bytes(), content_type="application/schema+json")
-
-
 def make_app(op: Operator) -> web.Application:
     # aiohttp refuses larger bodies itself, with 413.
     app = web.Application(client_max_size=MAX_EVALUATE_BODY)
@@ -136,7 +130,6 @@ def make_app(op: Operator) -> web.Application:
     app.router.add_get("/bundles/browserjs.tar.gz", bundle)
     app.router.add_post("/v1/validate", validate)
     app.router.add_post("/v1/evaluate", evaluate_)
-    app.router.add_get("/v1/schema", schema)
     return app
 
 

@@ -1,6 +1,0 @@
-{
-  "version": 1,
-  "description": "Everything except running script in the page or replacing its content.",
-  "allow": { "operations": ["*"] },
-  "deny": { "operations": ["evaluate", "setContent"] }
-}

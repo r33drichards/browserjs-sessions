@@ -166,22 +166,22 @@ goes the same way as `browser_execute`: mcp-js asks its own file policy,
 which allows both tools, and then OPA, at the same decision path, with
 `input.tool` naming the tool. So a session's policy can allow or deny it.
 
-What the policies of today do with it: **every JSON policy denies it**,
-the unrestricted one and every preset included, because the Rego a JSON
-policy compiles to begins with `input.tool == "browser_execute"`
-(`contracts/policy/json-to-rego.md`). Only a `kind: rego` policy that names
-`desktop_execute` allows it. Both are checked on kind (item 5).
+What a policy does with it is the policy's own text: policies are Rego
+([`contracts/policy/rego-contract.md`](contracts/policy/rego-contract.md)),
+`allow_tool_call` is asked for every call, and the decision module refuses
+any server or tool it does not list. The unrestricted policy, which a new
+session gets, allows the desktop (and the shell). Every preset that
+restricts the browser denies both, because either can drive the browser
+around its rules: with the mouse and keyboard, or with a command that
+reaches the browser's control ports on loopback. A policy that does
+otherwise is saved with a warning (`browser_bypass_desktop`,
+`browser_bypass_shell`, `shell_bypass_desktop`). The desktop under the
+unrestricted policy and under `no-scripting` is checked on kind (item 5).
 
-So with enforcement on, nothing restrictive leaves the desktop open: a
-session restricted to one site cannot be walked around with the mouse. And
-desktop control does not work at all in a session made after `enforcing`,
-unless its owner writes a Rego policy for it. That is safe, and it is a
-loss of a feature for those sessions. Making it a choice needs a change to
-the contract, not to the deployment: a field of the JSON format for the
-desktop tool, its translation and cases (`json-policy.schema.json`,
-`json-to-rego.md`, `examples/`; then the operator's translator and the
-UI), and a decision on whether the default policy of a new session allows
-it.
+The shell is a second upstream server of mcp-js, `exec`
+(mcp-exec in the browser container), with the tools `exec`, `stream_logs`
+and `search_logs`. The decision module already lists them; nothing in the
+deployment of OPA or the operator changes when that server is added.
 
 ## Rolling out on production, from workflows only
 
@@ -315,8 +315,9 @@ those of run 36971833355, the first.
    with errors while the previous policy stays in force; a delete goes
    through the finalizer and the session is denied 0.18 s later; the
    operator is not restarted over 75 s (kopf's liveness on 8081). Under
-   the unrestricted JSON policy `desktop_execute` is denied; under a Rego
-   policy that names it, it runs, and `browser_execute` still does.
+   the unrestricted policy `desktop_execute` runs, and under `no-scripting`
+   it is denied. (As of the Rego-only presets; see the job's summary for
+   the last run.)
 
 Three things this found:
 

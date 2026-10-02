@@ -1,19 +1,25 @@
 import { describe, expect, it } from "vitest"
-import { mergeProblems, problemLine, toMarker, toMarkers } from "./markers"
-import { regoKeywords, regoMonarch } from "./rego"
+import { problemLine, toMarker, toMarkers } from "./markers"
+import { REGO_TEMPLATE, regoKeywords, regoMonarch } from "./rego"
 
-const source = '{\n  "version": 1,\n  "allow": {\n    "operations": ["clik"]\n  }\n}\n'
+const source = 'package browserjs.policy\n\nallow_tool_call if {\n\tinput.tool == "browser_execute"\n}\n'
 
 describe("markers", () => {
   it("ends a marker at the end of the token the server pointed at", () => {
-    const m = toMarker({ row: 4, col: 20, code: "unknown_operation", message: "unknown operation" }, source, "error")
-    expect(m).toMatchObject({ startLineNumber: 4, startColumn: 20, endLineNumber: 4, endColumn: 26, severity: "error" })
-    expect(source.split("\n")[3].slice(m.startColumn - 1, m.endColumn - 1)).toBe('"clik"')
+    const m = toMarker({ row: 4, col: 16, code: "rego_type_error", message: "match error" }, source, "error")
+    expect(m).toMatchObject({ startLineNumber: 4, startColumn: 16, endLineNumber: 4, endColumn: 33, severity: "error" })
+    expect(source.split("\n")[3].slice(m.startColumn - 1, m.endColumn - 1)).toBe('"browser_execute"')
   })
 
-  it("covers the line when there is no column, and the first line when there is no place", () => {
-    expect(toMarker({ row: 2, code: "c", message: "m" }, source, "warning")).toMatchObject({ startLineNumber: 2, startColumn: 1, endColumn: 16 })
-    expect(toMarker({ code: "c", message: "m" }, source, "error")).toMatchObject({ startLineNumber: 1, startColumn: 1, endColumn: 2 })
+  it("covers the line when there is no column", () => {
+    expect(toMarker({ row: 3, code: "c", message: "m" }, source, "warning")).toMatchObject({ startLineNumber: 3, startColumn: 1, endColumn: 21 })
+  })
+
+  it("gives a diagnostic without a place no marker", () => {
+    const bypass = { code: "browser_bypass_shell", message: "the shell walks around this" }
+    expect(toMarkers([{ code: "e", message: "nowhere" }], [bypass, { row: 2, col: 1, code: "w", message: "here" }], source)).toEqual([
+      expect.objectContaining({ startLineNumber: 2, severity: "warning", code: "w" }),
+    ])
   })
 
   it("keeps a position past the end of the source inside it", () => {
@@ -25,17 +31,8 @@ describe("markers", () => {
   it("puts errors before warnings and formats a problem line", () => {
     const all = toMarkers([{ row: 1, col: 1, code: "e", message: "bad" }], [{ row: 2, col: 1, code: "w", message: "meh" }], source)
     expect(all.map(m => m.severity)).toEqual(["error", "warning"])
-    expect(problemLine({ row: 4, col: 21, message: "unknown operation" })).toBe("4:21  unknown operation")
+    expect(problemLine({ row: 4, col: 21, message: "undefined function" })).toBe("4:21  undefined function")
     expect(problemLine({ message: "no place" })).toBe("no place")
-  })
-
-  it("does not repeat a local problem the server reports at the same place", () => {
-    const server = [{ row: 4, col: 20, code: "s", message: "server" }]
-    const local = [
-      { row: 4, col: 20, code: "json_error", message: "local, same place" },
-      { row: 1, col: 1, code: "json_error", message: "local only" },
-    ]
-    expect(mergeProblems(server, local).map(d => d.message)).toEqual(["server", "local only"])
   })
 })
 
@@ -54,5 +51,12 @@ describe("rego grammar", () => {
     const [call] = regoMonarch.tokenizer.root[1] as [RegExp, unknown]
     expect(call.exec("regex.match(x)")?.[0]).toBe("regex.match")
     expect(call.exec("allow_tool_call if {")).toBeNull()
+  })
+
+  it("starts a new policy from a module that says what is refused and what can be walked around", () => {
+    expect(REGO_TEMPLATE).toMatch(/^package browserjs\.policy$/m)
+    expect(REGO_TEMPLATE).toContain("allow_tool_call if {")
+    expect(REGO_TEMPLATE).toMatch(/desktop_execute and the exec server's tools[^]*refused until a rule here allows them/)
+    expect(REGO_TEMPLATE).toMatch(/can be\n# walked around/)
   })
 })

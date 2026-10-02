@@ -4,7 +4,8 @@
 import type { Session } from "./api"
 import { ApiError, SignedOutError, isSessionId, withRefusal } from "./api"
 
-export type PolicyKind = "json" | "rego"
+// A policy is a Rego module. `kind` stays in the API with this one value.
+export type PolicyKind = "rego"
 export type PolicyState = "ready" | "loading" | "invalid" | "unsupported"
 export type ManagementMode = "editor" | "iac"
 
@@ -31,7 +32,7 @@ export interface Diagnostic {
 
 export interface Policy extends PolicySummary {
   source?: string
-  rego?: string // the module in force; for kind json the generated one
+  rego?: string // the module in force: the last source that compiled
   errors?: Diagnostic[]
   warnings?: Diagnostic[]
   loaded?: { replicas?: number; total?: number }
@@ -187,7 +188,6 @@ export function createPolicyApi(fetchImpl: Fetch = (input, init) => fetch(input,
     validate: (source: PolicySource) => call<Validation>("POST", "/api/policies/validate", source),
     evaluate: (source: PolicySource, input: unknown) =>
       call<Evaluation>("POST", "/api/policies/evaluate", { ...source, input }),
-    schema: () => call<Record<string, unknown>>("GET", "/api/policy-schema.json"),
     presets: () => call<Preset[]>("GET", "/api/policy-presets"),
     listTokens: () => call<Token[]>("GET", "/api/tokens"),
     createToken: (body: NewToken) => call<CreatedToken>("POST", "/api/tokens", body),
@@ -227,7 +227,7 @@ export function forgetTokensProbe() {
   tokensProbe = undefined
 }
 
-export const KIND_LABEL: Record<PolicyKind, string> = { json: "JSON", rego: "Rego" }
+export const KIND_LABEL: Record<PolicyKind, string> = { rego: "Rego" }
 
 // The state line of the Policy tab, from `state` and `loaded`.
 export function policyStatus(p: Pick<Policy, "state" | "loaded" | "hash">): string {
@@ -246,7 +246,7 @@ export function policyStatus(p: Pick<Policy, "state" | "loaded" | "hash">): stri
   }
 }
 
-// The one-line summary on the session's page and in the list: "JSON, v3, in force".
+// The one-line summary on the session's page and in the list: "Rego, v3, in force".
 export function policySummaryLine(p: PolicySummary): string {
   if (p.state === "unsupported") return "none (created before policies)"
   const parts = [p.kind ? KIND_LABEL[p.kind] : "", p.version !== undefined ? `v${p.version}` : "", policyStatus(p)]
@@ -263,17 +263,14 @@ export function updatedByLabel(by?: string): string {
   return `by ${by}`
 }
 
-// True for a JSON policy that allows every operation and denies none.
+const UNRESTRICTED = "package browserjs.policy import rego.v1 allow_tool_call := true".replace(/\s+/g, "")
+
+// True for the `unrestricted` preset: the module that, with its comments and
+// whitespace removed, is the package, the import and `allow_tool_call := true`.
+// Anything else may restrict something, and is not called unrestricted.
 export function isUnrestricted(p: Pick<Policy, "kind" | "source">): boolean {
-  if (p.kind !== "json" || !p.source) return false
-  try {
-    const doc = JSON.parse(p.source)
-    const allowAll = Array.isArray(doc?.allow?.operations) && doc.allow.operations.includes("*")
-    const denies = Array.isArray(doc?.deny?.operations) && doc.deny.operations.length > 0
-    return allowAll && !denies
-  } catch {
-    return false
-  }
+  if (p.kind !== "rego" || !p.source) return false
+  return p.source.replace(/#.*$/gm, "").replace(/\s+/g, "") === UNRESTRICTED
 }
 
 // The link of a policy managed as code: https only, as the backend requires.

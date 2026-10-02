@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -133,10 +134,16 @@ func TestPresetsAreTheContractsExamples(t *testing.T) {
 			t.Errorf("preset %q is not %s; copy the file to internal/policy/presets/", id, file)
 			continue
 		}
-		var doc struct{ Description string }
-		if err := json.Unmarshal(want, &doc); err != nil || p.Description != doc.Description || p.Description == "" || p.Kind != KindJSON {
-			t.Errorf("preset %+v", p)
+		// The description is the comment the file begins with.
+		first, _, _ := strings.Cut(string(want), "\npackage ")
+		words := strings.Join(strings.Fields(strings.ReplaceAll(first, "#", " ")), " ")
+		if p.Description != words || p.Description == "" || p.Kind != KindRego {
+			t.Errorf("preset %+v, want the description %q", p, words)
 		}
+	}
+	if len(got) != 7 || byID["read-only-shell"].Title != "Read-only shell" || byID["browser-only"].Title != "Browser only" ||
+		byID["one-site"].Description != "The agent may be sent only to example.com and its subdomains, and may type only short text. No desktop control and no shell." {
+		t.Errorf("%d presets: %+v", len(got), byID["one-site"])
 	}
 	if got[0].ID != "unrestricted" || got[0].Title != "Unrestricted" || byID["no-scripting"].Title != "No scripting" {
 		t.Errorf("first %q (%q); no-scripting is titled %q", got[0].ID, got[0].Title, byID["no-scripting"].Title)
@@ -146,7 +153,7 @@ func TestPresetsAreTheContractsExamples(t *testing.T) {
 			t.Errorf("presets after the first are not in order: %q before %q", got[i-1].ID, got[i].ID)
 		}
 	}
-	if u := Unrestricted(); u.Kind != KindJSON || u.Source != got[0].Source || u.Mode != sessions.PolicyModeEditor {
+	if u := Unrestricted(); u.Kind != KindRego || u.Source != got[0].Source || u.Mode != sessions.PolicyModeEditor {
 		t.Errorf("Unrestricted() = %+v", u)
 	}
 	// Presets hands out a copy.
@@ -172,19 +179,19 @@ func TestOperatorClient(t *testing.T) {
 	answer = func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"ok":true,"rego":"package browserjs.policy\n","hash":"sha256:ab","errors":[],"warnings":[{"code":"unknown_operation","message":"m"}]}`))
 	}
-	v, err := op.Validate(t.Context(), "json", "{}")
+	v, err := op.Validate(t.Context(), "rego", "package browserjs.policy")
 	if err != nil || !v.OK || v.Hash != "sha256:ab" || v.Rego == "" || len(v.Warnings) != 1 {
 		t.Fatalf("Validate = %+v, %v", v, err)
 	}
 	if seen.Method != "POST" || seen.URL.Path != "/v1/validate" || seen.Header.Get("Authorization") != "Bearer secret" ||
-		seen.Header.Get("Content-Type") != "application/json" || len(body) != 2 || body["kind"] != "json" || body["source"] != "{}" {
+		seen.Header.Get("Content-Type") != "application/json" || len(body) != 2 || body["kind"] != "rego" || body["source"] != "package browserjs.policy" {
 		t.Errorf("request: %s %s, %v, body %v", seen.Method, seen.URL.Path, seen.Header, body)
 	}
 
 	answer = func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"ok":false,"errors":[{"row":1,"col":2,"code":"schema_error","message":"m"}],"warnings":[]}`))
 	}
-	v, err = op.Validate(t.Context(), "json", "{}")
+	v, err = op.Validate(t.Context(), "rego", "package browserjs.policy")
 	if err != nil || v.OK || len(v.Errors) != 1 || v.Errors[0] != (Diagnostic{Row: 1, Col: 2, Code: "schema_error", Message: "m"}) {
 		t.Errorf("an invalid policy: %+v, %v", v, err)
 	}
@@ -201,12 +208,12 @@ func TestOperatorClient(t *testing.T) {
 		},
 	} {
 		answer = a
-		if v, err := op.Validate(t.Context(), "json", "{}"); !errors.Is(err, ErrOperatorUnavailable) || v.OK {
+		if v, err := op.Validate(t.Context(), "rego", "package browserjs.policy"); !errors.Is(err, ErrOperatorUnavailable) || v.OK {
 			t.Errorf("%s: %+v, %v", name, v, err)
 		}
 	}
 	server.Close()
-	if _, err := op.Validate(t.Context(), "json", "{}"); !errors.Is(err, ErrOperatorUnavailable) {
+	if _, err := op.Validate(t.Context(), "rego", "package browserjs.policy"); !errors.Is(err, ErrOperatorUnavailable) {
 		t.Errorf("no operator: %v", err)
 	}
 }

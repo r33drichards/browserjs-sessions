@@ -58,7 +58,7 @@ about what was just saved.
 1. A policy that was given is validated by the operator. Invalid is 422 with
    the operator's `errors`; an operator that cannot be asked is 503. In both
    cases nothing is created. With no policy the session gets
-   `examples/unrestricted.policy.json`, which is built into the backend and
+   `examples/unrestricted.rego` (the browser, desktop control and the shell, all allowed), which is built into the backend and
    is not sent to be checked, so sessions can be created while the operator
    is away (they stay `starting` until it is back).
 2. The session is made in the order that never leaves it usable and
@@ -104,7 +104,7 @@ Refusals of a write, in the order they are checked:
 |---|---|
 | 403 | The token lacks `policies:write` (`policies:read` for a read), or was made for another session. |
 | 409 | The session predates policies (`unsupported`); on `GET` too. |
-| 400 | The body is not JSON, `kind` is not `json` or `rego`, or `management` is not valid. |
+| 400 | The body is not JSON, `kind` is given and is not `rego`, or `management` is not valid. |
 | 422 | The source is empty or over 65536 bytes (`size_error`); or, after the next two, the operator says it is invalid. |
 | 409 | The credential may not write in the policy's mode (below). |
 | 412 | `If-Match` is given and is not the current version. |
@@ -154,13 +154,28 @@ everything by OPA. The API shows it as `starting` with
 |---|---|
 | `POST /policies/validate` | The operator's verdict, passed on as it is. An invalid policy is 200 with `ok: false`. |
 | `POST /policies/evaluate` | The operator's `{ok, allow, errors}` for `{kind, source, input}`. |
-| `GET /policy-schema.json` | The operator's copy of the JSON policy schema, as `application/schema+json`. |
 | `GET /policy-presets` | The contract's examples, `unrestricted` first, then by id. |
 
-The first three are 503 when the operator cannot be reached. Any token may
-use all four, whatever its scopes.
+The first two are 503 when the operator cannot be reached. Any token may
+use all three, whatever its scopes.
 
-The presets are copies of `docs/contracts/policy/examples/*.policy.json` in
+A policy is a Rego module and nothing else: `kind` is `rego`, and may be
+left out of a request. (The JSON form of the first design, and
+`GET /policy-schema.json` with it, were removed before policies were
+enforced anywhere.) What a module may say, the input for each tool
+(`browser_execute`, `desktop_execute`, and `exec`, `stream_logs`,
+`search_logs` on the `exec` server) and the warnings `validate` returns
+when a policy restricts one tool and leaves open another that walks around
+it are in [`contracts/policy/rego-contract.md`](contracts/policy/rego-contract.md).
+`evaluate` answers as a session is answered: a server or tool the platform
+does not know is `allow: false` under any policy.
+
+The seven presets (`unrestricted`, `browser-only`, `form-filling`,
+`no-scripting`, `observe-only`, `one-site`, `read-only-shell`) each begin
+with a comment that says what they allow; that comment, as one line, is the
+preset's `description`.
+
+The presets are copies of `docs/contracts/policy/examples/*.rego` in
 `backend/internal/policy/presets/`, because a Go binary embeds only files
 below its package and the image is built from `backend/`. A test fails when a
 copy differs from the contract or one is missing: after changing an example,

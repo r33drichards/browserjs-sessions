@@ -6,9 +6,13 @@ import { PolicyTab } from "./PolicyTab"
 
 afterEach(cleanup)
 
-function open(name: string, options?: Parameters<typeof startBackend>[0]) {
-  const server = startBackend(options)
+type Server = ReturnType<typeof startBackend>
+
+// `prepare` changes the session before the page asks for it.
+function open(name: string, prepare?: (session: ReturnType<Server["sessionNamed"]>) => void) {
+  const server = startBackend()
   const session = server.sessionNamed(name)
+  prepare?.(session)
   const summary = session.unsupported
     ? ({ state: "unsupported" } as const)
     : { kind: session.policy!.kind, version: session.policy!.version, state: session.policy!.state, management: session.policy!.management }
@@ -27,9 +31,13 @@ describe("policy tab", () => {
     expect(button("Copy from session")).toBeTruthy()
     expect(button("Manage here instead")).toBeNull()
     expect(screen.getByText("this editor", { exact: false })).toBeTruthy()
-    // The source and the Rego it compiles to, both read-only.
-    expect(screen.getByLabelText("policy.json, read-only").textContent).toBe(presetSource("one-site"))
-    expect(screen.getByLabelText("Generated Rego, read-only").textContent).toContain("package browserjs.policy")
+    // The source, read-only. It is the module: there is no second pane.
+    expect(screen.getByLabelText("policy.rego, read-only").textContent).toBe(presetSource("one-site"))
+    expect(screen.queryByLabelText(/Generated Rego/)).toBeNull()
+    expect(screen.queryByLabelText("Policy in force, read-only")).toBeNull()
+    expect(screen.queryByRole("list", { name: "Warnings" })).toBeNull()
+    expect(screen.getByText(/may do in the browser, on the desktop and in the shell/)).toBeTruthy()
+    expect(screen.getByText("Rego")).toBeTruthy()
   })
 
   it("is read-only for a policy managed as code: the link, no write actions", async () => {
@@ -76,8 +84,9 @@ describe("policy tab", () => {
     const { session, writes } = open("research")
     fireEvent.click(await screen.findByRole("button", { name: "Reset" }))
     expect(writes()).toHaveLength(0)
+    expect(screen.getByText(/an agent may then use the browser,\s+the desktop and the shell/)).toBeTruthy()
     fireEvent.click(screen.getByRole("button", { name: "Reset policy" }))
-    expect(await screen.findByText("No restrictions: an agent may use every browser operation.")).toBeTruthy()
+    expect(await screen.findByText("No restrictions: an agent may use the browser, the desktop and the shell.")).toBeTruthy()
     expect(writes()).toEqual([expect.objectContaining({ method: "DELETE", path: `/api/sessions/${session.id}/policy` })])
     expect(screen.getByText("Policy reset and in force (v2).")).toBeTruthy()
   })
@@ -90,8 +99,18 @@ describe("policy tab", () => {
   it("shows why a policy does not compile, with the way to fix it", async () => {
     open("broken")
     expect(await screen.findByText("This policy does not compile")).toBeTruthy()
-    expect(screen.getByText(/the policy no longer compiles/)).toBeTruthy()
+    expect(screen.getByText(/undefined function http\.send/)).toBeTruthy()
     expect(button("Edit policy")).toBeTruthy()
+    // The saved source, and under it the one that is still in force.
+    expect(screen.getByLabelText("policy.rego, read-only").textContent).toContain("http.send")
+    expect(screen.getByLabelText("Policy in force, read-only").textContent).toBe(presetSource("form-filling"))
+  })
+
+  it("shows the warnings of the saved policy, which have no position", async () => {
+    open("research", s => (s.policy!.source += '\nallow_tool_call if input.server == "exec"\n'))
+    const warnings = await screen.findByRole("list", { name: "Warnings" })
+    expect(warnings.textContent).toMatch(/^this policy restricts what browser_execute may do and allows the shell/)
+    expect(screen.getByText("This policy has a warning")).toBeTruthy()
   })
 
   it("explains a session from before policies and offers nothing to edit", async () => {

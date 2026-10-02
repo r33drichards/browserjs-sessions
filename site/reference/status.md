@@ -24,5 +24,4 @@ date.
 | Admin interface | List, create, watch and take over, stop, delete | Live |
 | Admin interface | Full screen; the desktop follows the viewer's size | Live |
 | Admin interface | Clipboard box; files in and out; paste or drop files anywhere on the page | Live |
-| Policy | Per-session policies, in JSON or Rego, in the editor or as code | Coming |
-| Policy | Policies that cover desktop and shell calls in the JSON form | Planned |
+| Policy | Per-session policies in Rego, covering browser, desktop and shell calls, in the editor or as code | Coming |

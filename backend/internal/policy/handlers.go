@@ -135,8 +135,12 @@ func clusterError(w http.ResponseWriter, err error) {
 // checkInput checks what can be checked of a policy without the operator.
 // It answers for one that fails.
 func checkInput(w http.ResponseWriter, in *Input) bool {
-	if in.Kind != KindJSON && in.Kind != KindRego {
-		writeError(w, http.StatusBadRequest, `kind must be "json" or "rego"`)
+	// Rego is the only kind; a policy that names none is Rego.
+	if in.Kind == "" {
+		in.Kind = KindRego
+	}
+	if in.Kind != KindRego {
+		writeError(w, http.StatusBadRequest, `kind must be "rego"`)
 		return false
 	}
 	if in.Management != nil {
@@ -558,8 +562,11 @@ func decodeSource(w http.ResponseWriter, body []byte) (source, bool) {
 		writeError(w, http.StatusBadRequest, "body must be JSON with a kind and a source")
 		return s, false
 	}
-	if s.Kind != KindJSON && s.Kind != KindRego {
-		writeError(w, http.StatusBadRequest, `kind must be "json" or "rego"`)
+	if s.Kind == "" {
+		s.Kind = KindRego
+	}
+	if s.Kind != KindRego {
+		writeError(w, http.StatusBadRequest, `kind must be "rego"`)
 		return s, false
 	}
 	return s, true
@@ -638,15 +645,6 @@ func (h *Handlers) Evaluate(w http.ResponseWriter, r *http.Request, _ auth.User)
 		return
 	}
 	h.pass(w, r, http.MethodPost, "/v1/evaluate", s, "application/json")
-}
-
-// Schema serves GET /policy-schema.json from the operator's copy, which is
-// the one policies are checked against.
-func (h *Handlers) Schema(w http.ResponseWriter, r *http.Request, _ auth.User) {
-	if _, ok := caller(w, r, "", ""); !ok {
-		return
-	}
-	h.pass(w, r, http.MethodGet, "/v1/schema", nil, "application/schema+json")
 }
 
 // Presets serves GET /policy-presets.

@@ -124,7 +124,6 @@ var apiRoutes = []struct {
 	{pattern: "PUT /v1/sessions/{id}/policy/management", scope: ScopePoliciesWrite},
 	{pattern: "POST /v1/policies/validate"},
 	{pattern: "POST /v1/policies/evaluate"},
-	{pattern: "GET /v1/policy-schema.json"},
 	{pattern: "GET /v1/policy-presets"},
 }
 

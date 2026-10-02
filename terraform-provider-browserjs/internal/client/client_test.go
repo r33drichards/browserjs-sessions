@@ -69,12 +69,12 @@ func TestRequestShape(t *testing.T) {
 func TestValidateSendsOnlyTheSource(t *testing.T) {
 	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		if string(body) != `{"kind":"json","source":"{}"}` {
+		if string(body) != `{"kind":"rego","source":"package p"}` {
 			t.Errorf("body %s", body)
 		}
-		_ = json.NewEncoder(w).Encode(Validation{Errors: []Diagnostic{{Row: 1, Col: 2, Code: "schema", Message: "version is required"}}})
+		_ = json.NewEncoder(w).Encode(Validation{Errors: []Diagnostic{{Row: 1, Col: 2, Code: "package", Message: "the package must be browserjs.policy"}}})
 	})
-	v, err := c.ValidatePolicy(context.Background(), "json", "{}")
+	v, err := c.ValidatePolicy(context.Background(), "package p")
 	if err != nil || v.OK || len(v.Errors) != 1 || v.Errors[0].Row != 1 || v.Errors[0].Col != 2 {
 		t.Errorf("%+v %v", v, err)
 	}
@@ -137,7 +137,7 @@ func TestSessionCalls(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"id":"s-ab2cd","name":"n","owner":"o","state":"starting","mcp_url":"https://x/s-ab2cd/mcp","policy":{"state":"loading"}}`))
 		default:
-			_, _ = w.Write([]byte(`{"id":"s-ab2cd","name":"m","state":"running","policy":{"state":"ready","kind":"json","version":1}}`))
+			_, _ = w.Write([]byte(`{"id":"s-ab2cd","name":"m","state":"running","policy":{"state":"ready","kind":"rego","version":1}}`))
 		}
 	})
 	ctx := context.Background()
