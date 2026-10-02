@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	sdk "github.com/stripe/stripe-go/v86"
@@ -56,6 +57,9 @@ type API struct {
 	// currency is what a setup Checkout is in: it charges nothing, and
 	// Stripe still wants to know.
 	currency string
+
+	mu     sync.Mutex
+	portal string // the portal configuration's ID, once found
 }
 
 var (
@@ -155,10 +159,44 @@ func checkoutSession(cs *sdk.CheckoutSession) billing.CheckoutSession {
 	}
 }
 
+// PortalManagedBy marks the Customer Portal configuration infra/billing
+// makes (metadata.managed_by). A configuration made through the API is
+// never the account's default, so a portal session has to name it.
+const PortalManagedBy = "stripe-setup"
+
+// portalConfiguration is the ID of the portal configuration infra/billing
+// made, "" when there is none: the portal is then the Dashboard's default.
+// Found once and remembered; looked for again while there is none.
+func (a *API) portalConfiguration(ctx context.Context) (string, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.portal != "" {
+		return a.portal, nil
+	}
+	params := &sdk.BillingPortalConfigurationListParams{Active: sdk.Bool(true)}
+	params.Limit = sdk.Int64(100)
+	for cfg, err := range a.sc.V1BillingPortalConfigurations.List(ctx, params).All(ctx) {
+		if err != nil {
+			return "", err
+		}
+		if cfg.Metadata["managed_by"] == PortalManagedBy {
+			a.portal = cfg.ID
+			return a.portal, nil
+		}
+	}
+	return "", nil
+}
+
 func (a *API) CreatePortal(ctx context.Context, customer, returnURL string) (string, error) {
-	s, err := a.sc.V1BillingPortalSessions.Create(ctx, &sdk.BillingPortalSessionCreateParams{
-		Customer: sdk.String(customer), ReturnURL: sdk.String(returnURL),
-	})
+	params := &sdk.BillingPortalSessionCreateParams{Customer: sdk.String(customer), ReturnURL: sdk.String(returnURL)}
+	configuration, err := a.portalConfiguration(ctx)
+	if err != nil {
+		return "", err
+	}
+	if configuration != "" {
+		params.Configuration = sdk.String(configuration)
+	}
+	s, err := a.sc.V1BillingPortalSessions.Create(ctx, params)
 	if err != nil {
 		return "", err
 	}

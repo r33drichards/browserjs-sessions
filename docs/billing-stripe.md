@@ -67,7 +67,7 @@ token gets `403 ui_only`; a blocked or deleted account `403 account_blocked`.
 | `POST /api/billing/checkout` `{}` | a Checkout in setup mode: saves a card, charges nothing. `409 too_many_cards` with 5 cards saved; `429 rate_limited` after 5 setup checkouts in 24 hours (counted from Stripe's list of the customer's sessions). |
 | `POST /api/billing/checkout` `{"item": "<lookupKey>"}` | a Checkout that subscribes to a plan or buys a pack. `400 unknown_item` for what is not in the catalogue, not enabled, or has no price at Stripe; `409 already_subscribed` while the account's subscription is `active`, `trialing`, `past_due` or `incomplete`. |
 | `GET /api/billing/checkout/{id}` | what became of a Checkout the caller started, and fulfils it (a late webhook does not keep the user waiting). `404` for another account's. |
-| `POST /api/billing/portal` | a link to Stripe's Customer Portal. `409 no_customer` before the account has been to Stripe. |
+| `POST /api/billing/portal` | a link to Stripe's Customer Portal, with the configuration `infra/billing` made (found by `metadata.managed_by = stripe-setup`; one made through the API is never the account's default). `409 no_customer` before the account has been to Stripe. Changing plan there is off for now: the provider cannot yet set the portal's products, so `already_subscribed` sends a user to a portal that can cancel and not switch. |
 | `PUT /api/billing/auto-recharge` | the caller's automatic top-up. `404 auto_recharge_off` while `AUTO_RECHARGE` is off; turning it on needs `agree: true` and a saved card (`402 payment_method_required`). |
 
 Any call to Stripe that fails is `502 stripe_unavailable`: nothing was
@@ -154,7 +154,7 @@ from which the permissions follow:
 
 | Key | Writes | Reads |
 |---|---|---|
-| run time (`STRIPE_API_KEY`) | `POST /v1/customers`, `/v1/checkout/sessions`, `/v1/billing_portal/sessions`, `/v1/payment_intents`, `/v1/payment_methods/{id}/detach`; `DELETE /v1/subscriptions/{id}` | `GET /v1/customers/{id}`, `/v1/customers/{id}/payment_methods`, `/v1/checkout/sessions` (one and list), `/v1/subscriptions` (one, with `latest_invoice` expanded, and list), `/v1/payment_intents` (one and list), `/v1/prices`, `/v1/invoice_payments` (with `data.invoice` expanded) |
+| run time (`STRIPE_API_KEY`) | `POST /v1/customers`, `/v1/checkout/sessions`, `/v1/billing_portal/sessions`, `/v1/payment_intents`, `/v1/payment_methods/{id}/detach`; `DELETE /v1/subscriptions/{id}` | `GET /v1/customers/{id}`, `/v1/customers/{id}/payment_methods`, `/v1/checkout/sessions` (one and list), `/v1/subscriptions` (one, with `latest_invoice` expanded, and list), `/v1/payment_intents` (one and list), `/v1/prices`, `/v1/invoice_payments` (with `data.invoice` expanded), `/v1/billing_portal/configurations` |
 
 To find the smallest set: start a restricted key broad in the sandbox, run
 the product through every row of the table above, then prune with the key's
