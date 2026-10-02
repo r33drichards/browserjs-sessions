@@ -34,13 +34,35 @@ fi
 # the limit cannot be changed.
 ulimit -n 65536 2>/dev/null || echo "warning: could not lower the open-file limit ($(ulimit -n)); VNC may hang" >&2
 
+# Who this runs as. A session pod runs it as the image's unprivileged user
+# (uid 1000, "browser", home /home/browser) with no capabilities; the
+# standalone deployment still runs it as root, whose volume at /data is
+# root's. Nothing below needs root. Everything outside the profile that
+# Chromium, openbox, fontconfig and Caddy write (caches, crash reports, the
+# certificate store) goes under HOME.
+if [ "$(id -u)" = 0 ]; then
+  export HOME=/root
+else
+  export HOME="${HOME:-/home/browser}"
+  # A uid the image does not know has no home, or "/".
+  if ! mkdir -p "$HOME" 2>/dev/null || [ ! -w "$HOME" ]; then
+    export HOME=/tmp/home
+    mkdir -p "$HOME"
+  fi
+fi
+
 export DISPLAY=:99
-export HOME=/root
 export XDG_RUNTIME_DIR=/tmp/runtime
 export LIBGL_ALWAYS_SOFTWARE=1
 mkdir -p "$PROFILE_DIR" "$XDG_RUNTIME_DIR" /tmp/.X11-unix
 chmod 700 "$XDG_RUNTIME_DIR"
-chmod 1777 /tmp /tmp/.X11-unix
+# /tmp is already world-writable in the image, and only its owner may change
+# it: as another user this fails, harmlessly.
+chmod 1777 /tmp /tmp/.X11-unix 2>/dev/null || true
+if [ ! -w "$PROFILE_DIR" ]; then
+  echo "error: $PROFILE_DIR is not writable by uid $(id -u) (groups: $(id -G)); as a volume it must belong to this user or be group-writable for one of its groups (fsGroup)" >&2
+  exit 1
+fi
 
 # A previous container on the same volume leaves Chromium's singleton lock
 # pointing at a dead hostname/pid; Chromium then refuses to start
