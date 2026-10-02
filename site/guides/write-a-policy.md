@@ -45,7 +45,9 @@ allow_tool_call if {
 }
 ```
 
-<<<<<<< HEAD
+3. Try calls against it in the editor before saving.
+4. Choose **Save policy**. It applies to the next call.
+
 Programs are decided the same way. A call to run one arrives as the program
 and its arguments, already separate, so a rule can name them. This policy
 allows `git`, with two subcommands, and reading the output:
@@ -76,40 +78,13 @@ means. Compare `bin` as a whole (`"git"`, not "starts with git"), and deny a
 shell (`bin` of `sh` or `bash`) unless every command is acceptable, since a
 shell's command line cannot be judged by matching text. A policy like this
 one, which does not mention the browser tools, refuses them.
-=======
-3. Try calls against it in the editor before saving.
-4. Choose **Save policy**. It applies to the next call.
->>>>>>> a40aad5 (policies are Rego only, and cover every tool of a session)
+
+Do not list `sh`, `bash`, `env` or `xargs`: each runs any other program, and
+saving a policy that allows one beside a list of programs shows a warning.
+The **Read-only shell** policy is a fuller example.
 
 The package name is fixed. It carries the product's earlier name, as a few
 technical identifiers do.
-
-## Allow some programs
-
-The shell is the `exec` server. A call names a program and its arguments,
-and runs it with no shell in between. Allow programs by exact name, and
-check the arguments:
-
-```txt
-allow_tool_call if {
-	input.server == "exec"
-	input.tool == "exec"
-	count(object.keys(input.arguments) - {"bin", "args", "timeout"}) == 0
-	input.arguments.bin == "git"
-	input.arguments.args[0] in {"status", "log", "diff"}
-	input.arguments.timeout <= 60
-}
-
-allow_tool_call if {
-	input.server == "exec"
-	input.tool in {"stream_logs", "search_logs", "kill"}
-}
-```
-
-The third line refuses any field the rule has not looked at, such as `env`,
-which could change what `git` means. Do not list `sh`, `bash`, `env` or
-`xargs`: each runs any other program. The **Read-only shell** policy is a
-fuller example.
 
 ## Keep the rules from being walked around
 
