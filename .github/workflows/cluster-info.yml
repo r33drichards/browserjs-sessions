@@ -1,0 +1,116 @@
+name: cluster info
+
+# Prints what the production cluster looks like to the job summary, for
+# debugging without a local kubectl: nodes, pods and events in the app's
+# namespaces, which Agent Sandbox API versions are served, the admission
+# policies, the last log lines of Pomerium, Dex, the backend and
+# cert-manager, and the description of every pod that is not ready.
+# Optionally one named pod or session in detail.
+#
+# It changes nothing: hack/gke-status.sh only runs get, describe and logs.
+# It does sign in as the deployer service account, because that is the only
+# identity GitHub Actions has on the cluster, which is why it runs on main
+# only. Secrets are never read; anything a pod wrote to its log is shown.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pod:
+        description: A pod to describe and show logs of (optional)
+        required: false
+        type: string
+      pod_namespace:
+        description: That pod's namespace
+        required: false
+        type: string
+        default: browserjs-sessions
+      sandbox:
+        description: A session ID (s-…) to show the Sandbox, pod and logs of (optional)
+        required: false
+        type: string
+      tail:
+        description: Log lines for the named pod or session
+        required: false
+        type: string
+        default: "200"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: cluster-info
+  cancel-in-progress: true
+
+env:
+  CLUSTER: browserjs
+  CLUSTER_LOCATION: us-west1-a
+  KUBECTL_VERSION: v1.36.5
+
+jobs:
+  info:
+    name: info
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check the inputs
+        env:
+          REF: ${{ github.ref }}
+          POD: ${{ inputs.pod }}
+          POD_NAMESPACE: ${{ inputs.pod_namespace }}
+          SANDBOX: ${{ inputs.sandbox }}
+          TAIL: ${{ inputs.tail }}
+        run: |
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "::error::cluster info runs only on refs/heads/main, not $REF (the deployer account is bound to it)"
+            exit 1
+          fi
+          name='^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$'
+          for value in "$POD" "$POD_NAMESPACE" "$SANDBOX"; do
+            if [ -n "$value" ] && [[ ! "$value" =~ $name ]]; then
+              echo "::error::not a Kubernetes name: $value"
+              exit 1
+            fi
+          done
+          if [[ ! "$TAIL" =~ ^[0-9]{1,5}$ ]]; then
+            echo "::error::tail must be a number of lines"
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOY_SA }}
+
+      - uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
+        with:
+          version: ${{ env.KUBECTL_VERSION }}
+
+      - uses: google-github-actions/get-gke-credentials@3da1e46a907576cefaa90c484278bb5b259dd395 # v3.0.0
+        with:
+          cluster_name: ${{ env.CLUSTER }}
+          location: ${{ env.CLUSTER_LOCATION }}
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          use_dns_based_endpoint: "true"
+
+      - name: Status to job summary
+        env:
+          POD: ${{ inputs.pod }}
+          POD_NAMESPACE: ${{ inputs.pod_namespace }}
+          SANDBOX: ${{ inputs.sandbox }}
+          TAIL: ${{ inputs.tail }}
+        run: |
+          {
+            echo "## cluster info"
+            hack/gke-status.sh --full
+          } > "${RUNNER_TEMP}/status.md" 2>&1 || true
+          # A job summary holds at most 1 MiB; the whole of it is in the log.
+          head -c 900000 "${RUNNER_TEMP}/status.md" >> "$GITHUB_STEP_SUMMARY"
+          cat "${RUNNER_TEMP}/status.md"
