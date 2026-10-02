@@ -45,6 +45,10 @@ type Store struct {
 	claims   dynamic.ResourceInterface
 	warmPool string
 	warmWait time.Duration
+
+	// See policy.go. policies is nil when sessions get no SessionPolicy.
+	policies      dynamic.ResourceInterface
+	defaultPolicy PolicySpec
 }
 
 // NewStore parses blueprint (see deploy/base/blueprint.yaml for the format).
@@ -84,6 +88,14 @@ func cleanName(name string) (string, error) {
 }
 
 func (s *Store) Create(ctx context.Context, name, owner string) (Session, error) {
+	return s.CreateWithPolicy(ctx, name, owner, nil)
+}
+
+// CreateWithPolicy is Create for a session that is to have the policy asked
+// (nil: the unrestricted one). The policy is taken to be valid; whoever asks
+// has had the operator check it. With policies not enabled, only nil can be
+// asked for.
+func (s *Store) CreateWithPolicy(ctx context.Context, name, owner string, asked *PolicySpec) (Session, error) {
 	name, err := cleanName(name)
 	if err != nil {
 		return Session{}, err
@@ -91,8 +103,17 @@ func (s *Store) Create(ctx context.Context, name, owner string) (Session, error)
 	if owner == "" {
 		return Session{}, ErrOwnerRequired
 	}
+	var policy *PolicySpec // nil: none is made
+	switch {
+	case s.policies == nil && asked != nil:
+		return Session{}, ErrPolicyUnsupported
+	case s.policies != nil && asked == nil:
+		policy = &s.defaultPolicy
+	default:
+		policy = asked
+	}
 	if s.warmPool != "" {
-		warm, err := s.createWarm(ctx, name, owner)
+		warm, err := s.createWarm(ctx, name, owner, policy)
 		if err == nil {
 			return warm, nil
 		}
@@ -115,6 +136,14 @@ func (s *Store) Create(ctx context.Context, name, owner string) (Session, error)
 	if err := unstructured.SetNestedField(spec, OwnerLabel(owner), "podTemplate", "metadata", "labels", LabelOwner); err != nil {
 		return Session{}, fmt.Errorf("blueprint podTemplate.metadata.labels: %w", err)
 	}
+	if policy != nil && !policyCapableSpec(spec) {
+		// A blueprint from before policies: its sessions never ask OPA. One
+		// that was asked to be restricted must not be made unrestricted.
+		if asked != nil {
+			return Session{}, fmt.Errorf("the blueprint's mcp-js does not ask OPA for decisions: %w", ErrPolicyUnsupported)
+		}
+		policy = nil
+	}
 
 	obj := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": SandboxGVR.GroupVersion().String(),
@@ -129,6 +158,17 @@ func (s *Store) Create(ctx context.Context, name, owner string) (Session, error)
 	created, err := s.client.Create(ctx, obj, metav1.CreateOptions{})
 	if err != nil {
 		return Session{}, err
+	}
+	if policy != nil {
+		if err := s.ensurePolicy(ctx, created, owner, *policy); err != nil {
+			// A session without its policy is denied everything.
+			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			defer cancel()
+			if derr := s.client.Delete(cleanup, id, metav1.DeleteOptions{}); derr != nil && !apierrors.IsNotFound(derr) {
+				slog.Error("could not delete a session whose policy could not be made; delete it by hand", "session", id, "err", derr)
+			}
+			return Session{}, fmt.Errorf("create policy: %w", err)
+		}
 	}
 	return FromSandbox(created), nil
 }
@@ -348,6 +388,9 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	}
 	if apierrors.IsNotFound(err) {
 		return ErrNotFound
+	}
+	if err == nil {
+		s.deletePolicy(ctx, id)
 	}
 	return err
 }

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "description": "The agent may be sent only to example.com and its subdomains, and may type only short text.",
+  "allow": {
+    "operations": ["click", "press", "select", "wait", "screenshot", "url", "setViewport"],
+    "rules": [
+      { "operation": "navigate",
+        "constraints": { "url": { "schemes": ["https"], "hosts": ["example.com", "*.example.com"] } } },
+      { "operation": "type",
+        "constraints": { "text": { "max_length": 500 } } }
+    ]
+  }
+}

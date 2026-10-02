@@ -14,6 +14,7 @@ import (
 
 	"github.com/r33drichards/browserjs-sessions/backend/internal/auth"
 	"github.com/r33drichards/browserjs-sessions/backend/internal/authz"
+	"github.com/r33drichards/browserjs-sessions/backend/internal/policy"
 	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
 )
 
@@ -28,6 +29,8 @@ type API struct {
 	creating keyedMutex // the cap is "list, then create"
 
 	petName func() string // names a session created without a name
+
+	policies *policy.Handlers // nil: no session policies (see policy.go)
 }
 
 func New(store *sessions.Store, az authz.Checker, urls *sessions.URLTemplate, maxPerUser int) *API {
@@ -100,6 +103,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/sessions/{id}", a.session(a.get))
 	mux.HandleFunc("PATCH /api/sessions/{id}", a.session(a.patch))
 	mux.HandleFunc("DELETE /api/sessions/{id}", a.session(a.delete))
+	a.registerPolicies(mux)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -158,6 +162,8 @@ func (a *API) storeError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "session not found")
 	case errors.Is(err, sessions.ErrInvalidName), errors.Is(err, sessions.ErrInvalidAction):
 		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, sessions.ErrPolicyUnsupported):
+		writeError(w, http.StatusConflict, "new sessions cannot be given a policy here yet")
 	default:
 		slog.Error("cluster request failed", "err", err)
 		writeError(w, http.StatusInternalServerError, "cluster request failed")
@@ -168,10 +174,15 @@ func (a *API) storeError(w http.ResponseWriter, err error) {
 type view struct {
 	sessions.Session
 	MCPURL string `json:"mcp_url"` // what an MCP client is pointed at
+	// Policy is absent when policies are off.
+	Policy *policy.Summary `json:"policy,omitempty"`
 }
 
-func (a *API) view(s sessions.Session) view {
-	return view{Session: s, MCPURL: a.urls.MCP(s.ID)}
+func (a *API) view(s sessions.Session, p *policy.Summary) view {
+	if p != nil {
+		s = p.Gate(s)
+	}
+	return view{Session: s, MCPURL: a.urls.MCP(s.ID), Policy: p}
 }
 
 func (a *API) me(w http.ResponseWriter, _ *http.Request, u auth.User) {
@@ -181,7 +192,9 @@ func (a *API) me(w http.ResponseWriter, _ *http.Request, u auth.User) {
 func (a *API) list(w http.ResponseWriter, r *http.Request, u auth.User) {
 	var list []sessions.Session
 	var err error
+	owner := u.Subject
 	if u.Admin && r.URL.Query().Get("all") == "1" {
+		owner = ""
 		list, err = a.store.ListAll(r.Context())
 	} else {
 		list, err = a.store.List(r.Context(), u.Subject)
@@ -190,20 +203,27 @@ func (a *API) list(w http.ResponseWriter, r *http.Request, u auth.User) {
 		a.storeError(w, err)
 		return
 	}
+	policies := a.summaries(r.Context(), list, owner)
 	views := make([]view, 0, len(list))
 	for _, s := range list {
-		views = append(views, a.view(s))
+		views = append(views, a.view(s, policies[s.ID]))
 	}
 	writeJSON(w, http.StatusOK, views)
 }
 
 func (a *API) create(w http.ResponseWriter, r *http.Request, u auth.User) {
 	var body struct {
-		Name string `json:"name"`
+		Name   string        `json:"name"`
+		Policy *policy.Input `json:"policy"`
 	}
 	// The name is optional, and so is a body that would only carry it.
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, a.maxCreateBody())).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "body must be JSON, optionally with a name")
+		return
+	}
+	// Checked before anything is created: an invalid policy creates nothing.
+	asked, ok := a.policyFor(w, r, u, body.Policy)
+	if !ok {
 		return
 	}
 	// Counting and creating must not interleave with the same user's other
@@ -225,12 +245,13 @@ func (a *API) create(w http.ResponseWriter, r *http.Request, u auth.User) {
 	}
 	// The owner is recorded on the session itself; that is all there is to
 	// who may use it.
-	s, err := a.store.Create(r.Context(), name, u.Subject)
+	s, err := a.store.CreateWithPolicy(r.Context(), name, u.Subject, asked)
 	if err != nil {
 		a.storeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, a.view(s))
+	a.created(s)
+	writeJSON(w, http.StatusCreated, a.view(s, a.summary(r.Context(), s)))
 }
 
 func (a *API) get(w http.ResponseWriter, r *http.Request, id string) {
@@ -239,7 +260,7 @@ func (a *API) get(w http.ResponseWriter, r *http.Request, id string) {
 		a.storeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, a.view(s))
+	writeJSON(w, http.StatusOK, a.view(s, a.summary(r.Context(), s)))
 }
 
 func (a *API) patch(w http.ResponseWriter, r *http.Request, id string) {

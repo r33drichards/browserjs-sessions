@@ -44,16 +44,23 @@ func (s *Store) EnableWarmPool(pool string, wait time.Duration) {
 
 // createWarm makes a session out of a Sandbox from the warm pool. It leaves
 // nothing behind when it fails, so the caller can start the session cold.
-func (s *Store) createWarm(ctx context.Context, name, owner string) (Session, error) {
+func (s *Store) createWarm(ctx context.Context, name, owner string, policy *PolicySpec) (Session, error) {
 	// The claim carries the owner from the start: if this process dies
-	// before the Sandbox has it, RecoverClaims can finish the job.
+	// before the Sandbox has it, RecoverClaims can finish the job. And the
+	// policy, so that the job is not finished with another one.
+	annotations := map[string]any{AnnName: name, AnnOwner: owner}
+	if policy != nil {
+		for k, v := range claimPolicyAnnotations(*policy) {
+			annotations[k] = v
+		}
+	}
 	claim, err := s.claims.Create(ctx, &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": ClaimGVR.GroupVersion().String(),
 		"kind":       "SandboxClaim",
 		"metadata": map[string]any{
 			"name":        newID(),
 			"labels":      map[string]any{LabelOwner: OwnerLabel(owner)},
-			"annotations": map[string]any{AnnName: name, AnnOwner: owner},
+			"annotations": annotations,
 		},
 		"spec": map[string]any{"warmPoolRef": map[string]any{"name": s.warmPool}},
 	}}, metav1.CreateOptions{})
@@ -105,6 +112,10 @@ func (s *Store) adopt(ctx context.Context, claimName string, wait time.Duration)
 		return Session{}, fmt.Errorf("claim %s names no owner", claimName)
 	}
 	if err := s.refuseRestored(ctx, claimName, id); err != nil {
+		return Session{}, err
+	}
+	// Before the owner: until it has one, nobody can use the Sandbox.
+	if err := s.adoptPolicy(ctx, claim, id, owner); err != nil {
 		return Session{}, err
 	}
 	var adopted *unstructured.Unstructured
