@@ -129,7 +129,9 @@ k create secret generic policy-tokens --dry-run=client -o yaml \
   kubectl apply -f - >/dev/null
 kubectl apply -k test/policy >/dev/null || { echo "apply failed"; exit 1; }
 kubectl wait --for=condition=Established crd/sessionpolicies.browserjs.dev crd/apitokens.browserjs.dev --timeout=60s >/dev/null
-k rollout status deploy/policy-operator --timeout=180s
+# The stub operator is not ready until it has a bundle to serve: running is enough.
+k wait --for=jsonpath='{.status.phase}'=Running pod -l app=policy-operator --timeout=180s >/dev/null ||
+  k rollout status deploy/policy-operator --timeout=120s
 k rollout status deploy/backend --timeout=180s
 
 session_pod() { # id
