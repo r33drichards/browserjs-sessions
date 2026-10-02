@@ -52,7 +52,19 @@ type Config struct {
 	// session waits for the pool before starting cold after all.
 	WarmPool     string
 	WarmPoolWait time.Duration
+
+	// APIURL is the base URL of the API host, where API tokens are the
+	// credential (https://api.<domain>; the API is under /v1). "" for none:
+	// there are then no API tokens at all.
+	APIURL string
+	// AllowedEmails is who may use the product: the same addresses as the
+	// policy of Pomerium's routes, which is not consulted on the API host.
+	// Empty: nobody may make a token, and the API host refuses every one.
+	AllowedEmails []string
 }
+
+// APITokens reports whether users can make API tokens and use them.
+func (c Config) APITokens() bool { return c.APIURL != "" && len(c.AllowedEmails) > 0 }
 
 func FromEnv(get func(string) string) (Config, error) {
 	or := func(k, def string) string {
@@ -145,6 +157,30 @@ func FromEnv(get func(string) string) (Config, error) {
 	}
 	if c.WarmPoolWait, err = positiveDuration(or("WARM_POOL_WAIT", "5s")); err != nil {
 		return Config{}, fmt.Errorf("WARM_POOL_WAIT: %w", err)
+	}
+	if c.APIURL = strings.TrimRight(get("API_URL"), "/"); c.APIURL != "" {
+		api, err := url.Parse(c.APIURL)
+		if err != nil || (api.Scheme != "http" && api.Scheme != "https") || api.Host == "" || api.Path != "" || api.RawQuery != "" {
+			return Config{}, fmt.Errorf("API_URL must be an absolute http(s) URL with no path, got %q", c.APIURL)
+		}
+		// Requests are told apart by their host, and on the API host nobody
+		// has signed in.
+		if strings.EqualFold(api.Host, public.Host) {
+			return Config{}, fmt.Errorf("API_URL %q must not be the host of PUBLIC_URL", c.APIURL)
+		}
+		for _, urls := range []*sessions.URLTemplate{c.SessionURLs, c.LegacySessionURLs} {
+			if urls == nil {
+				continue
+			}
+			if _, session := urls.Match(api.Host, "/"); session {
+				return Config{}, fmt.Errorf("API_URL %q is a session host", c.APIURL)
+			}
+		}
+	}
+	for _, email := range strings.Split(get("ALLOWED_EMAILS"), ",") {
+		if email = strings.ToLower(strings.TrimSpace(email)); email != "" {
+			c.AllowedEmails = append(c.AllowedEmails, email)
+		}
 	}
 	return c, nil
 }

@@ -25,6 +25,14 @@ spec:
               value: https://app.browserjs.com/.well-known/pomerium/jwks.json
             - name: ADMIN_EMAILS
               value: rwendt1337@gmail.com
+            # The API host (the "api" route of pomerium-config.yaml). Naming
+            # it makes it the API's alone: nothing of the app is served
+            # there. API tokens are OFF: ALLOWED_EMAILS is empty (base), so
+            # nobody can make a token and the host refuses every one. To turn
+            # them on, add ALLOWED_EMAILS with the addresses of the policy
+            # in pomerium-config.yaml (docs/api-tokens.md).
+            - name: API_URL
+              value: https://api.browserjs.com
             # An idle session sleeps to a Pod Snapshot and wakes from it
             # (snapshots.yaml). "false" is today's behaviour: every wake is a
             # cold start, with Chromium restoring its tabs from disk.

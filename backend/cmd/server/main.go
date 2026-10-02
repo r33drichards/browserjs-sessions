@@ -30,6 +30,7 @@ import (
 	"github.com/r33drichards/browserjs-sessions/backend/internal/idle"
 	"github.com/r33drichards/browserjs-sessions/backend/internal/proxy"
 	"github.com/r33drichards/browserjs-sessions/backend/internal/sessions"
+	"github.com/r33drichards/browserjs-sessions/backend/internal/tokens"
 )
 
 // How long a session's owner, once read, is taken to still be its owner
@@ -104,6 +105,11 @@ func run() error {
 	go idle.Run(ctx, store, tracker, time.Minute)
 
 	handler, px := newHandler(cfg, verifier, store, tracker)
+	// API tokens and the API host (API_URL): tokens.go.
+	if cfg.APIURL != "" {
+		handler = withAPITokens(cfg, verifier, tokens.NewStore(dyn, cfg.Namespace), handler)
+		slog.Info("API host", "url", cfg.APIURL, "tokens", cfg.APITokens())
+	}
 
 	srv := &http.Server{
 		Handler:           handler,

@@ -74,6 +74,14 @@ spec:
               value: https://app.example.com/.well-known/pomerium/jwks.json
             - name: ADMIN_EMAILS
               value: ""
+            # API tokens (docs/api-tokens.md), off while either is empty.
+            # API_URL is the API host of pomerium-config.yaml's "api" route;
+            # ALLOWED_EMAILS is who may use a token, the same addresses as
+            # that file's policy.
+            - name: API_URL
+              value: ""
+            - name: ALLOWED_EMAILS
+              value: ""
           ports:
             - name: http
               containerPort: 8080

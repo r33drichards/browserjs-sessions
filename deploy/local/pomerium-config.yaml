@@ -139,3 +139,14 @@ routes:
     preserve_host_header: true
     # A request may wait for a session's pod to answer.
     timeout: 5m
+
+  # The API for clients that cannot sign in (Terraform, scripts). Nobody
+  # signs in here and Pomerium says nothing about the caller: the credential
+  # is an API token, checked by the backend (docs/api-tokens.md). Only the
+  # API's paths get through.
+  - name: api
+    from: https://api.localtest.me
+    prefix: /v1/
+    to: http://backend
+    allow_public_unauthenticated_access: true
+    preserve_host_header: true
