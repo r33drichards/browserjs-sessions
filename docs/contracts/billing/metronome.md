@@ -131,6 +131,14 @@ Sent by the observer to `POST /v1/ingest`, at most 100 events a request.
   sent at the window's end with the window's start in the key and its end
   as the timestamp. A window with zero seconds sends nothing. A session
   that stops being awake is sent at once, without waiting for the window.
+  If it is awake again inside the same window, what it then counts is a
+  second **part** of that window with a key of its own:
+  `awake/<session id>/<window start>/<the part's first tick, unix
+  seconds>`, sent like a window (at the window's end, or at once if it
+  falls asleep again). So stopping and resuming inside a window neither
+  makes the rest of the window free (the first key is taken) nor counts
+  anything twice. The same holds for `session.kept` when a session's name
+  is used again inside a window.
 - `session.kept`: the GB-seconds of each session added up over a 6-hour
   window (`KEPT_WINDOW`, aligned to the clock in UTC: 00:00, 06:00, ...),
   sent at the window's end with the window's start in the key. A session
