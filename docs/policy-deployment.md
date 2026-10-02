@@ -255,24 +255,24 @@ After a deploy in the `serving` stage:
    rule), and OPA being ready shows that it reaches the operator.
 2. gVisor and Dataplane V2, from a running session's pod. The new egress
    rule applies to every session pod, old ones included, so any session
-   will do. With kubectl (the browser container has Node):
+   will do. The browser container has bash as `/bin/sh` and little else
+   (Node is not on its `PATH`), so the request is made by hand. Written
+   for this document and not yet run:
 
    ```
-   kubectl -n browserjs-sessions exec s-… -c browser -- node -e '
-     const ask = (u, o) => fetch(u, { signal: AbortSignal.timeout(4000), ...o }).then(r => r.status, e => String(e.cause?.code ?? e));
-     const body = JSON.stringify({ input: { server: "browser", tool: "browser_execute", arguments: { operations: [] } } });
-     Promise.all([
-       ask("http://opa.browserjs-sessions.svc:8181/v1/data/browserjs/decision/" + process.env.HOSTNAME + "/mcp_tools", { method: "POST", body }),
-       ask("http://opa.browserjs-sessions.svc:8181/v1/policies"),
-       ask("http://policy-operator.browserjs-sessions.svc:8080/healthz"),
-       ask("http://backend.browserjs-sessions.svc/healthz"),
-     ]).then(r => console.log(r.join(" ")))'
+   kubectl -n browserjs-sessions exec s-… -c browser -- /bin/sh -c '
+     body="{\"input\":{\"server\":\"browser\",\"tool\":\"browser_execute\",\"arguments\":{\"operations\":[]}}}"
+     exec 3<>/dev/tcp/opa.browserjs-sessions.svc/8181 || exit 1
+     printf "POST /v1/data/browserjs/decision/%s/mcp_tools HTTP/1.1\r\nHost: opa\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s" "$HOSTNAME" "${#body}" "$body" >&3
+     read -t 5 -r status <&3; echo "OPA: $status"
+     (exec 4<>/dev/tcp/policy-operator.browserjs-sessions.svc/8080) && echo "operator: OPEN, wrong"'
    ```
 
-   Expected: `200 401` and two timeouts. A timeout in the first place means
-   the rule does not work under gVisor with Dataplane V2 (the existing DNS
-   rules needed NodeLocal DNSCache's address added for the same
-   combination).
+   Expected: `OPA: HTTP/1.1 200 OK` at once, then nothing for about two
+   minutes (the kernel's connect timeout) and an error for the operator.
+   If the first connection hangs instead, the rule does not work under
+   gVisor with Dataplane V2 (the existing DNS rules needed NodeLocal
+   DNSCache's address added for that combination).
 3. `kubectl -n browserjs-sessions get sessionpolicies` after saving a
    policy in the UI: `Ready` True, `Loaded` naming both replicas.
 
