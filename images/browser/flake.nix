@@ -56,6 +56,7 @@
             text = ''
               export NOVNC_WEB=${pkgs.novnc}/share/webapps/novnc
               export CADDYFILE=${./browser/Caddyfile}
+              export OPENBOX_RC=${./browser/openbox-rc.xml}
               export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
               export FONTCONFIG_FILE=${pkgs.makeFontsConf {
                 fontDirectories = [
