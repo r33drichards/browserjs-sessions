@@ -166,9 +166,13 @@ kubectl apply -k deploy/local
 kubectl wait --for=condition=Established crd/sessionpolicies.browserjs.dev --timeout=60s
 # Billing: the backend, in any stage but off, wants it served.
 kubectl wait --for=condition=Established --timeout=60s crd/accounts.browserjs.dev
-[ -z "$backend_changed" ] || kubectl -n "$NS" rollout restart deploy/backend
 # A new CA: Pomerium must serve the new certificate and the backend trust it.
-[ -z "$new_certificate" ] || kubectl -n "$NS" rollout restart statefulset/pomerium deploy/backend
+if [ -n "$new_certificate" ]; then
+  kubectl -n "$NS" rollout restart statefulset/pomerium deploy/backend
+elif [ -n "$backend_changed" ]; then
+  # One restart, not two in the same second: kubectl refuses the second.
+  kubectl -n "$NS" rollout restart deploy/backend
+fi
 # Dex and Pomerium read their Secrets at startup only.
 kubectl -n "$NS" rollout status deploy/dex --timeout=300s
 kubectl -n "$NS" rollout status statefulset/pomerium --timeout=300s
