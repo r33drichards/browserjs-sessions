@@ -9,8 +9,8 @@ package browserjs.policy
 import rego.v1
 
 allowed_commands := {
-	{"bin": "git", "args": ["pull", "--ff-only"], "cwd": "/home/browser/work/app"},
-	{"bin": "npm", "args": ["test"], "cwd": "/home/browser/work/app"},
+	{"bin": "git", "args": ["pull", "--ff-only"], "cwd": "/data/chrome/home/work/app"},
+	{"bin": "npm", "args": ["test"], "cwd": "/data/chrome/home/work/app"},
 	{"bin": "df", "args": ["-h", "/data/chrome"]},
 }
 

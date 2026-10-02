@@ -36,12 +36,12 @@
       "server": "exec",
       "tool": "exec",
       "arguments": {
-        "bin": "/home/browser/work/app/build.sh",
+        "bin": "/data/chrome/home/work/app/build.sh",
         "args": [
           "--release"
         ],
         "timeout": 60,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": true
@@ -58,7 +58,7 @@
           "all"
         ],
         "timeout": 86400,
-        "cwd": "/home/browser/work/app"
+        "cwd": "/data/chrome/home/work/app"
       }
     },
     "allow": true

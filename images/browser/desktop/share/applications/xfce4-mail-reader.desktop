@@ -1,0 +1,6 @@
+[Desktop Entry]
+# Hides Xfce's "Mail Reader" menu entry: the image has none, and the entry
+# would only ask which one to use.
+Type=Application
+Name=Mail Reader
+Hidden=true

@@ -57,7 +57,7 @@ podTemplate:
             containerPort: 6080
           - name: browser-mcp
             containerPort: 8081
-        # The image has no shell tools to exec; both probes are HTTP.
+        # Both probes are HTTP: the server is what must answer.
         startupProbe:
           httpGet:
             path: /healthz

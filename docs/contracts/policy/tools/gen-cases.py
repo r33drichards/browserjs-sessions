@@ -58,7 +58,7 @@ def envs(ok):
 
 cases = {}
 
-APP = "/home/browser/work/app"
+APP = "/data/chrome/home/work/app"
 OK = ex("git", ["pull", "--ff-only"], cwd=APP)
 cases["exec-exact-commands"] = [
     ("a listed command", OK, True),
@@ -71,7 +71,7 @@ cases["exec-exact-commands"] = [
     ("the arguments in another order", ex("git", ["--ff-only", "pull"], cwd=APP), False),
     ("the arguments as one string", ex("git", ["pull --ff-only"], cwd=APP), False),
     ("the whole command line as bin", ex("git pull --ff-only", [], cwd=APP), False),
-    ("in another directory", ex("git", ["pull", "--ff-only"], cwd="/home/browser/work/other"), False),
+    ("in another directory", ex("git", ["pull", "--ff-only"], cwd="/data/chrome/home/work/other"), False),
     ("without the directory it is listed with", ex("git", ["pull", "--ff-only"]), False),
     ("a directory for the one listed without", ex("df", ["-h", "/data/chrome"], cwd="/tmp"), False),
     ("the program by path", ex("/usr/bin/git", ["pull", "--ff-only"], cwd=APP), False),
@@ -99,7 +99,7 @@ cases["exec-git-subcommands"] = [
     ("git's own -C before the subcommand", ex("git", ["-C", "/tmp/repo", "status"]), False),
     ("--exec-path before the subcommand", ex("git", ["--exec-path=/tmp/x", "status"]), False),
     ("an alias defined on the command line", ex("git", ["-c", "alias.x=!sh -c id", "x"]), False),
-    ("writing a file with --output", ex("git", ["diff", "--output=/home/browser/.bashrc", "HEAD"], cwd=APP), False),
+    ("writing a file with --output", ex("git", ["diff", "--output=/data/chrome/home/.bashrc", "HEAD"], cwd=APP), False),
     ("--output and its value as two arguments", ex("git", ["log", "--output", "/tmp/x"], cwd=APP), False),
     ("--output abbreviated, as git accepts it", ex("git", ["diff", "--outp=/tmp/x"], cwd=APP), False),
     ("an external diff program", ex("git", ["diff", "--ext-diff"], cwd=APP), False),
@@ -146,7 +146,7 @@ cases["exec-curl-hosts"] = [
     ("a space in the URL", curl("https://example.com/ https://evil.test/"), False),
     ("a newline in the URL", curl("https://example.com/\nhttps://evil.test/"), False),
     ("following redirects", curl("-L", "https://example.com/"), False),
-    ("writing a file", curl("-o", "/home/browser/.bashrc", "https://example.com/"), False),
+    ("writing a file", curl("-o", "/data/chrome/home/.bashrc", "https://example.com/"), False),
     ("a proxy", curl("-x", "http://evil.test:8080", "https://example.com/"), False),
     ("a proxy, flag and value in one argument", curl("--proxy=http://evil.test:8080", "https://example.com/"), False),
     ("resolving the host to another address", curl("--resolve", "example.com:443:127.0.0.1", "https://example.com/"), False),
@@ -173,7 +173,7 @@ OK = ex("ls", ["-la", "/data/chrome/Downloads"])
 cases["exec-no-shell"] = [
     ("a program and arguments", OK, True),
     ("a program alone, args left out", ex("uptime"), True),
-    ("a program by path, in a directory", ex("/home/browser/work/app/build.sh", ["--release"], cwd=APP), True),
+    ("a program by path, in a directory", ex("/data/chrome/home/work/app/build.sh", ["--release"], cwd=APP), True),
     ("no upper limit on the timeout in this policy", ex("make", ["all"], 86400, cwd=APP), True),
     ("shell syntax as an argument is only text", ex("echo", ["$(id); rm -rf ~ | sh"]), True),
     ("the browser tool", BROWSER, True),
@@ -196,7 +196,7 @@ cases["exec-no-shell"] = [
     ("a copy of the shell under another name (the same)", ex("/tmp/not-a-shell", ["-c", "id"]), True),
 ]
 
-W = "/home/browser/work"
+W = "/data/chrome/home/work"
 OK = ex("ls", ["-la"], cwd=W)
 cases["exec-workdir"] = [
     ("a command in the directory", OK, True),
@@ -207,7 +207,7 @@ cases["exec-workdir"] = [
     ("a shell: this policy is about where, not what", ex("sh", ["-c", "npm ci && npm test"], cwd=W + "/app"), True),
 ] + READ + [
     ("no cwd (the home directory)", ex("ls", ["-la"]), False),
-    ("the home directory", ex("ls", cwd="/home/browser"), False),
+    ("the home directory", ex("ls", cwd="/data/chrome/home"), False),
     ("the root", ex("ls", cwd="/"), False),
     ("a sibling whose name starts the same", ex("ls", cwd=W + "-other"), False),
     ("out through ..", ex("ls", cwd=W + "/../.ssh"), False),
@@ -220,7 +220,7 @@ cases["exec-workdir"] = [
     ("relative", ex("ls", cwd="work"), False),
     ("cwd is not a string", ex("ls", cwd=[W]), False),
     ("cwd is null", ex("ls", cwd=None), False),
-    ("upper case", ex("ls", cwd="/home/browser/Work"), False),
+    ("upper case", ex("ls", cwd="/data/chrome/home/Work"), False),
     ("PATH through env", ex("ls", cwd=W, env={"PATH": "/tmp/evil"}), False),
     ("LD_PRELOAD through env", ex("ls", cwd=W, env={"LD_PRELOAD": "/tmp/x.so"}), False),
     ("a variable not on the list, beside one that is", ex("ls", cwd=W, env={"CI": "1", "GIT_SSH_COMMAND": "sh -c id"}), False),
