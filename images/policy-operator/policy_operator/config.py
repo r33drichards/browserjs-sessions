@@ -39,9 +39,8 @@ class Config:
     opa_bin: str = "opa"
     contract_dir: Path = Path("/contracts")
     namespace: str = "browserjs-sessions"
-    opa_service: str = "opa-engine"
+    opa_service: str = "opa"
     opa_port: int = 8181
-    opa_decision_url: str = ""
     http_port: int = 8080
     webhook_redis_url: str = "redis://localhost:6379/0"
     webhook_redis_prefix: str = "browserjs:{webhooks}:"
@@ -69,8 +68,7 @@ class Config:
             opa_bin=env.get("OPA_BIN", "opa"),
             contract_dir=_contract_dir(),
             namespace=env.get("POLICY_NAMESPACE", "browserjs-sessions"),
-            opa_service=env.get("OPA_SERVICE", "opa-engine"),
-            opa_decision_url=env.get("OPA_DECISION_URL", ""),
+            opa_service=env.get("OPA_SERVICE", "opa"),
             opa_port=int(env.get("OPA_PORT", "8181")),
             http_port=int(env.get("HTTP_PORT", "8080")),
             bundle_token=env.get("BUNDLE_TOKEN", ""),

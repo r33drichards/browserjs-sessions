@@ -332,7 +332,7 @@ print(ask("POST", "/v1/data/browserjs/decision/s-pol01/mcp_tools", i),
       ask("PUT", "/v1/policies/x", b"package x"), ask("POST", "/v1/data/browserjs/tenant/s-pol01", i))
 ' 2>&1)"
 is "from a session pod OPA gives decisions and nothing else (decision, ?explain, policies, loaded, data, a write, a tenant document)" \
-  "200 403 404 404 404 404 404" "$api"
+  "200 401 401 401 401 401 401" "$api"
 
 # --- 3. who reaches whom ----------------------------------------------------------
 step "3. reachability"
@@ -347,7 +347,7 @@ note "" && note "### Reachability" && note "" && note "| From | To | Result |" &
 
 out="$(k exec "$WITH" -c browser -- python3 -c "$PROBE" "${targets[@]}" 2>&1)"
 expect "a session pod" "$out" "opa.$NS.svc:8181" open
-expect "a session pod" "$out" "$opa_ip:8181" closed
+expect "a session pod" "$out" "$opa_ip:8181" open
 expect "a session pod" "$out" "policy-operator.$NS.svc:8080" open
 expect "a session pod" "$out" "$operator_ip:8080" open
 expect "a session pod" "$out" "backend.$NS.svc:80" closed

@@ -51,7 +51,7 @@ export function WebhookTab({ sessionId }: { sessionId: string }) {
   }
   if (loading) return <>Loading the webhook</>
   return <SpaceBetween size="m">
-    <p key="description">Send tool-call events with durable at-least-once delivery, including browser and shell authorization attempts. Failed deliveries retry until acknowledged. Receivers must deduplicate event IDs. Calls are refused if their event cannot be durably recorded.</p>
+    <p key="description">Send tool-call events with durable at-least-once delivery, including browser and shell attempts captured before authorization. Failed deliveries retry until acknowledged. Receivers must deduplicate event IDs. Calls are refused if their event cannot be durably recorded.</p>
     {error && <Alert key="error" type="error">{error}</Alert>}
     {message && <Alert key="message" type="success">{message}</Alert>}
     <FormField key="url" label="Webhook URL" description="A public HTTPS endpoint on port 443."><Input value={url} onChange={e => setUrl(e.detail.value)} /></FormField>

@@ -5,7 +5,7 @@ choose how many events to send per batch and how long to wait before sending
 a partial batch. Click **Save webhook**. Use **Disable new exports** to stop capturing new events. Accepted events continue delivery.
 
 Events include outer tool calls such as `run_js`, plus nested browser and shell
-authorization attempts, including denied calls. A single `run_js` request can
+attempts, including calls subsequently denied by enforcement policies. A single `run_js` request can
 therefore produce several events. Events contain tool arguments; execution
 results and screenshots are excluded.
 
@@ -16,7 +16,7 @@ module with `package browserjs.policy` and an `allow_tool_call` rule. The
 filter receives one event as `input`, and includes it only when the rule
 returns boolean `true`.
 
-For example, send only denied authorization attempts:
+For example, send only nested browser or shell attempts:
 
 ```rego
 package browserjs.policy
@@ -25,8 +25,8 @@ import rego.v1
 default allow_tool_call := false
 
 allow_tool_call if {
-  input.stage == "authorization"
-  input.allowed == false
+  input.stage == "attempt"
+  input.server in {"browser", "exec"}
 }
 ```
 
@@ -56,11 +56,10 @@ Your endpoint receives a JSON POST like this:
     "session_id": "s-abcdefghij",
     "timestamp": "2026-10-03T12:00:00Z",
     "type": "tool_call",
-    "stage": "authorization",
+    "stage": "attempt",
     "server": "exec",
     "tool": "exec",
-    "arguments": {"bin": "git", "args": ["status"]},
-    "allowed": true
+    "arguments": {"bin": "git", "args": ["status"]}
   }]
 }
 ```
@@ -69,8 +68,10 @@ Return a 2xx status to acknowledge receipt. Delivery failures are retried until 
 The batch ID also appears in `X-Computer-Use-Batch-ID`.
 
 Outer calls have `stage: "request"` and `server: "mcp-js"`; they have no
-`allowed` field. Browser and shell events have `stage: "authorization"`.
-That stage records a policy decision, not whether execution succeeded.
+`allowed` field. Browser and shell events have `stage: "attempt"` and no `allowed` field.
+The native pre hook records attempts before authorization; it cannot report
+the final verdict or whether execution succeeded. Denied-only filtering is
+therefore unavailable.
 
 ## Verify signatures
 

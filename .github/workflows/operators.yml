@@ -2,7 +2,8 @@ name: operators
 
 # The pytest suites of the two operators, each in its own Nix dev shell
 # (images/<operator>/flake.nix), as a developer runs them. No cluster, no
-# Docker, no secret: the tests run against fakes in their own trees.
+# Docker, no secret: local fixtures run Redis, OPA, and pinned MCPJS for
+# policy tests; Kubernetes APIs are fakes.
 
 on:
   pull_request:
@@ -49,6 +50,16 @@ jobs:
           persist-credentials: false
 
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+
+      - name: Pinned MCPJS for native-hook integration tests
+        if: matrix.operator == 'policy-operator'
+        run: |
+          binary="$RUNNER_TEMP/mcp-v8"
+          curl --fail --location --retry 3 --output "$binary" \
+            https://github.com/r33drichards/mcp-js/releases/download/v0.21.0-rc.4/mcp-v8-linux
+          echo "ad6808520def87c724e652b68f69b1d403abfb88b99354ef3e5af2e22916ccc2  $binary" | sha256sum --check
+          chmod +x "$binary"
+          echo "MCPJS_BIN=$binary" >> "$GITHUB_ENV"
 
       - name: Test
         run: nix develop -c pytest

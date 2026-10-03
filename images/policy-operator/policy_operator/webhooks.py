@@ -165,6 +165,8 @@ class Webhooks:
                 if len(json.dumps(event).encode()) > MAX_BATCH_BYTES - 1024:
                     return False
             pending.append((event, self.settings[sid]))
+        if not pending:
+            return True
         try:
             accepted = self.outbox.ingest(pending)
             if accepted:

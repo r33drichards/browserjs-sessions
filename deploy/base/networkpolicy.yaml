@@ -60,9 +60,14 @@ spec:
               - 192.168.0.0/16
               - 100.64.0.0/10
               - 169.254.0.0/16
-    # The opa Service routes to the durable recorder in the policy operator.
-    # The operator authenticates every administrative route; sessions can
-    # only obtain decisions, never bypass the recorder to reach opa-engine.
+    # Shared OPA authorization and native MCPJS pre-hook recording.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: opa
+      ports:
+        - port: 8181
+          protocol: TCP
     - to:
         - podSelector:
             matchLabels:
@@ -123,7 +128,10 @@ spec:
   policyTypes: ["Ingress", "Egress"]
   ingress:
     - from:
-        # Decisions and reading what each replica has loaded.
+        - podSelector:
+            matchLabels:
+              app: browserjs-session
+        # Reading what each replica has loaded.
         - podSelector:
             matchLabels:
               app: policy-operator
@@ -161,7 +169,7 @@ spec:
           protocol: TCP
 ---
 # The operator holds every session's policy. Only OPA (the bundle) and the
-# backend (validate, evaluate) and sessions (recorded decisions) reach it.
+# backend (validate, evaluate) and sessions (native pre hooks) reach it.
 # All administrative routes require a bearer credential.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

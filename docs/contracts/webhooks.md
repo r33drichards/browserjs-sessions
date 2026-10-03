@@ -35,12 +35,13 @@ durable capture commit; ingestion failures refuse execution.
 ## Events and batches
 
 Outer MCP `tools/call` requests, including `run_js`, are durably recorded by
-the backend before they are forwarded. Nested browser and shell authorization attempts,
-including denied attempts, are recorded inline by the session-facing decision gateway. These are distinct
-events: one `run_js` can produce several nested authorization events. Results,
-screenshots, and return values are not exported. An authorization event records
-the decision, not execution success. If the gateway cannot reach the engine,
-it records a refused attempt with `decision_error` before returning failure.
+the backend before forwarding. Nested browser and shell attempts are recorded
+by MCPJS's native `mcp_tools.pre` hook, before its local and remote enforcement
+policies. These are distinct events: one `run_js` can produce several nested
+attempts. Attempts subsequently denied by a policy are captured too. The hook
+cannot observe the later authorization verdict, so new nested events have
+`stage: "attempt"` and no `allowed` field. Results, screenshots, and return
+values are not exported. A captured attempt does not imply execution.
 
 The destination receives an uncompressed JSON POST:
 
@@ -54,11 +55,10 @@ The destination receives an uncompressed JSON POST:
     "session_id": "s-abcdefghij",
     "timestamp": "2026-10-03T12:00:00Z",
     "type": "tool_call",
-    "stage": "authorization",
+    "stage": "attempt",
     "server": "exec",
     "tool": "exec",
-    "arguments": {"bin": "git", "args": ["status"]},
-    "allowed": true
+    "arguments": {"bin": "git", "args": ["status"]}
   }]
 }
 ```
@@ -72,8 +72,8 @@ event itself is retained.
 A batch contains at most `batch_size` events (1–500; default 100), also capped
 at 2 MiB. Partial batches wait `flush_interval_seconds` (1–60; default 5).
 Full batches wake delivery immediately. Nested events are durably recorded
-before an authorization verdict reaches mcp-js. Filter evaluation and delivery
-retries add latency. Ordering across independent destination versions is not
+before MCPJS continues to enforcement policies. Persistence adds call latency;
+filter evaluation and HTTP delivery run asynchronously. Ordering across independent destination versions is not
 guaranteed.
 
 ## Rego filters
@@ -86,7 +86,7 @@ includes it; false, undefined, or other values omit it. Evaluation errors and
 timeouts retain events and retry evaluation; they never discard events.
 Filtering selects delivery without changing the authorization verdict.
 
-Export only denied browser or shell calls:
+Export nested browser or shell attempts:
 
 ```rego
 package browserjs.policy
@@ -95,8 +95,8 @@ import rego.v1
 default allow_tool_call := false
 
 allow_tool_call if {
-  input.stage == "authorization"
-  input.allowed == false
+  input.stage == "attempt"
+  input.server in {"browser", "exec"}
 }
 ```
 
@@ -146,19 +146,42 @@ weaker configuration. Set `WEBHOOK_REDIS_URL`, `WEBHOOK_REDIS_PASSWORD`, and
 optionally `WEBHOOK_REDIS_PREFIX` to configure it. The offline CLI does not connect
 to Redis and never captures live calls.
 
-The `opa` Service retains its existing name and port but routes to the
-operator's inline decision gateway. The actual OPA replicas are behind
-`opa-engine`; only the operator can reach them. Session network policies forbid
-bypassing the recorder. The operator discovers replica EndpointSlices for
-`opa-engine`. OPA asynchronous decision logging is no longer the capture source.
-The authenticated `/logs` endpoint remains compatible with older log producers,
-but those producers' in-memory buffering is outside the durable capture guarantee.
+The existing `opa:8181` Service continues to route directly to OPA replicas;
+authorization is unchanged. Enforcing session templates install a native remote
+pre hook alongside their existing policies:
+
+```json
+{
+  "mcp_tools": {
+    "pre": [{
+      "url": "http://policy-operator.browserjs-sessions.svc:8080",
+      "policy_path": "browserjs/hooks/s-abcdefghij/mcp_tools/pre"
+    }],
+    "mode": "all",
+    "policies": [
+      {"url": "file:///etc/mcp/mcp_tools.rego"},
+      {"url": "http://opa.browserjs-sessions.svc:8181", "policy_path": "browserjs/decision/s-abcdefghij/mcp_tools"}
+    ]
+  }
+}
+```
+
+The hook accepts OPA-style `{ "input": ... }` requests and returns
+`{ "result": true }` only after durable capture (or when exports are disabled).
+MCPJS interprets errors as hook failures and refuses execution. Pre hooks precede
+the policy chain, so a later policy denial still has an attempt event. There is
+no final-verdict or denied-only export filter for native attempt events. The
+pinned MCPJS v0.21.0-rc.4 supports this contract. Session network policies allow
+the collector on 8080 and OPA on 8181; Redis is accessible only to the collector.
+Administrative collector routes remain bearer-protected. OPA asynchronous
+logging is not the capture source; `/logs` is retained only for legacy producers,
+whose buffering is outside the durable capture guarantee.
 
 For configured outer calls, the backend checks the saved webhook configuration
 and requires the collector to have applied that same configuration before it
 acknowledges capture. It refuses the call on recorder unavailability, disk
-failure, or capacity pressure. The gateway likewise refuses a successful nested
-decision until its event is committed. An event may be recorded for a call that
+failure, or capacity pressure. The native pre hook likewise refuses to continue until the
+nested attempt is committed. An event may be recorded for a call that
 subsequently fails or never executes; events describe attempts, not successful
 execution.
 
@@ -175,10 +198,11 @@ batches. Changing the URL or signing secret applies to newly accepted events;
 old events keep their original configuration. Deleting a session also preserves
 its accepted backlog.
 
-Deploy the updated CRD, network policies, both OPA Services, backend, and
-policy-operator image together. The recorder becomes part of the authorization
-path: while the singleton operator is unavailable, nested decisions are refused,
-including for sessions without exports. Do not use `emptyDir` for Redis or
+Deploy the updated CRD, network policies, session hook templates, backend, and
+policy-operator image together. Roll existing session pods to install the hooks; warm-pool templates carry the
+pod name as the session ID. The recorder is on the pre-hook path: while the
+singleton operator is unavailable, hooked nested calls are refused, including
+for sessions without exports. Do not use `emptyDir` for Redis or
 scale the operator above one replica. Redis has a 1 GiB memory limit and no
 automatic failover; provision more memory and storage as receipt history grows.
 The guarantee assumes Redis and its PVC honour successful fsync; volume destruction or storage

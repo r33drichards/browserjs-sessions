@@ -125,7 +125,6 @@ async def stack(cfg, tmp_path, monkeypatch):
             env={**os.environ, "BUNDLE_TOKEN": cfg.bundle_token, "OPERATOR_TOKEN": cfg.opa_token},
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
         addresses.append(f"127.0.0.1:{opa_port}")
-    op.cfg = dataclasses.replace(op.cfg, opa_decision_url="http://" + addresses[0])
     try:
         yield op, addresses
     finally:
@@ -212,8 +211,8 @@ async def test_real_opa_replicas_follow_the_operator(stack):
     assert await asyncio.to_thread(decide, urls[0], "s-aaaaa", CALL) == {"result": {"allow": True}}
 
 
-async def test_real_opa_gateway_records_before_returning_decisions(stack):
-    """A real OPA verdict cannot reach the caller before durable capture."""
+async def test_native_hook_capture_precedes_independent_opa_verdict(stack):
+    """The hook records the attempt; existing OPA remains the authorization gate."""
     op, addresses = stack
     sent = []
     async def send(settings, body, bid):
@@ -227,14 +226,15 @@ async def test_real_opa_gateway_records_before_returning_decisions(stack):
     url = "http://" + addresses[0]
     assert await until(lambda: http(url + "/health")[0] == 200)
     assert await until(lambda: decide(url, "s-aaaaa", {}) == {"result": {"allow": False}})
-    assert await until(lambda: decide(url, "s-bbbbb", {}) == {"result": {"allow": False}})
-    gateway = f"http://127.0.0.1:{op.cfg.http_port}"
-    assert await asyncio.to_thread(decide, gateway, "s-aaaaa", CALL) == {"result": {"allow": True}}
-    assert await asyncio.to_thread(decide, gateway, "s-bbbbb", CALL) == {"result": {"allow": False}}
+    hook = f"http://127.0.0.1:{op.cfg.http_port}"
+    for sid, allowed in [("s-aaaaa", True), ("s-bbbbb", False)]:
+        status, body = await asyncio.to_thread(http, f"{hook}/v1/data/browserjs/hooks/{sid}/mcp_tools/pre",
+                                             json.dumps({"input": CALL}).encode(), method="POST")
+        assert status == 200 and json.loads(body) == {"result": True}
+        assert await asyncio.to_thread(decide, url, sid, CALL) == {"result": {"allow": allowed}}
     deadline = time.monotonic() + 10
     while len(sent) < 2 and time.monotonic() < deadline:
         await asyncio.sleep(0.05)
     exported = {batch["session_id"]: batch["events"][0] for batch in sent}
-    assert exported["s-aaaaa"]["allowed"] is True
-    assert exported["s-bbbbb"]["allowed"] is False
-    assert all(event["tool"] == "browser_execute" and event["id"] for event in exported.values())
+    assert set(exported) == {"s-aaaaa", "s-bbbbb"}
+    assert all(event["stage"] == "attempt" and "allowed" not in event for event in exported.values())

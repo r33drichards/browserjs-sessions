@@ -115,7 +115,7 @@ def cluster(cfg, tmp_path, monkeypatch):
     for i, port in enumerate(endpoints):
         c.call(c.kube.put, "endpointslices", {
             "apiVersion": "discovery.k8s.io/v1", "kind": "EndpointSlice",
-            "metadata": {"name": f"opa-{i}", "namespace": NS, "labels": {"kubernetes.io/service-name": "opa-engine"}},
+            "metadata": {"name": f"opa-{i}", "namespace": NS, "labels": {"kubernetes.io/service-name": "opa"}},
             "addressType": "IPv4", "ports": [{"name": "http", "port": port, "protocol": "TCP"}],
             "endpoints": [{"addresses": ["127.0.0.1"], "conditions": {"ready": True}}]})
     # A slice of another Service: its endpoints are not OPA's.

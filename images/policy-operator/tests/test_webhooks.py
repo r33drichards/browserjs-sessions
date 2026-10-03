@@ -262,23 +262,43 @@ async def test_config_version_mismatch_is_not_acknowledged(cfg, aiohttp_client):
     await op.close()
 
 
-async def test_gateway_never_allows_when_durable_commit_fails(cfg, aiohttp_client, aiohttp_server, monkeypatch):
+async def test_native_pre_hook_never_allows_when_durable_commit_fails(cfg, aiohttp_client, monkeypatch):
     import redis
-    from aiohttp import web
-    engine = web.Application()
-    async def allow(request):
-        return web.json_response({"result": {"allow": True}})
-    engine.router.add_post(f"/v1/data/browserjs/decision/{SID}/mcp_tools", allow)
-    engine_server = await aiohttp_server(engine)
-    op = Operator(dataclasses.replace(cfg, opa_decision_url=str(engine_server.make_url("/"))))
+    op = Operator(cfg)
     op.ready = True
     await op.webhooks.configure(SID, DEST)
     def fail(events): raise redis.RedisError("Redis unavailable")
     monkeypatch.setattr(op.webhooks.outbox, "ingest", fail)
     client = await aiohttp_client(make_app(op))
-    response = await client.post(f"/v1/data/browserjs/decision/{SID}/mcp_tools", json={"input": {"operation": "mcp_call_tool", "server": "exec", "tool": "exec", "arguments": {}}})
+    response = await client.post(f"/v1/data/browserjs/hooks/{SID}/mcp_tools/pre", json={"input": {"operation": "mcp_call_tool", "server": "exec", "tool": "exec", "arguments": {}}})
     assert response.status == 503
-    assert "allow" not in await response.text()
+    assert "result" not in await response.json()
+    await op.close()
+
+
+async def test_native_pre_hook_persists_attempt_without_authorizing(cfg, aiohttp_client):
+    op = Operator(cfg)
+    op.ready = True
+    await op.webhooks.configure(SID, DEST)
+    client = await aiohttp_client(make_app(op))
+    response = await client.post(f"/v1/data/browserjs/hooks/{SID}/mcp_tools/pre", json={"input": {"operation": "mcp_call_tool", "server": "exec", "tool": "exec", "arguments": {"bin": "ls"}}})
+    assert response.status == 200 and await response.json() == {"result": True}
+    group = op.webhooks.outbox.groups()[0]
+    recorded = op.webhooks.outbox.events(group, 1, 10000)[0][1]
+    assert recorded["stage"] == "attempt" and recorded["arguments"] == {"bin": "ls"}
+    assert "allowed" not in recorded
+    # The removed gateway route is not an alternate authorization path.
+    assert (await client.post(f"/v1/data/browserjs/decision/{SID}/mcp_tools", json={})).status == 404
+    await op.close()
+
+
+async def test_native_pre_hook_unconfigured_session_needs_no_redis_write(cfg, aiohttp_client, monkeypatch):
+    op = Operator(cfg)
+    op.ready = True
+    monkeypatch.setattr(op.webhooks.outbox, "ingest", lambda _: pytest.fail("unconfigured session wrote to Redis"))
+    client = await aiohttp_client(make_app(op))
+    response = await client.post(f"/v1/data/browserjs/hooks/{SID}/mcp_tools/pre", json={"input": {"operation": "mcp_call_tool"}})
+    assert response.status == 200 and await response.json() == {"result": True}
     await op.close()
 
 

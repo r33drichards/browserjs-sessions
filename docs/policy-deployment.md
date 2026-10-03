@@ -26,7 +26,7 @@ Everything is in the namespace `browserjs-sessions`, from `deploy/base`.
 | Object | File | Notes |
 |---|---|---|
 | CRDs `sessionpolicies.browserjs.dev`, `apitokens.browserjs.dev` | `crd-*.yaml` | now listed in the kustomization |
-| OPA: ServiceAccount (no token), Deployment (2 replicas; 1 in `deploy/local`), Service `opa-engine:8181`, decision gateway Service `opa:8181`, PodDisruptionBudget `minAvailable: 1` | `opa.yaml` | `openpolicyagent/opa:1.9.0-static`, pinned by its multi-platform digest |
+| OPA: ServiceAccount (no token), Deployment (2 replicas; 1 in `deploy/local`), Service `opa:8181`, PodDisruptionBudget `minAvailable: 1` | `opa.yaml` | `openpolicyagent/opa:1.9.0-static`, pinned by its multi-platform digest |
 | ConfigMap `opa-config` | `docs/contracts/policy/kustomization.yaml` | the two contract files themselves (see "Deviations") |
 | Policy operator: ServiceAccount, Role, RoleBinding, ClusterRole and binding `browserjs-policy-operator`, Deployment (1 replica, `Recreate`), Service `policy-operator:8080` | `policy-operator.yaml` | image `browserjs/policy-operator`, built from `images/policy-operator` (track A) |
 | Redis webhook queue: Service, singleton StatefulSet, retained 10 GiB PVC, NetworkPolicy | `webhook-redis.yaml` | AOF `appendfsync always`, `noeviction`; [delivery contract](contracts/webhooks.md) |
@@ -46,8 +46,8 @@ one node the two OPA replicas share it: the spread constraint is
 
 | Pods | Ingress | Egress |
 |---|---|---|
-| session pods | unchanged (the backend) | unchanged, plus pods `app: policy-operator` on 8080 |
-| `app: opa` | 8181 from the operator | the operator on 8080; DNS |
+| session pods | unchanged (the backend) | unchanged, plus pods `app: opa` on 8181 and `app: policy-operator` on 8080 |
+| `app: opa` | 8181 from session pods and the operator | the operator on 8080; DNS |
 | `app: policy-operator` | 8080 from OPA, session pods, and the backend | OPA on 8181; Redis on 6379; DNS; TCP 443 and 6443 to any address |
 | `app: webhook-redis` | 6379 from the operator | none |
 
@@ -206,7 +206,7 @@ read-only workflow; its summary has a "Session policies" section.
 | Step | Pull request | After `deploy`, in `cluster info` | In the UI |
 |---|---|---|---|
 | 0. Install | this one | `opa` and `policy-operator`: WANTED 0. Both CRDs `established=True`. Secrets `policy-tokens` (3 keys) and `api-tokens` (1 key) exist. No `POLICY_OPERATOR_URL`. Every template and Sandbox `asks-opa=no`. Warm pool unchanged (7 waiting, same ages) | nothing new; create a session, it is taken warm and works |
-| 1. Serving | `hack/pin-images.sh policy-operator=sha256:…` (digest from the `images` run on `main` after step 0) and `hack/policy-stage.sh gke serving` | `policy-operator` READY 1, `opa` READY 2 (ready means the bundle is active), the `opa-engine` EndpointSlice with two ready addresses, pods on the system node, no restarts. Still no `POLICY_OPERATOR_URL`, still `asks-opa=no`, warm pool untouched | nothing new |
+| 1. Serving | `hack/pin-images.sh policy-operator=sha256:…` (digest from the `images` run on `main` after step 0) and `hack/policy-stage.sh gke serving` | `policy-operator` READY 1, `opa` READY 2 (ready means the bundle is active), the `opa` EndpointSlice with two ready addresses, pods on the system node, no restarts. Still no `POLICY_OPERATOR_URL`, still `asks-opa=no`, warm pool untouched | nothing new |
 | 2. Enforcing | `hack/policy-stage.sh gke enforcing`; the pinned backend must have the policy API | `POLICY_OPERATOR_URL` set. `SandboxTemplate/session asks-opa=yes`. The 7 warm Sandboxes are new (ages) and `asks-opa=yes`; older Sandboxes `asks-opa=no`. After creating a session: a `SessionPolicy` of its name, Ready `True`, Loaded naming 2 replicas | create a session: Policy section on the create page, Policy tab on the session; the browser works; saving a policy that denies `evaluate` makes that call fail. A session from before: policy `unsupported`, works as before |
 | 3. API tokens | `ALLOWED_EMAILS` in `deploy/gke/patch-backend.yaml` (above) | `API_URL` and `ALLOWED_EMAILS` both shown | the Tokens page makes a token; `curl -H "Authorization: Bearer …"` against the API host lists sessions |
 
@@ -363,7 +363,7 @@ under an edited policy. Do not infer those results from a successful deploy.
 Items 1 and 2 can be run in either the `serving` or `enforcing` stage:
 
 1. "cluster info" workflow, section "Session policies": `opa` 2/2 and
-   `policy-operator` 1/1 ready, the `opa-engine` EndpointSlice with two ready
+   `policy-operator` 1/1 ready, the `opa` EndpointSlice with two ready
    addresses, both CRDs established. The operator being ready shows that
    its NetworkPolicy lets it reach the API server on GKE (the `443`/`6443`
    rule), and OPA being ready shows that it reaches the operator.
