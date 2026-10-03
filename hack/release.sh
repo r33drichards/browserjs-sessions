@@ -33,6 +33,17 @@
 #                                           (default: the pinned ones)
 #   hack/release.sh wait-warm-pool          until the warm pool's pods are the
 #                                           pinned images, and one is ready
+#   hack/release.sh mint-token <file>       an API token for this run's canary:
+#                                           written to <file> (mode 600), its
+#                                           record to the cluster, its name to
+#                                           stdout. An hour, the five scopes of
+#                                           the canary, owned by the first admin
+#                                           of the running backend who may use
+#                                           tokens. Nobody enters it,
+#                                           and nothing prints it or the owner
+#   hack/release.sh revoke-token <name>     deletes that record: the token and
+#                                           every access token made from it are
+#                                           refused from the next request
 #   hack/release.sh record                  this commit and its digests become
 #                                           the last good release
 #   hack/release.sh rollback <commit>       applies that commit's deploy/gke
@@ -273,6 +284,49 @@ case "${1:-}" in
       [ "$SECONDS" -lt "$deadline" ] || die "the warm pool did not come up on the pinned images in ${WARM_POOL_TIMEOUT:-900}s"
       sleep 15
     done
+    ;;
+
+  mint-token)
+    file="${2:-}"
+    [ -n "$file" ] || die "mint-token takes the file to write the token to"
+    # The backend's own lists, as it runs them.
+    deployment="$(k get deployment backend -o json)" || die "no deployment/backend to take the admins from"
+    printf '%s' "$deployment" | ( umask 077 && python3 -c '
+import datetime, hashlib, json, secrets, string, sys
+deployment = json.loads(sys.stdin.read() or "{}")
+env = {e["name"]: e.get("value", "") for c in deployment.get("spec", {}).get("template", {}).get("spec", {}).get("containers", []) for e in c.get("env", [])}
+split = lambda v: [a.strip().lower() for a in (v or "").split(",") if a.strip()]
+admins, allowed = split(env.get("ADMIN_EMAILS")), split(env.get("ALLOWED_EMAILS"))
+owners = [a for a in admins if a in allowed]
+if not owners:
+    sys.exit("release: no admin of the backend (ADMIN_EMAILS) may use API tokens (ALLOWED_EMAILS): the canary has nobody to act as")
+owner = owners[0]
+# As backend/internal/tokens makes one: bjs_<12 of base32, lower case>_<32 random bytes, base64url>.
+token_id = "".join(secrets.choice("abcdefghijklmnopqrstuvwxyz234567") for _ in range(12))
+secret = "".join(secrets.choice(string.ascii_letters + string.digits + "-_") for _ in range(43))
+token = "bjs_%s_%s" % (token_id, secret)
+expires = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+with open(sys.argv[1], "w") as f:
+    f.write(token)
+print(json.dumps({
+    "apiVersion": "browserjs.dev/v1alpha1", "kind": "APIToken",
+    "metadata": {"name": "tok-" + token_id, "labels": {"browserjs.dev/owner": hashlib.sha256(owner.encode()).hexdigest()[:32],
+                                                        "app.kubernetes.io/managed-by": "release-canary"}},
+    "spec": {"id": token_id, "owner": owner, "name": "release-canary",
+             "scopes": ["sessions:read", "sessions:write", "sessions:connect", "policies:read", "policies:write"],
+             "expiresAt": expires, "sha256": hashlib.sha256(token.encode()).hexdigest()},
+}))' "$file" ) >"$file.record" || { rm -f "$file" "$file.record"; exit 1; }
+    k apply -f "$file.record" >/dev/null || { rm -f "$file" "$file.record"; die "the token's record was refused"; }
+    jq -r '.metadata.name' "$file.record"
+    rm -f "$file.record"
+    ;;
+
+  revoke-token)
+    [ -n "${2:-}" ] || die "revoke-token takes the record's name (tok-...)"
+    k delete apitokens.browserjs.dev "$2" --ignore-not-found >/dev/null
+    # And any a run that was killed left behind: an hour old at most anyway.
+    k delete apitokens.browserjs.dev -l app.kubernetes.io/managed-by=release-canary --ignore-not-found >/dev/null
+    echo "revoked $2"
     ;;
 
   record)

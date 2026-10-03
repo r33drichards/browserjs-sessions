@@ -34,8 +34,9 @@ name: deploy
 
 #
 # The release canary (docs/releases.md) is on when the repository VARIABLE
-# CANARY is "on"; it needs the secret CANARY_API_TOKEN, an API token of the
-# deployment. On, a run: tries new session images on one canary session
+# CANARY is "on". It needs no secret: each run mints an API token of an hour
+# in the cluster for it (hack/release.sh mint-token), and revokes it at the
+# end, whatever happened. On, a run: tries new session images on one canary session
 # before anything is applied; applies; lets Argo Rollouts check the new
 # backend with the canary (test/canary.py) before users reach it, and the
 # new site on a quarter of its pods; checks that what runs is what is
@@ -135,21 +136,15 @@ jobs:
           hack/billing-stage.sh --check
           hack/billing-secrets.sh --check
 
-      # On, it needs its token: said now, before anything is touched. Off,
-      # the release is not checked by anything, and the summary says so.
+      # Off, the release is not checked by anything, and the summary says so.
       - name: Release canary
         id: canary
         env:
           CANARY: ${{ vars.CANARY }}
-          CANARY_API_TOKEN: ${{ secrets.CANARY_API_TOKEN }}
           ISSUER: ${{ inputs.issuer }}
         run: |
           case "$CANARY" in
             on)
-              if [ -z "$CANARY_API_TOKEN" ]; then
-                echo "::error::the variable CANARY is on and the repository secret CANARY_API_TOKEN is not set (docs/releases.md, \"The owner's one step\")"
-                exit 1
-              fi
               if [ "$ISSUER" != production ]; then
                 echo "::notice::a staging certificate: the canary cannot reach the deployment and is left out"
                 echo "on=false" >> "$GITHUB_OUTPUT"
@@ -357,15 +352,30 @@ jobs:
       # What the rollout of the backend runs against the new one before users
       # reach it: the script, and the token if the canary is on. Without the
       # token that check passes, saying it checked nothing.
+      #
+      # The token is this run's own: minted here, as the backend would make
+      # one, for the first admin of the running backend who may use tokens,
+      # for an hour; masked in this log before anything could print it; given
+      # to the later steps through the job's environment and to the check's
+      # Job through the Secret release-canary; revoked by the last step.
       - name: "Release: the canary's script and token"
         env:
           CANARY_ON: ${{ steps.canary.outputs.on }}
-          CANARY_API_TOKEN: ${{ secrets.CANARY_API_TOKEN }}
         run: |
           kubectl -n "$NS" create configmap release-canary --from-file=canary.py=test/canary.py --dry-run=client -o yaml |
             kubectl apply -f - >/dev/null
           echo "configmap/release-canary applied"
           if [ "$CANARY_ON" = true ]; then
+            file="$RUNNER_TEMP/canary-token"
+            name="$(hack/release.sh mint-token "$file")"
+            CANARY_API_TOKEN="$(cat "$file")"
+            rm -f "$file"
+            echo "::add-mask::$CANARY_API_TOKEN"
+            {
+              echo "CANARY_API_TOKEN=$CANARY_API_TOKEN"
+              echo "CANARY_TOKEN_NAME=$name"
+            } >> "$GITHUB_ENV"
+            echo "apitoken/$name minted for this run (an hour)"
             # On stdin: never in a command line, a file or this log.
             echo "token=$CANARY_API_TOKEN" |
               kubectl -n "$NS" create secret generic release-canary --from-env-file=/dev/stdin --dry-run=client -o yaml |
@@ -398,7 +408,6 @@ jobs:
         id: session_canary
         if: steps.canary.outputs.on == 'true' && inputs.session_canary == 'auto' && steps.changes.outputs.session_images != '' && steps.changes.outputs.previous != ''
         env:
-          CANARY_API_TOKEN: ${{ secrets.CANARY_API_TOKEN }}
           CANARY_DIGESTS: ${{ steps.changes.outputs.canary_digests }}
           SESSION_HOOK: hack/release.sh verify-session
           START_TIMEOUT: "300"
@@ -568,7 +577,6 @@ jobs:
       - name: "Release: the canary, after the apply"
         if: steps.canary.outputs.on == 'true'
         env:
-          CANARY_API_TOKEN: ${{ secrets.CANARY_API_TOKEN }}
           SESSION_HOOK: hack/release.sh verify-session
           START_TIMEOUT: "300"
         run: |
@@ -583,7 +591,6 @@ jobs:
         if: failure() && steps.canary.outputs.on == 'true' && steps.apply.conclusion != 'skipped' && steps.apply.conclusion != ''
         env:
           PREVIOUS: ${{ steps.changes.outputs.previous }}
-          CANARY_API_TOKEN: ${{ secrets.CANARY_API_TOKEN }}
           START_TIMEOUT: "300"
         run: |
           {
@@ -621,6 +628,16 @@ jobs:
         run: |
           hack/release.sh record
           echo "**Promoted.** \`$GITHUB_SHA\` is the last good release." >> "$GITHUB_STEP_SUMMARY"
+
+      # This run's token goes, whatever happened: it and every access token
+      # made from it are refused from the next request.
+      - name: "Release: revoke the canary's token"
+        if: always()
+        run: |
+          kubectl -n "$NS" delete secret release-canary --ignore-not-found >/dev/null || true
+          if [ -n "${CANARY_TOKEN_NAME:-}" ]; then
+            hack/release.sh revoke-token "$CANARY_TOKEN_NAME" || true
+          fi
 
       - name: Status to job summary
         if: ${{ !cancelled() }}

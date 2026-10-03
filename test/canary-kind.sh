@@ -13,34 +13,21 @@
 # local blueprint names its images by tag), and the images as the registry
 # has them (these are built here, from the same source). docs/releases.md.
 #
-# The token is made here, for the local admin, by writing its record to the
-# cluster as the backend would; it is deleted afterwards.
+# The token is minted here by hack/release.sh mint-token, as the deploy
+# workflow mints one for each release, and revoked afterwards; the end checks
+# that it is refused once revoked.
 set -euo pipefail
 . "$(dirname "$0")/../hack/lib.sh"
 
 [ "${UP:-1}" = 0 ] || hack/local-up.sh
 
-record="$(python3 - <<'PY'
-import datetime, hashlib, json, secrets, string
-owner = "admin@example.com"
-token_id = "".join(secrets.choice("abcdefghijklmnopqrstuvwxyz234567") for _ in range(12))
-secret = "".join(secrets.choice(string.ascii_letters + string.digits + "-_") for _ in range(43))
-token = "bjs_%s_%s" % (token_id, secret)
-expires = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
-print(token)
-print(json.dumps({
-    "apiVersion": "browserjs.dev/v1alpha1", "kind": "APIToken",
-    "metadata": {"name": "tok-" + token_id, "labels": {"browserjs.dev/owner": hashlib.sha256(owner.encode()).hexdigest()[:32]}},
-    "spec": {"id": token_id, "owner": owner, "name": "release-canary",
-             "scopes": ["sessions:read", "sessions:write", "sessions:connect", "policies:read", "policies:write"],
-             "expiresAt": expires, "sha256": hashlib.sha256(token.encode()).hexdigest()},
-}))
-PY
-)"
-token="$(head -1 <<<"$record")"
-name="$(tail -1 <<<"$record" | jq -r .metadata.name)"
-tail -1 <<<"$record" | kubectl -n "$NS" apply -f - >/dev/null
-trap 'kubectl -n "$NS" delete apitokens.browserjs.dev "$name" --ignore-not-found >/dev/null' EXIT
+# The token as the deploy workflow makes it for a release: minted here,
+# never printed, revoked at the end.
+tokenfile="$(mktemp)"
+name="$(hack/release.sh mint-token "$tokenfile")"
+token="$(cat "$tokenfile")"
+rm -f "$tokenfile"
+trap 'hack/release.sh revoke-token "$name" >/dev/null' EXIT
 
 # Policies bind only in the stage "enforcing" (hack/policy-stage.sh).
 policies=0
@@ -63,7 +50,7 @@ echo "=== straight at the backend, as a rollout's check"
 port=$((20000 + RANDOM % 20000))
 kubectl -n "$NS" port-forward service/backend "$port:80" >/dev/null 2>&1 &
 forward=$!
-trap 'kill "$forward" 2>/dev/null; kubectl -n "$NS" delete apitokens.browserjs.dev "$name" --ignore-not-found >/dev/null' EXIT
+trap 'kill "$forward" 2>/dev/null; hack/release.sh revoke-token "$name" >/dev/null' EXIT
 for _ in $(seq 1 30); do
   curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$port/healthz" && break
   sleep 0.5
@@ -71,5 +58,12 @@ done
 CANARY_API_TOKEN="$token" API_URL="http://127.0.0.1:$port" API_HOST=api.localtest.me APP_URL="" SITE_URL="" \
   EXPECT_STATE_SAVED=0 EXPECT_POLICIES="$policies" \
   test/canary.py || failed=1
+
+# Revoked, it is refused at once, and so is what was made from it.
+echo
+echo "=== revoked"
+hack/release.sh revoke-token "$name"
+status="$(curl -s -o /dev/null -w '%{http_code}' -H "Host: api.localtest.me" -H "Authorization: Bearer $token" "http://127.0.0.1:$port/v1/me")"
+if [ "$status" = 401 ]; then echo "PASS  the revoked token is refused (401)"; else echo "FAIL  the revoked token answered $status, not 401"; failed=1; fi
 
 [ -z "$failed" ]
