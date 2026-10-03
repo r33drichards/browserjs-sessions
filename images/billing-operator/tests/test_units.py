@@ -17,6 +17,7 @@ CONTRACT = (CONTRACTS / "catalogue.yaml").read_text(encoding="utf-8")
 
 def test_the_contracts_catalogue():
     assert parse(CONTRACT).session_disk_gb == 5
+    assert parse(CONTRACT).sizes == {"medium", "large"}   # the sizes with a rate of their own
 
 
 @pytest.mark.parametrize("change,message", [
@@ -161,10 +162,26 @@ def test_observe():
         sandbox("s-ddddd", owner="v@example.com", ready="False"),
     ], 5)
     assert seen == {
-        owner_hash(): {"s-aaaaa": {"awake": True, "readySince": "2026-10-02T09:59:40Z", "diskGB": 5},
-                       "s-bbbbb": {"awake": False, "readySince": None, "diskGB": 5}},
-        owner_hash("v@example.com"): {"s-ddddd": {"awake": False, "readySince": None, "diskGB": 5}},
+        owner_hash(): {"s-aaaaa": {"awake": True, "readySince": "2026-10-02T09:59:40Z", "diskGB": 5, "size": "small"},
+                       "s-bbbbb": {"awake": False, "readySince": None, "diskGB": 5, "size": "small"}},
+        owner_hash("v@example.com"): {"s-ddddd": {"awake": False, "readySince": None, "diskGB": 5, "size": "small"}},
     }
+
+
+def test_a_sessions_size_is_its_annotation_if_the_catalogue_prices_it():
+    def sized(name, size):
+        sb = sandbox(name)
+        sb["metadata"]["annotations"]["browserjs.dev/size"] = size
+        return sb
+
+    seen = observe([sandbox("s-aaaaa"), sized("s-bbbbb", "medium"), sized("s-ccccc", "large"), sized("s-ddddd", "huge")],
+                   5, frozenset({"medium", "large"}))[owner_hash()]
+    assert {sid: o["size"] for sid, o in seen.items()} == {
+        "s-aaaaa": "small", "s-bbbbb": "medium", "s-ccccc": "large",
+        "s-ddddd": "small",   # no rate for it: charged as small, the lowest
+    }
+    # With a catalogue that prices no sizes, every session is small.
+    assert observe([sized("s-bbbbb", "medium")], 5)[owner_hash()]["s-bbbbb"]["size"] == "small"
 
 
 def test_a_session_without_the_label_is_grouped_by_its_owner():

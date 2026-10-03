@@ -21,7 +21,7 @@ import (
 const reconcilePace = 200 * time.Millisecond
 
 // newStripe makes the Stripe side of billing over billing's account store
-// and ledger, and starts its reconcile, which runs until ctx is done. It is
+// and ledger. Its reconcile is one of the leader's passes (main.go). It is
 // nil, with no error, while STRIPE_MODE is unset. It gives billing what
 // billing asks of Stripe: the client that account deletion cancels and
 // detaches with, and auto-recharge for the balance pass.
@@ -49,12 +49,13 @@ func newStripe(ctx context.Context, cfg config.Config, bill *billingParts) (*bst
 	if cfg.Billing.AutoRecharge && bill.pass != nil {
 		bill.pass.Recharge = svc
 	}
-	// Before the first request: without prices nothing can be bought. Run
-	// reads them again, now and every hour.
+	// Before the first request: without prices nothing can be bought.
+	// They are read again every hour, by every replica; the reconciles are
+	// the leader's (passes, main.go).
 	if err := svc.RefreshPrices(ctx); err != nil {
 		slog.Error("Stripe: prices not read; nothing is offered until they are", "err", err)
 	}
-	go svc.Run(ctx)
+	go svc.KeepPrices(ctx)
 	slog.Info("Stripe", "mode", cfg.StripeMode, "autoRecharge", cfg.Billing.AutoRecharge, "webhook", cfg.APIURL+bstripe.WebhookPath)
 	return svc, nil
 }

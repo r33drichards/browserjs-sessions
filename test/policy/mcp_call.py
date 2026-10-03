@@ -84,4 +84,4 @@ for _ in range(count):
             outcome = "error"
     except Exception as e:  # the call itself failed: not a decision
         seen, outcome = repr(e), "error"
-    print(json.dumps({"outcome": outcome, "seconds": round(time.time() - started, 3), "seen": seen[:600]}), flush=True)
+    print(json.dumps({"outcome": outcome, "seconds": round(time.time() - started, 3), "at": round(started, 3), "seen": seen[:600]}), flush=True)

@@ -32,6 +32,17 @@ name: deploy
 # STRIPE_MODE is live. A missing one stops the run before it touches the
 # cluster.
 
+#
+# The release canary (docs/releases.md) is on when the repository VARIABLE
+# CANARY is "on"; it needs the secret CANARY_API_TOKEN, an API token of the
+# deployment. On, a run: tries new session images on one canary session
+# before anything is applied; applies; lets Argo Rollouts check the new
+# backend with the canary (test/canary.py) before users reach it, and the
+# new site on a quarter of its pods; checks that what runs is what is
+# pinned; runs the canary against the result; and goes back to the last good
+# release if any of that fails. Off, the rollouts still happen, with nothing
+# checking the backend, and the run says so.
+
 on:
   workflow_dispatch:
     inputs:
@@ -47,6 +58,14 @@ on:
         options:
           - production
           - staging
+      session_canary:
+        description: Try new session images on one canary session before the warm pool gets them (skip, when the new images need the new backend)
+        required: true
+        type: choice
+        default: auto
+        options:
+          - auto
+          - skip
 
 permissions:
   contents: read
@@ -69,7 +88,7 @@ jobs:
     name: deploy
     runs-on: ubuntu-24.04
     # Shorter than the hour the cluster credentials last.
-    timeout-minutes: 50
+    timeout-minutes: 58
     environment: production
     defaults:
       run:
@@ -115,6 +134,38 @@ jobs:
         run: |
           hack/billing-stage.sh --check
           hack/billing-secrets.sh --check
+
+      # On, it needs its token: said now, before anything is touched. Off,
+      # the release is not checked by anything, and the summary says so.
+      - name: Release canary
+        id: canary
+        env:
+          CANARY: ${{ vars.CANARY }}
+          CANARY_API_TOKEN: ${{ secrets.CANARY_API_TOKEN }}
+          ISSUER: ${{ inputs.issuer }}
+        run: |
+          case "$CANARY" in
+            on)
+              if [ -z "$CANARY_API_TOKEN" ]; then
+                echo "::error::the variable CANARY is on and the repository secret CANARY_API_TOKEN is not set (docs/releases.md, \"The owner's one step\")"
+                exit 1
+              fi
+              if [ "$ISSUER" != production ]; then
+                echo "::notice::a staging certificate: the canary cannot reach the deployment and is left out"
+                echo "on=false" >> "$GITHUB_OUTPUT"
+              else
+                echo "on=true" >> "$GITHUB_OUTPUT"
+              fi
+              ;;
+            "" | off)
+              echo "::warning::The release canary is off (the repository variable CANARY is not \"on\"): this deploy is not verified afterwards and is not rolled back if it breaks something. docs/releases.md"
+              echo "on=false" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::error::the repository variable CANARY is \"$CANARY\": it is on, off or not set"
+              exit 1
+              ;;
+          esac
 
       - name: OAuth secrets are set
         env:
@@ -193,6 +244,17 @@ jobs:
             fi
             sleep 10
           done
+
+      # The controller that releases the backend and the site
+      # (deploy/gke/rollouts.yaml). Its CRDs have to be there before the apply.
+      - name: Argo Rollouts
+        run: |
+          # In the product's namespace, with a Role there and nothing else.
+          kubectl apply -f deploy/base/namespace.yaml
+          kubectl apply --server-side --force-conflicts -k deploy/gke/argo-rollouts
+          kubectl -n "$NS" rollout status deployment/argo-rollouts --timeout=300s
+          kubectl wait --for=condition=Established --timeout=60s \
+            crd/rollouts.argoproj.io crd/analysistemplates.argoproj.io crd/analysisruns.argoproj.io
 
       - name: Issuers
         env:
@@ -292,7 +354,71 @@ jobs:
           METRONOME_PRODUCTION_WEBHOOK_SECRET: ${{ secrets.METRONOME_PRODUCTION_WEBHOOK_SECRET }}
         run: hack/billing-secrets.sh
 
+      # What the rollout of the backend runs against the new one before users
+      # reach it: the script, and the token if the canary is on. Without the
+      # token that check passes, saying it checked nothing.
+      - name: "Release: the canary's script and token"
+        env:
+          CANARY_ON: ${{ steps.canary.outputs.on }}
+          CANARY_API_TOKEN: ${{ secrets.CANARY_API_TOKEN }}
+        run: |
+          kubectl -n "$NS" create configmap release-canary --from-file=canary.py=test/canary.py --dry-run=client -o yaml |
+            kubectl apply -f - >/dev/null
+          echo "configmap/release-canary applied"
+          if [ "$CANARY_ON" = true ]; then
+            # On stdin: never in a command line, a file or this log.
+            echo "token=$CANARY_API_TOKEN" |
+              kubectl -n "$NS" create secret generic release-canary --from-env-file=/dev/stdin --dry-run=client -o yaml |
+              kubectl apply -f - >/dev/null
+            echo "secret/release-canary applied"
+          else
+            kubectl -n "$NS" delete secret release-canary --ignore-not-found >/dev/null
+            echo "the canary is off: secret/release-canary is absent"
+          fi
+
+      # What this run changes, and what there is to go back to.
+      - name: "Release: what changes"
+        id: changes
+        run: |
+          {
+            echo "## Release \`${GITHUB_SHA:0:12}\`"
+            echo
+            hack/release.sh changes
+            echo
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # New session images, on one session, before anything is applied: the
+      # warm pool, every running session and the backend are as they were.
+      # The session is started cold from the running blueprint with the new
+      # digests (the backend's "canary" create option) and put through
+      # test/canary.py; a failure stops the run here, with nothing changed.
+      # Left out on a cluster with no release on record: its backend may
+      # not know the option.
+      - name: "Release: session images on a canary session"
+        id: session_canary
+        if: steps.canary.outputs.on == 'true' && inputs.session_canary == 'auto' && steps.changes.outputs.session_images != '' && steps.changes.outputs.previous != ''
+        env:
+          CANARY_API_TOKEN: ${{ secrets.CANARY_API_TOKEN }}
+          CANARY_DIGESTS: ${{ steps.changes.outputs.canary_digests }}
+          SESSION_HOOK: hack/release.sh verify-session
+          START_TIMEOUT: "300"
+        run: |
+          {
+            echo "### Session images on a canary session"
+            echo
+            echo "\`$CANARY_DIGESTS\`, before anything is applied."
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+          if ! SUMMARY="$GITHUB_STEP_SUMMARY" test/canary.py; then
+            echo "::error::The new session images failed on a canary session. Nothing was applied: the warm pool, the running sessions and the backend are untouched."
+            echo "**Stopped here. Nothing was applied.**" >> "$GITHUB_STEP_SUMMARY"
+            kubectl -n "$NS" get pods -l app=browserjs-session -o wide || true
+            kubectl -n "$NS" get events --sort-by=.lastTimestamp | tail -30 || true
+            exit 1
+          fi
+
       - name: Apply
+        id: apply
         env:
           ISSUER: ${{ inputs.issuer }}
         run: |
@@ -406,11 +532,95 @@ jobs:
           if [ "$POMERIUM_RESTARTED" = true ] || [ "$BILLING_CHANGED" = true ] || [ -z "$backend_started" ] || [[ "$backend_started" < "$pomerium_ready" ]]; then
             kubectl -n "$NS" rollout restart deployment/backend
           fi
-          kubectl -n "$NS" rollout status deployment/backend --timeout=300s
-          kubectl -n "$NS" rollout status deployment/site --timeout=300s
+          # Released by their Rollouts (deploy/gke/rollouts.yaml). The
+          # backend: the new pod on standby, test/canary.py against it, and
+          # only then the switch. The site: a quarter of its pods first. A
+          # version that fails is taken away again, users never having met
+          # the backend's; this step then fails, and what follows puts the
+          # rest of the release back.
+          hack/release.sh rollout-status backend 1200
+          hack/release.sh rollout-status site 600
           if [ "$ISSUER" = staging ]; then
             echo "::warning::Deployed with a STAGING certificate: nothing trusts it, so sign-in and the backend's key fetch do not work. Run again with issuer=production."
           fi
+
+      # What runs is what is pinned: a deploy that "succeeded" and changed
+      # nothing, or left an old pod serving, fails here.
+      - name: "Release: what is pinned is what runs"
+        if: steps.canary.outputs.on == 'true'
+        run: |
+          status=0
+          hack/release.sh verify-deployments >"$RUNNER_TEMP/verify.txt" 2>&1 || status=$?
+          {
+            echo "### After the apply"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/verify.txt"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          [ "$status" = 0 ]
+          # The pool was replaced with the template: wait for it, so that the
+          # session below is one of the new ones.
+          WARM_POOL_TIMEOUT=480 hack/release.sh wait-warm-pool
+
+      # The same canary, against the deployment as it now is: an ordinary
+      # session, as a user gets one.
+      - name: "Release: the canary, after the apply"
+        if: steps.canary.outputs.on == 'true'
+        env:
+          CANARY_API_TOKEN: ${{ secrets.CANARY_API_TOKEN }}
+          SESSION_HOOK: hack/release.sh verify-session
+          START_TIMEOUT: "300"
+        run: |
+          printf '### The canary, after the apply\n\n' >> "$GITHUB_STEP_SUMMARY"
+          SUMMARY="$GITHUB_STEP_SUMMARY" test/canary.py
+
+      # Anything from the apply on that failed: back to the last good
+      # release, by applying that commit's manifests, and the canary once
+      # more to say whether the product is whole again.
+      - name: "Release: roll back"
+        id: rollback
+        if: failure() && steps.canary.outputs.on == 'true' && steps.apply.conclusion != 'skipped' && steps.apply.conclusion != ''
+        env:
+          PREVIOUS: ${{ steps.changes.outputs.previous }}
+          CANARY_API_TOKEN: ${{ secrets.CANARY_API_TOKEN }}
+          START_TIMEOUT: "300"
+        run: |
+          {
+            echo "### Rolled back"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$PREVIOUS" ]; then
+            echo "::error::The release failed and no earlier release is on record in the cluster: nothing was rolled back. docs/releases.md, \"Rolling back by hand\"."
+            echo "**Not rolled back: no earlier release is on record.** By hand: docs/releases.md." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          if [ "$PREVIOUS" = "$GITHUB_SHA" ]; then
+            echo "::error::The release failed and it is the last good release itself (\`$PREVIOUS\`): the manifests are not what broke. Nothing was rolled back."
+            echo "**Not rolled back: this commit is the last good release.**" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "::error::The release failed: rolling back to the last good release, $PREVIOUS"
+          {
+            echo '```'
+            hack/release.sh rollback "$PREVIOUS" 2>&1
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          printf '\nThe canary, on what was rolled back to (session images as that release pinned them):\n\n' >> "$GITHUB_STEP_SUMMARY"
+          if SUMMARY="$GITHUB_STEP_SUMMARY" test/canary.py; then
+            echo "**Rolled back to \`$PREVIOUS\`, and the canary passes on it.** This run still fails: the release did not happen." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::Rolled back to $PREVIOUS and the canary STILL FAILS: the product is broken and needs a person now."
+            echo "**Rolled back to \`$PREVIOUS\`, and the canary still fails: the product needs a person now.**" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit 1
+
+      # Only a release the canary passed becomes the one to go back to.
+      - name: "Release: record"
+        if: success() && steps.canary.outputs.on == 'true'
+        run: |
+          hack/release.sh record
+          echo "**Promoted.** \`$GITHUB_SHA\` is the last good release." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Status to job summary
         if: ${{ !cancelled() }}

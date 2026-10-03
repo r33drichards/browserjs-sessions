@@ -344,7 +344,7 @@ components:
           type: string
           enum: [payment_method_required, out_of_credit, session_limit, awake_limit,
                  at_capacity, rate_limited, metering_unavailable, account_blocked,
-                 terms_required, signups_paused, already_subscribed, no_customer,
+                 terms_required, size_not_included, signups_paused, already_subscribed, no_customer,
                  unknown_item, ui_only, stripe_unavailable, payments_off,
                  too_many_cards, auto_recharge_off, not_subscribed, payment_failed,
                  subscription_ending, invalid_request]
@@ -462,12 +462,20 @@ components:
             awakeSeconds: { type: integer, format: int64 }
             awakeMicros: { type: integer, format: int64 }
             diskMicros: { type: integer, format: int64 }
+        sizes:
+          description: The awake rate of each size of session, small first (its rate is rates.awakeMicrosPerHour).
+          type: array
+          items: { $ref: "#/components/schemas/SizeRate" }
         limits:
           type: object
-          required: [maxSessions, maxAwake]
+          required: [maxSessions, maxAwake, sizes]
           properties:
             maxSessions: { type: integer }
             maxAwake: { type: integer }
+            sizes:
+              description: The sizes of session the account's plan includes. `small` is always among them.
+              type: array
+              items: { type: string }
         autoRecharge: { $ref: "#/components/schemas/AutoRecharge" }
         payments:
           description: "`off`: Stripe is not configured. `test`: test mode, the UI says so."
@@ -527,17 +535,28 @@ components:
           properties:
             amountMicros: { type: integer, format: int64 }
             validDays: { type: integer }
+        sizes:
+          description: The awake rate of each size of session, small first.
+          type: array
+          items: { $ref: "#/components/schemas/SizeRate" }
         payg:
           type: object
           properties:
             maxSessions: { type: integer }
             maxAwake: { type: integer }
+            sizes: { type: array, items: { type: string }, description: The sizes pay as you go includes. }
         plans:
           type: array
           items: { $ref: "#/components/schemas/Item" }
         packs:
           type: array
           items: { $ref: "#/components/schemas/Item" }
+    SizeRate:
+      type: object
+      required: [key, awakeMicrosPerHour]
+      properties:
+        key: { type: string, description: "`small`, `medium`, `large`." }
+        awakeMicrosPerHour: { type: integer, format: int64 }
     Item:
       type: object
       required: [key, name, lookupKey, amount, creditMicros]
@@ -549,4 +568,5 @@ components:
         creditMicros: { type: integer, format: int64 }
         maxSessions: { type: integer }
         maxAwake: { type: integer }
+        sizes: { type: array, items: { type: string }, description: "Of a plan: the sizes of session it includes, `small` among them." }
         validDays: { type: integer }

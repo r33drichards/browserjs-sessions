@@ -74,6 +74,7 @@ const (
 	CodeSessionLimit          = "session_limit"
 	CodeAwakeLimit            = "awake_limit"
 	CodeAtCapacity            = "at_capacity"
+	CodeSizeNotIncluded       = "size_not_included"
 	CodeRateLimited           = "rate_limited"
 	CodeMeteringUnavailable   = "metering_unavailable"
 	CodeAccountBlocked        = "account_blocked"
@@ -210,6 +211,8 @@ func NewRefusal(code string, limit int, billingURL string) *Refusal {
 		r.Status, r.Message = http.StatusForbidden, "This account is suspended. Contact support."
 	case CodeTermsRequired:
 		r.Status, r.Message = http.StatusForbidden, "Accept the terms to continue."
+	case CodeSizeNotIncluded:
+		r.Status, r.Message = http.StatusForbidden, "Your plan does not include sessions of this size. Pick a smaller size, or change plan."
 	default:
 		r.Status, r.Message = http.StatusForbidden, "Refused."
 	}

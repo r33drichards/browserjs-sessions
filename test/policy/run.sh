@@ -396,16 +396,86 @@ k delete pod policy-test-stranger --wait=false >/dev/null
 
 # --- 4. OPA replicas going away --------------------------------------------------
 step "4. OPA replicas"
-call $P_WITH url 20s >"$work/during.jsonl" &
+# One pod after another is deleted and replaced, as a node drain, a Spot
+# preemption or a rollout does, while calls are made without a pause. Under
+# enforcing a call that fails here is a tool call an agent was refused for no
+# reason of its own, so none may: REPLACEMENTS times over.
+replacements="${REPLACEMENTS:-20}"
+stamp() { printf '%s %s\n' "$(date +%s.%N)" "$*" >>"$work/timeline"; }
+call $P_WITH url 3600s >"$work/during.jsonl" &
 caller=$!
-sleep 2
-k delete pod "$opa_pod" --wait=true >/dev/null
-k rollout status deploy/opa --timeout=120s >/dev/null
-wait "$caller"
+# Evidence for when a call fails. A new connection to the Service every 50 ms
+# from inside the session's pod (mcp-js keeps its connections; this does
+# not), and every change of an OPA pod's readiness, both with the time.
+k exec "$WITH" -c browser -- python3 -u -c '
+import socket, time
+n = 0
+while True:
+    t = time.time()
+    n += 1
+    try:
+        # The name first, by itself: a lookup that stalls is not a replica
+        # that does not answer.
+        address = socket.getaddrinfo("opa.'"$NS"'.svc", 8181, socket.AF_INET, socket.SOCK_STREAM)[0][4]
+        looked = time.time() - t
+        if looked > 0.5: print("%.3f lookup took %.3f s" % (t, looked))
+        c = socket.create_connection(address, timeout=1)
+        c.settimeout(1)
+        c.sendall(b"GET /health HTTP/1.1\r\nHost: opa\r\nConnection: close\r\n\r\n")
+        ok = c.recv(64).startswith(b"HTTP/1.1 200")
+        c.close()
+        if not ok: print("%.3f bad answer after %.3f s" % (t, time.time() - t))
+    except Exception as e:
+        print("%.3f %r after %.3f s" % (t, e, time.time() - t))
+    if n % 1000 == 0: print("%.3f %d probes so far" % (t, n))
+    time.sleep(0.05)
+' >"$work/probe.log" 2>&1 &
+prober=$!
+(
+  last=""
+  while :; do
+    now="$(k get pods -l app=opa -o json 2>/dev/null | jq -r '[.items[] | "\(.metadata.name | .[-5:])@\(.status.podIP // "-"):\(if .metadata.deletionTimestamp then "terminating" elif any(.status.conditions[]?; .type == "Ready" and .status == "True") then "ready" else "notready" end)"] | sort | join(" ")')"
+    [ "$now" = "$last" ] || { printf '%s pods %s\n' "$(date +%s.%N)" "$now" >>"$work/timeline"; last="$now"; }
+    sleep 0.2
+  done
+) &
+watcher=$!
+# First with nothing happening to OPA at all, for as long as the replacements
+# will take: a call that fails here did not fail because of one.
+stamp "quiet from here"
+sleep "${QUIET_SECONDS:-240}"
+stamp "quiet until here"
+quiet="$(jq -rs --argjson until "$(date +%s)" '[.[] | select(.at < $until)] | "\(length) calls, outcomes: \(map(.outcome) | group_by(.) | map("\(.[0]) \(length)") | join(", "))"' <"$work/during.jsonl")"
+echo "      with no replacement: $quiet"
+for i in $(seq 1 "$replacements"); do
+  victim="$(k get pods -l app=opa -o json | jq -r '[.items[] | select(.metadata.deletionTimestamp == null) | select(any(.status.conditions[]?; .type == "Ready" and .status == "True"))] | sort_by(.metadata.creationTimestamp) | .[0].metadata.name')"
+  stamp "$i delete $victim"
+  k delete pod "$victim" --wait=true >/dev/null
+  stamp "$i gone $victim"
+  k rollout status deploy/opa --timeout=120s >/dev/null
+  stamp "$i replaced"
+  sleep 1
+done
+kill "$caller" "$prober" "$watcher" 2>/dev/null
+wait "$caller" "$prober" "$watcher" 2>/dev/null || true
 got="$(cat "$work/during.jsonl")"
-is "no call fails while one OPA pod is deleted and replaced ($(jq -s length <<<"$got") calls)" ran "$(outcome "$got")"
-note "" && note "### One OPA pod deleted while calls are made" && note "" &&
-  note "$(jq -rs '"\(length) calls over 20 s, outcomes: \(map(.outcome) | group_by(.) | map("\(.[0]) \(length)") | join(", ")); slowest \(map(.seconds) | max) s"' <<<"$got")"
+is "no call fails while OPA pods are deleted and replaced, $replacements times ($(jq -s length <<<"$got") calls)" ran "$(outcome "$got")"
+if [ "$(outcome "$got")" != ran ]; then
+  # When, against the deletions, and what the agent's code and mcp-js saw.
+  echo "      calls that did not run (at, seconds, seen):"
+  jq -rs '.[] | select(.outcome != "ran") | "      \(.at) \(.seconds)s \(.outcome): \(.seen | .[0:200])"' <<<"$got"
+  echo "      the prober (a lookup and a new connection every 50 ms): what it logged (at, what):"
+  sed 's/^/      /' "$work/probe.log" | head -60
+  echo "      timeline:"
+  sort -n "$work/timeline" | sed 's/^/      /'
+fi
+note "" && note "### OPA pods deleted and replaced, $replacements times, while calls are made" && note "" &&
+  probed="$(grep -c 'probes so far' "$work/probe.log" || true)"
+slow="$(grep -c 'lookup took' "$work/probe.log" || true)"
+broken="$(grep -vc 'probes so far\|lookup took' "$work/probe.log" || true)"
+echo "      the prober: about ${probed}000 probes, $slow lookups over 0.5 s, $broken failed connections"
+note "With no replacement first: $quiet. Then, with the replacements:" && note "" &&
+  note "$(jq -rs '"\(length) calls, outcomes: \(map(.outcome) | group_by(.) | map("\(.[0]) \(length)") | join(", ")); slowest \(map(.seconds) | max) s"' <<<"$got")"
 
 k scale deploy/opa --replicas=0 >/dev/null
 k wait --for=delete pod -l app=opa --timeout=120s >/dev/null

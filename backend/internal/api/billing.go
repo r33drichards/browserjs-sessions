@@ -23,6 +23,9 @@ type Billing interface {
 	// *billing.Refusal, or the error that kept it from deciding.
 	Create(ctx context.Context, owner string, mine []sessions.Session) error
 	Start(ctx context.Context, s sessions.Session) error
+	// Size judges a session of size for owner: a create at that size, or
+	// a resize to it. The owner's plan says which sizes it includes.
+	Size(ctx context.Context, owner, size string) error
 	// View is what a session's view carries of billing.
 	View(ctx context.Context, s sessions.Session) billing.SessionView
 }
@@ -38,6 +41,13 @@ func (a *API) mayCreate(ctx context.Context, owner string, mine []sessions.Sessi
 		return nil
 	}
 	return a.billing.Create(ctx, owner, mine)
+}
+
+func (a *API) maySize(ctx context.Context, owner, size string) error {
+	if a.billing == nil {
+		return nil
+	}
+	return a.billing.Size(ctx, owner, size)
 }
 
 // mayResume judges a resume of a session that is not awake. The account is

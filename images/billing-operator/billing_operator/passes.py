@@ -83,7 +83,7 @@ class Observer:
 
         # If the list fails nothing is remembered of this tick: the next
         # one's gap decides what is counted.
-        by_owner = observe(await self.kube.list_sandboxes(), catalogue.session_disk_gb)
+        by_owner = observe(await self.kube.list_sandboxes(), catalogue.session_disk_gb, catalogue.sizes)
         observed, customers = {}, {}
         for owner_hash, sessions in by_owner.items():
             for sid, o in sessions.items():
@@ -93,7 +93,8 @@ class Observer:
 
         self.sessions, counted = seconds(self.sessions, observed, result.now, self.max_gap)
         still_awake = {sid for sid, o in observed.items() if o.get("awake")}
-        events = self.awake.tick(t, counted.awake, customers, still_awake)   # one that fell asleep is sent at once
+        sizes = {sid: o["size"] for sid, o in observed.items()}
+        events = self.awake.tick(t, counted.awake, customers, still_awake, sizes)   # one that fell asleep is sent at once
         events += self.disk.tick(t, counted.disk_gb, customers, set(observed))
         result.awake_seconds = sum(counted.awake.values())
         result.disk_gb_seconds = sum(counted.disk_gb.values())

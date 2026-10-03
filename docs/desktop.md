@@ -76,6 +76,23 @@ Mousepad's text is still drawn in a serif font; the terminal's is fixed-width.
   once give one browser. Closed, it stays closed until the next of those.
   `/healthz` of the MCP server no longer depends on Chromium. Files, the
   clipboard and `desktop_execute` never needed it.
+- **A new session's Chromium is started ahead of use.** Starting Chromium
+  under gVisor takes about 20 s, too long for a first call to wait. When the
+  backend creates a session or adopts one from the warm pool it asks the
+  pod (`POST :8081/browser/start`, backend `proxy/browser.go`, once the
+  session runs). The MCP server then starts Chromium with
+  `--no-startup-window`: it runs and answers on the debugging port but has
+  no window. The first `browser_execute` call opens one (its tab), as do the
+  panel launcher and links, and that first window is maximised. A call that
+  comes while it is starting waits for the same start. A pod waiting in the
+  pool is never asked, so it idles without Chromium; a woken pod is not
+  asked either (a restored one keeps whatever was running), nor a session
+  started again after a stop. The server answers a repeat with 200 and does
+  nothing, so a retried request never reopens a Chromium somebody closed.
+  The request is refused if it carries a web page's headers (`callers.js`).
+  One difference: with `--no-startup-window` Chromium does not exit when its
+  last window is closed; it stays, windowless, until the next call opens a
+  window.
 - **Chromium starts maximised.** openbox maximised every ordinary window,
   always. xfwm4 has no such rule, so the start command maximises Chromium's
   windows once after each start (`wmctrl`); after that they are ordinary

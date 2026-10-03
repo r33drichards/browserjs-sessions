@@ -82,6 +82,27 @@ func New(t *testing.T) (*sessions.Store, dynamic.Interface) {
 	return newStore(t, Blueprint)
 }
 
+// OldDigest is the digest both images of NewPinned's blueprint are named by.
+const OldDigest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+
+// NewPinned is New with a blueprint that names its images by digest, as a
+// deployment's does: registry.test/browser@OldDigest and
+// registry.test/mcp-js@OldDigest.
+func NewPinned(t *testing.T) (*sessions.Store, dynamic.Interface) {
+	t.Helper()
+	blueprint := strings.NewReplacer(
+		"image: browser:test", "image: registry.test/browser@"+OldDigest,
+		"image: mcp-js:test", "image: registry.test/mcp-js@"+OldDigest,
+	).Replace(Blueprint)
+	return newStore(t, blueprint)
+}
+
+// NewWith is New for a blueprint of the caller's.
+func NewWith(t *testing.T, blueprint string) (*sessions.Store, dynamic.Interface) {
+	t.Helper()
+	return newStore(t, blueprint)
+}
+
 func newStore(t *testing.T, blueprint string) (*sessions.Store, dynamic.Interface) {
 	t.Helper()
 	client := dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
@@ -490,4 +511,107 @@ func Claims(t *testing.T, client dynamic.Interface) []unstructured.Unstructured 
 		t.Fatal(err)
 	}
 	return list.Items
+}
+
+// SizedBlueprint is Blueprint with what a size changes: resources and
+// /dev/shm. As written it is the size small.
+const SizedBlueprint = `
+podTemplate:
+  metadata:
+    labels:
+      app: browserjs-session
+  spec:
+    containers:
+      - name: browser
+        image: browser:test
+        resources:
+          requests: {cpu: 150m, memory: 1Gi}
+          limits: {cpu: 1500m, memory: 2Gi}
+        volumeMounts:
+          - name: shm
+            mountPath: /dev/shm
+      - name: mcp-js
+        image: mcp-js:test
+        env:
+          - name: MCP_V8_PUBLIC_URL
+            value: "{{ .SessionURL }}"
+        resources:
+          requests: {cpu: 50m, memory: 256Mi}
+          limits: {cpu: 500m, memory: 1Gi}
+    volumes:
+      - name: shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 1Gi
+volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 5Gi
+`
+
+// Sizes is a sizes.yaml for SizedBlueprint: medium, large, and room for two
+// nodes of sessions, each as big as one large session.
+const Sizes = `
+sizes:
+  - name: medium
+    containers:
+      browser:
+        resources:
+          requests: {cpu: 500m, memory: 3Gi}
+          limits: {cpu: "2", memory: 5Gi}
+      mcp-js:
+        resources:
+          requests: {cpu: 50m, memory: 256Mi}
+          limits: {cpu: 500m, memory: 1Gi}
+        env:
+          MCP_V8_HEAP_MEMORY_MAX: "16"
+    shm: 2Gi
+  - name: large
+    containers:
+      browser:
+        resources:
+          requests: {cpu: "2", memory: 10Gi}
+          limits: {cpu: "3", memory: 10Gi}
+      mcp-js:
+        resources:
+          requests: {cpu: 50m, memory: 1Gi}
+          limits: {cpu: 500m, memory: 1Gi}
+        env:
+          MCP_V8_HEAP_MEMORY_MAX: "32"
+    shm: 4Gi
+capacity:
+  nodes: 2
+  cpu: 3213m
+  memory: 12097Mi
+`
+
+// NewSized is New with SizedBlueprint and the sizes of Sizes.
+func NewSized(t *testing.T) (*sessions.Store, dynamic.Interface) {
+	t.Helper()
+	store, client := newStore(t, SizedBlueprint)
+	EnableSizes(t, store, Sizes)
+	return store, client
+}
+
+// EnableSizes gives store the sizes of a sizes.yaml.
+func EnableSizes(t *testing.T, store *sessions.Store, file string) {
+	t.Helper()
+	parsed, err := sessions.ParseSizes([]byte(file))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.EnableSizes(parsed); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// OnNode is Ready for a pod on a node of the caller's naming.
+func OnNode(podIP, node string) map[string]any {
+	status := Ready(podIP)
+	status["nodeName"] = node
+	return status
 }

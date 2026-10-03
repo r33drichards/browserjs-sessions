@@ -11,6 +11,7 @@ import { useMe } from "../auth/MeProvider"
 import { signedOutHandled } from "../auth/signedOut"
 import { BlockedWake, DrainingNote, SessionState, useWakeBlock } from "../billing/SessionBilling"
 import { LifecycleActions, stateSentence } from "../components/SessionLifecycle"
+import { SessionSize } from "../components/SessionSize"
 import { VncPane } from "../components/VncPane"
 import type { PolicySession as Session } from "../policyApi"
 import { isManagedAsCode, policySummaryLine } from "../policyApi"
@@ -158,6 +159,7 @@ export function SessionDetail({ id }: { id: string }) {
               <span className="wf-title-meta">
                 <SessionState session={session} />
                 <span>created {new Date(session.created).toLocaleString()}</span>
+                <SessionSize session={session} run={actAndReload} />
                 {/* Only an admin looking at someone else's session needs telling whose it is. */}
                 {session.owner !== me.email && <span className="wf-mono">{session.owner}</span>}
                 {/* The title row is the summary that stays in view on every tab. */}

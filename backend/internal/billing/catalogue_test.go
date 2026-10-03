@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -37,7 +38,7 @@ func TestTheContractsCatalogueParses(t *testing.T) {
 		t.Errorf("scale %+v", got)
 	}
 	// A plan the catalogue does not have, like none, is pay as you go.
-	if got := c.Tier("gone"); got != c.Payg {
+	if got := c.Tier("gone"); !reflect.DeepEqual(got, c.Payg) {
 		t.Errorf("unknown plan %+v", got)
 	}
 	if p, ok := c.Pack("credit-20"); !ok || p.CreditMicros != 20000000 {

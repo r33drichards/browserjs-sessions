@@ -258,7 +258,7 @@ every token is then refused, and none can be made.
 request that touches the manifests. Real: the OPA image with the contract's
 configuration and `system.authz`, the Services, Roles, Secret wiring and
 NetworkPolicies of `deploy/base`, both CRDs, and the mcp-js image
-(v0.21.0-rc.3) with the variable `hack/policy-stage.sh` writes. Stand-ins
+(v0.21.0-rc.4) with the variable `hack/policy-stage.sh` writes. Stand-ins
 (`test/policy/stub.py`): the operator (a bundle server publishing bundles
 the script builds from the contract's examples with the image's own `opa`),
 the browser container (an MCP server that runs nothing) and the backend (a
@@ -331,9 +331,13 @@ Three things this found:
   5 seconds of mcp-js's timeout**, also when the Service simply has no
   address (kind's kube-proxy does not reject the connection). An agent in
   an enforcing session sees every call hang for 5 s and then throw.
-- The `preStop` sleep on OPA (5 s, the kubelet's own, since the image has no
+- The `preStop` sleep on OPA (10 s, the kubelet's own, since the image has no
   shell) is not in the contract. It keeps a terminating pod answering until
-  the Service has stopped sending to it.
+  the Service has stopped sending to it. Nor is the 5 s before a new
+  replica's first readiness probe, which keeps it out of the Service until
+  session pods can reach it. Both are there so that no call is denied while
+  a replica is replaced; [`spec/opa-replacement`](../spec/opa-replacement/README.md)
+  has the model, what was seen on kind, and what the two rest on.
 
 ## Not yet checked: GKE
 

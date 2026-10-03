@@ -11,7 +11,13 @@ locals {
   # entry with the next suffix (_v2), point the product at it, apply; the old
   # entry is removed only when nothing meters with it, and removing it
   # archives the metric (it needs its prevent_destroy lifted, deliberately).
-  metronome_metrics = var.metronome_enabled ? {
+  #
+  # A size of session other than small (the catalogue's `sizes`) has a metric
+  # of its own, on an event type of its own, rather than a `size` dimension
+  # on cu_awake_seconds_v1: that metric's definition cannot be given one, and
+  # a rate by dimension would mean replacing the product every customer's
+  # usage is rated with. A new size is a new entry here, by itself.
+  metronome_metrics = var.metronome_enabled ? merge({
     cu_awake_seconds_v1 = {
       event_type = "session.awake"
       property   = "seconds"
@@ -20,9 +26,14 @@ locals {
       event_type = "session.kept"
       property   = "gb_seconds"
     }
-  } : {}
+    }, {
+    for size, _ in local.awake_cents_per_hour_by_size : "cu_awake_${size}_seconds_v1" => {
+      event_type = "session.awake.${size}"
+      property   = "seconds"
+    }
+  }) : {}
 
-  metronome_usage_products = var.metronome_enabled ? {
+  metronome_usage_products = var.metronome_enabled ? merge({
     "Awake time" = {
       metric          = "cu_awake_seconds_v1"
       conversion      = "seconds to hours"
@@ -37,7 +48,15 @@ locals {
       commit_rate     = local.disk_cents_per_gb_month
       commit_rate_per = "GB-month"
     }
-  } : {}
+    }, {
+    for size, cents in local.awake_cents_per_hour_by_size : "Awake time (${size})" => {
+      metric          = "cu_awake_${size}_seconds_v1"
+      conversion      = "seconds to hours"
+      divide_by       = 3600
+      commit_rate     = cents
+      commit_rate_per = "hour"
+    }
+  }) : {}
 
   # Created or absent together with the rest.
   metronome_once = var.metronome_enabled ? toset(["this"]) : toset([])

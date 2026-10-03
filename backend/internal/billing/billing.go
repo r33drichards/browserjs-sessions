@@ -124,17 +124,20 @@ type Sessions interface {
 	List(ctx context.Context, owner string) ([]sessions.Session, error)
 	ListAll(ctx context.Context) ([]sessions.Session, error)
 	// Sleep snapshots the session, then suspends it, recording why.
-	Sleep(ctx context.Context, id, stoppedBy string, stillWanted func() bool) error
+	Sleep(ctx context.Context, id, stoppedBy string, stillWanted func(sessions.Session) bool) error
 	Wake(ctx context.Context, id string) error
 	Update(ctx context.Context, id string, name *string, action string) error
 	Delete(ctx context.Context, id string) error
 	SetDraining(ctx context.Context, id, reason string) error // "" clears it
 }
 
-// InFlight is the proxy's knowledge of work in progress on a session.
+// InFlight is one replica's knowledge of work in progress on a session:
+// its own. What the other replicas have in flight they say on the session
+// (sessions.Session.InFlight), under their names.
 type InFlight interface {
-	Calls(id string) int    // MCP calls and uploads being proxied now
-	CloseStreams(id string) // VNC viewers and MCP event streams
+	Calls(id string) int    // MCP calls and uploads this replica is proxying now
+	CloseStreams(id string) // this replica's VNC viewers and MCP event streams
+	Replica() string        // this replica's name among the marks on a session
 }
 
 // Store adapts a *sessions.Store to Sessions: the store's Create takes no
@@ -426,8 +429,11 @@ type MetronomeUsage struct {
 type MetronomeUsageRow struct {
 	SessionID     string
 	Day           string // yyyy-mm-dd
-	AwakeSeconds  int64
+	AwakeSeconds  int64  // of every size
 	DiskGBSeconds int64
+	// AwakeBySize is the part of AwakeSeconds that was at a size other than
+	// small, by size: it is charged at that size's rate.
+	AwakeBySize map[string]int64
 }
 
 // What the backend says to Stripe and hears back, reduced to the fields

@@ -1,0 +1,37 @@
+# The backend's and the site's pods are the Rollouts' (rollouts.yaml), made
+# from these Deployments' templates: the Deployments themselves have none.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  replicas: 0
+  template:
+    spec:
+      containers:
+        - name: backend
+          env:
+            # It campaigns for the passes (the Lease backend-leader) only
+            # while the rollout says this pod is the active one
+            # (backend/internal/leader): the pod's labels, as a file the
+            # kubelet keeps current.
+            - name: ACTIVE_FILE
+              value: /etc/podinfo/labels
+          volumeMounts:
+            - name: podinfo
+              mountPath: /etc/podinfo
+              readOnly: true
+      volumes:
+        - name: podinfo
+          downwardAPI:
+            items:
+              - path: labels
+                fieldRef:
+                  fieldPath: metadata.labels
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: site
+spec:
+  replicas: 0

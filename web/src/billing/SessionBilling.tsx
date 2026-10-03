@@ -8,7 +8,7 @@ import StatusIndicator from "@cloudscape-design/components/status-indicator"
 import { useState } from "react"
 import type { Session } from "../api"
 import type { BillingAction, Refusal, WakeBlock } from "../billingApi"
-import { WAKE_BLOCK_LABEL, createRefusal, dayMonth, ratesInWords, refusalOf, wakeBlock } from "../billingApi"
+import { WAKE_BLOCK_LABEL, awakeRate, createRefusal, dayMonth, dollars, planIncludes, ratesInWords, refusalOf, wakeBlock } from "../billingApi"
 import { stateLabel } from "../components/SessionLifecycle"
 import { useBilling } from "./BillingProvider"
 
@@ -110,6 +110,12 @@ function refusalAlert(r: Refusal) {
       return <Alert type="error">This account is suspended. Contact support.</Alert>
     case "terms_required":
       return <Alert type="error">Accept the terms to continue.</Alert>
+    case "size_not_included":
+      return (
+        <Alert type="warning" action={<Actions actions={[SEE_PLANS]} />}>
+          Your plan does not include sessions of this size. Pick a smaller size, or change plan.
+        </Alert>
+      )
     default:
       // at_capacity, metering_unavailable, rate_limited: the server's own sentence; trying again is right.
       return <Alert type="info">{r.message ?? "Try again in a few minutes."}</Alert>
@@ -119,12 +125,13 @@ function refusalAlert(r: Refusal) {
 // The create page's share of billing: the alert above the form, whether the
 // button is disabled, the line beneath the form, and what to do with a
 // refusal that still comes from the server.
-export function useCreateGate() {
+// `size` is the size chosen on the form: the cost is that size's.
+export function useCreateGate(size?: string) {
   const { billing, sessions, reload } = useBilling()
   const [fromServer, setFromServer] = useState<Refusal | null>(null)
   const known = billing ? createRefusal(billing, sessions) : null
   const refusal = known ?? fromServer
-  const words = billing ? ratesInWords(billing.rates) : null
+  const words = billing ? { ...ratesInWords(billing.rates), awake: dollars(awakeRate(billing, size)) } : null
 
   return {
     alert: refusal ? <div data-testid="create-refusal">{refusalAlert(refusal)}</div> : null,
@@ -135,6 +142,10 @@ export function useCreateGate() {
         This session will use {words.awake} an hour while awake and {words.kept} a month while it exists.
       </p>
     ) : null,
+    // What an awake hour of a session of a size costs ("$0.40"), and whether
+    // the plan includes that size. Null and true where billing is off.
+    hourly: (of: string) => (billing ? dollars(awakeRate(billing, of)) : null),
+    includes: (of: string) => !billing || billing.mode !== "enforce" || billing.state === "exempt" || planIncludes(billing, of),
     clear: () => setFromServer(null),
     // True when the error was a billing refusal, now shown as the alert.
     refused(e: unknown): boolean {

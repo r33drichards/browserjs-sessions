@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/r33drichards/computer-use/backend/internal/idle"
 	"github.com/r33drichards/computer-use/backend/internal/sessions"
 	"github.com/r33drichards/computer-use/backend/internal/sessions/sessionstest"
 )
@@ -47,9 +46,8 @@ func TestEventStreamDoesNotWakeASleepingSession(t *testing.T) {
 	if n := len(e.seen()); n != 0 {
 		t.Errorf("%d requests reached a pod", n)
 	}
-	e.skew.Add(int64(16 * time.Minute))
-	if isIdle(e.tracker, e.id) {
-		t.Error("asking a sleeping session for its event stream was recorded as activity")
+	if at := e.lastActive(t, e.id); !at.IsZero() {
+		t.Errorf("asking a sleeping session for its event stream was recorded as activity, at %s", at)
 	}
 
 	// A call is what wakes it.
@@ -141,7 +139,6 @@ func TestEventStreamDoesNotHoldTheSessionAwake(t *testing.T) {
 		close(started)
 		<-release
 	})
-	e.tracker.Idle([]string{e.id}) // the sweeper has seen it: its period runs
 	code := make(chan int, 1)
 	go func() { code <- e.do("GET", "/mcp", alice, "").Code }()
 	select {
@@ -151,10 +148,10 @@ func TestEventStreamDoesNotHoldTheSessionAwake(t *testing.T) {
 	}
 
 	e.skew.Add(int64(16 * time.Minute))
-	if !isIdle(e.tracker, e.id) {
+	if !e.isIdle(e.id) {
 		t.Error("an open event stream counted as activity")
 	}
-	if err := idle.Sweep(t.Context(), e.store, e.tracker); err != nil {
+	if err := e.sweep(); err != nil {
 		t.Fatal(err)
 	}
 	if s, _ := e.store.Get(t.Context(), e.id); s.State == sessions.Running {
@@ -167,7 +164,7 @@ func TestEventStreamDoesNotHoldTheSessionAwake(t *testing.T) {
 	}
 	// Nor does its closing count for anything.
 	e.skew.Add(int64(16 * time.Minute))
-	if isIdle(e.tracker, e.id) {
+	if e.isIdle(e.id) {
 		t.Error("the end of an event stream was recorded as activity")
 	}
 }
@@ -175,26 +172,25 @@ func TestEventStreamDoesNotHoldTheSessionAwake(t *testing.T) {
 // Opening the stream, over and over, is not a way to keep a session.
 func TestEventStreamIsNotActivity(t *testing.T) {
 	e := newEnv(t)
-	e.tracker.Idle([]string{e.id})
 	e.skew.Add(int64(16 * time.Minute))
 	for _, method := range []string{"GET", "HEAD"} {
 		if rec := e.do(method, "/mcp", alice, ""); rec.Code != http.StatusOK {
 			t.Fatalf("%s /mcp: %d", method, rec.Code)
 		}
-		if !isIdle(e.tracker, e.id) {
+		if !e.isIdle(e.id) {
 			t.Errorf("%s /mcp was recorded as activity", method)
 		}
 	}
 	// A call is.
 	for _, method := range []string{"POST", "DELETE"} {
 		e.skew.Add(int64(16 * time.Minute))
-		if !isIdle(e.tracker, e.id) {
+		if !e.isIdle(e.id) {
 			t.Fatalf("before %s: the session is not idle", method)
 		}
 		if rec := e.do(method, "/mcp", alice, "{}"); rec.Code != http.StatusOK {
 			t.Fatalf("%s /mcp: %d", method, rec.Code)
 		}
-		if isIdle(e.tracker, e.id) {
+		if e.isIdle(e.id) {
 			t.Errorf("%s /mcp was not recorded as activity", method)
 		}
 	}
@@ -213,7 +209,7 @@ func TestCallsStillWakeAndHoldTheSession(t *testing.T) {
 	go func() { code <- e.do("DELETE", "/mcp", alice, "").Code }()
 	<-started
 	e.skew.Add(int64(time.Hour))
-	if err := idle.Sweep(t.Context(), e.store, e.tracker); err != nil {
+	if err := e.sweep(); err != nil {
 		t.Fatal(err)
 	}
 	if s, _ := e.store.Get(t.Context(), e.id); s.State != sessions.Running {

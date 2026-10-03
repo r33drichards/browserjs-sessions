@@ -132,9 +132,10 @@ after 10 minutes by default, and takes up to 16 MiB.
 ### Browser — `mcp.callTool("browser", "browser_execute", …)`
 
 A persistent, headed Chromium (already logged into sites by the operator, who
-can watch it live over VNC) is available as an upstream MCP server. A session
-starts without it running: the first call starts it (a few seconds), and a
-call after somebody closed it starts it again, with its tabs:
+can watch it live over VNC) is available as an upstream MCP server. A new
+session starts it in the background, so it is normally ready for the first
+call, whose tab is its first window; a call after somebody closed it starts it
+again (a few seconds), with its tabs:
 
 ```js
 const r = await mcp.callTool("browser", "browser_execute", {

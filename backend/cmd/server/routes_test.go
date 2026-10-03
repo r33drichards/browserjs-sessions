@@ -21,6 +21,7 @@ import (
 	"github.com/r33drichards/computer-use/backend/internal/auth"
 	"github.com/r33drichards/computer-use/backend/internal/config"
 	"github.com/r33drichards/computer-use/backend/internal/idle"
+	"github.com/r33drichards/computer-use/backend/internal/metrics"
 	"github.com/r33drichards/computer-use/backend/internal/sessions"
 	"github.com/r33drichards/computer-use/backend/internal/sessions/sessionstest"
 )
@@ -40,6 +41,8 @@ type server struct {
 	key     *ecdsa.PrivateKey
 	client  dynamic.Interface
 	pod     atomic.Int64 // requests that reached a session pod
+	// requests to start a new session's browser (proxy/browser.go)
+	browserStarts atomic.Int64
 }
 
 // sessionsHost is where the sessions are, each under its ID; legacyHost is
@@ -68,12 +71,19 @@ func newServer(t *testing.T) *server {
 	store, client := sessionstest.New(t)
 	s := &server{t: t, key: key, client: client}
 	pod := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The backend's own request to a new session's pod, not one handed on
+		// (proxy/browser.go): counted apart.
+		if r.URL.Path == "/browser/start" {
+			s.browserStarts.Add(1)
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
 		s.pod.Add(1)
 		_, _ = io.WriteString(w, "pod:"+r.URL.Path)
 	}))
 	t.Cleanup(pod.Close)
 	// ServeMux panics at registration if two patterns conflict.
-	handler, px := newHandler(cfg, verifier, store, idle.New(15*time.Minute, time.Now))
+	handler, px := newHandler(cfg, verifier, store, idle.New(store, "test", 15*time.Minute, time.Now))
 	px.Target = func(sessions.Session, int) string { return strings.TrimPrefix(pod.URL, "http://") }
 	s.handler = handler
 	return s
@@ -362,7 +372,7 @@ func testSessionRoutes(t *testing.T, where func(id string) (host, base string)) 
 		rec := s.do("POST", appHost, ticketPath, user, "")
 		var ticket struct{ Ticket, URL string }
 		_ = json.Unmarshal(rec.Body.Bytes(), &ticket)
-		if rec.Code != http.StatusOK || len(ticket.Ticket) != 64 || ticket.URL != "wss://"+public+"/vnc?ticket="+ticket.Ticket {
+		if rec.Code != http.StatusOK || ticket.Ticket == "" || ticket.URL != "wss://"+public+"/vnc?ticket="+ticket.Ticket {
 			t.Errorf("%s's ticket: %d %s", user, rec.Code, rec.Body)
 		}
 		rec = s.do("GET", host, base+"/vnc?ticket="+ticket.Ticket, "", "")
@@ -467,5 +477,47 @@ func TestAPIResponsesForTheUI(t *testing.T) {
 	}
 	if rec := s.do("DELETE", appHost, p, alice, ""); rec.Code != http.StatusNoContent || rec.Body.Len() != 0 {
 		t.Errorf("delete: %d %q", rec.Code, rec.Body)
+	}
+}
+
+// The metrics are on a port of their own. Nothing of them is on the port
+// Pomerium routes to, on any host, and nothing they say names a user.
+func TestMetricsAreNotOnThePublicPort(t *testing.T) {
+	s := newServer(t)
+	created := s.session(alice)
+	s.do("POST", sessionsHost, "/"+created.ID+"/mcp", alice, `{}`)
+	for _, host := range []string{appHost, sessionsHost} {
+		if rec := s.do("GET", host, "/metrics", alice, ""); strings.Contains(rec.Body.String(), "browserjs_") {
+			t.Errorf("GET /metrics on %s serves the metrics: %d", host, rec.Code)
+		}
+	}
+	rec := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	for _, secret := range []string{alice, bob, root, "example.com", "@"} {
+		if strings.Contains(rec.Body.String(), secret) {
+			t.Errorf("the metrics contain %q", secret)
+		}
+	}
+}
+
+// A session made through the app has its browser started once its pod runs,
+// once, and nothing else is sent for it.
+func TestCreatedSessionsBrowserIsStarted(t *testing.T) {
+	s := newServer(t)
+	before := s.pod.Load()
+	s.session(alice)
+	deadline := time.Now().Add(5 * time.Second)
+	for s.browserStarts.Load() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the new session's browser was not started")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if n := s.browserStarts.Load(); n != 1 {
+		t.Errorf("asked to start the browser %d times", n)
+	}
+	if n := s.pod.Load() - before; n != 0 {
+		t.Errorf("%d other requests reached the pod", n)
 	}
 }

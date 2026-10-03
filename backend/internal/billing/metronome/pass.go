@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/r33drichards/computer-use/backend/internal/billing"
+	"github.com/r33drichards/computer-use/backend/internal/metrics"
 	"github.com/r33drichards/computer-use/backend/internal/sessions"
 )
 
@@ -99,9 +100,13 @@ func (p *Pass) Loop(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			if err := p.Run(ctx); err != nil {
+			err := p.Run(ctx)
+			result := "ok"
+			if err != nil {
+				result = "error"
 				slog.Error("balance pass failed", "err", err)
 			}
+			metrics.Passes.WithLabelValues("balance", result).Inc()
 		}
 	}
 }

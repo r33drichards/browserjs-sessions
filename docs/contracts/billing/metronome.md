@@ -80,6 +80,29 @@ Rates on `cu-standard-v1`, both `rate_type: FLAT`, in US cents, from
 | `Awake time` | **0** | 20 per hour | `awakeMicrosPerHour` / 10000 |
 | `Disk` | **0** | 28 per GB-month | `diskMicrosPerGBHour` x 730 / 10000, rounded to the cent |
 
+### Sizes
+
+A session of a size other than `small` is charged its own awake rate
+(`sizes.<size>.awakeMicrosPerHour` in the catalogue). For each such size
+OpenTofu defines three more objects, named from the size:
+
+| Object | Name | Definition |
+|---|---|---|
+| Billable metric | `cu_awake_<size>_seconds_v1` | as `cu_awake_seconds_v1`, with `event_type_filter: session.awake.<size>` |
+| Product (usage) | `Awake time (<size>)` | on that metric; divide by 3600 |
+| Rate on `cu-standard-v1` | list **0**, commit `sizes.<size>.awakeMicrosPerHour` / 10000 per hour | 40 for `medium`, 80 for `large` |
+
+A metric of its own, and not a `size` group key on `cu_awake_seconds_v1`
+with a rate for each value: a metric's definition cannot be changed, so
+that would be a `_v2` metric and a new `Awake time` product replacing the
+one every customer's usage is rated with. This way nothing that exists
+changes, a small session's events are what they were, and a new size is
+three new objects. The disk is the same at every size and has one metric.
+
+The backend reads usage from every size's metric (`AwakeMetric(size)`), and
+treats a size's metric that is not defined yet (the catalogue was changed
+before `infra/billing` was applied) as no usage.
+
 The list rate is zero and the real price is the commit rate: usage draws
 credit down at the real price while there is credit and costs nothing when
 there is none (Metronome's "guarantee zero overages" pattern). This is
@@ -133,6 +156,18 @@ Sent by the observer to `POST /v1/ingest`, at most 100 events a request.
 }
 ```
 
+- **Size.** A session's size is its Sandbox's annotation
+  `browserjs.dev/size` (none: `small`), if the catalogue has a rate for it
+  (`sizes`); any other value is `small`, the lowest rate. The awake seconds
+  of a session of a size other than small are sent with `event_type`
+  `session.awake.<size>` and one more property, `"size": "<size>"`; the
+  `transaction_id`, the window and the seconds are as for `session.awake`.
+  A small session's event is unchanged, with no `size` property. A session
+  has one size while it is awake (a resize takes effect at a start), so a
+  window has one size; if the observer does meet a session at another size
+  than its open window's (it was stopped and started between two ticks),
+  that window is sent at once and what follows is a new part, as after a
+  sleep. `session.kept` does not depend on the size.
 - **What is counted is `metering.md`'s "What is observed" and "Seconds",
   unchanged**: the gap rule, `MAX_GAP`, `readySince`. The observer computes
   the awake seconds and GB-seconds of each tick exactly as the step does

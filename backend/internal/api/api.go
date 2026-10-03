@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	petname "github.com/dustinkirkland/golang-petname"
 
@@ -26,18 +27,28 @@ type Store interface {
 	List(ctx context.Context, owner string) ([]sessions.Session, error)
 	ListAll(ctx context.Context) ([]sessions.Session, error)
 	Update(ctx context.Context, id string, name *string, action string) error
-	Sleep(ctx context.Context, id, stoppedBy string, stillWanted func() bool) error
+	Sleep(ctx context.Context, id, stoppedBy string, stillWanted func(sessions.Session) bool) error
 	Delete(ctx context.Context, id string) error
+}
+
+// Sizer is what the API needs of a store whose sessions come in sizes (a
+// *sessions.Store). A store without it has small sessions only.
+type Sizer interface {
+	Sizes() []sessions.SizeInfo
+	CreateSized(ctx context.Context, name, owner, size string, policy *sessions.PolicySpec) (sessions.Session, error)
+	Resize(ctx context.Context, id, size string) error
 }
 
 type API struct {
 	store Store
+	sizer Sizer // nil: small only
 	authz authz.Checker
 	urls  *sessions.URLTemplate
 	cap   int
 
-	// The lock is per user. It is enough because there is one backend
-	// replica; more would need the cap enforced cluster-side.
+	// The lock is per user, and this replica's: it keeps the same user's
+	// creates here from interleaving. A create on another replica is
+	// caught after the fact, by counting again (lostRace).
 	creating keyedMutex // the cap is "list, then create"
 
 	petName func() string // names a session created without a name
@@ -45,10 +56,33 @@ type API struct {
 	policies *policy.Handlers // nil: no session policies (see policy.go)
 
 	billing Billing // nil: no billing (see billing.go)
+
+	// Who may ask for a canary session (see SetCanary). Empty: nobody.
+	canary map[string]bool
+
+	onCreated func(id string) // nil: nothing (see OnCreated)
 }
 
+// SetCanary names the users, by email address, whose create requests may
+// carry "canary": a session started cold from the blueprint with the image
+// digests the request gives, for trying a new build of the session images
+// on one session before the warm pool gets them (docs/releases.md). It goes
+// by the address and not by auth.User.Admin, because the release workflow
+// calls with an API token, and a token is never an admin.
+func (a *API) SetCanary(emails []string) {
+	a.canary = map[string]bool{}
+	for _, email := range emails {
+		a.canary[email] = true
+	}
+}
+
+// OnCreated has f called with the ID of each session this API creates or
+// adopts from the warm pool, after it is made. f must not block.
+func (a *API) OnCreated(f func(id string)) { a.onCreated = f }
+
 func New(store Store, az authz.Checker, urls *sessions.URLTemplate, maxPerUser int) *API {
-	return &API{store: store, authz: az, urls: urls, cap: maxPerUser, petName: petName}
+	sizer, _ := store.(Sizer)
+	return &API{store: store, sizer: sizer, authz: az, urls: urls, cap: maxPerUser, petName: petName}
 }
 
 // petName is an adjective and an animal, like "brave-otter".
@@ -112,6 +146,7 @@ func (k *keyedMutex) lock(key string) (unlock func()) {
 
 func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/me", a.user(a.me))
+	mux.HandleFunc("GET /api/sizes", a.user(a.sizes))
 	mux.HandleFunc("GET /api/sessions", a.user(a.list))
 	mux.HandleFunc("POST /api/sessions", a.user(a.create))
 	mux.HandleFunc("GET /api/sessions/{id}", a.session(a.get))
@@ -176,8 +211,12 @@ func (a *API) storeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, sessions.ErrNotFound):
 		writeError(w, http.StatusNotFound, "session not found")
-	case errors.Is(err, sessions.ErrInvalidName), errors.Is(err, sessions.ErrInvalidAction):
+	case errors.Is(err, sessions.ErrInvalidName), errors.Is(err, sessions.ErrInvalidAction), errors.Is(err, sessions.ErrCanary), errors.Is(err, sessions.ErrInvalidSize):
 		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, sessions.ErrNoCapacity):
+		// Nothing was made or started. Room comes back as sessions sleep.
+		w.Header().Set("Retry-After", "120")
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error(), "code": "no_capacity"})
 	case errors.Is(err, sessions.ErrPolicyUnsupported):
 		writeError(w, http.StatusConflict, "new sessions cannot be given a policy here yet")
 	default:
@@ -207,6 +246,38 @@ func (a *API) me(w http.ResponseWriter, _ *http.Request, u auth.User) {
 	writeJSON(w, http.StatusOK, map[string]any{"email": u.Subject, "name": u.Name, "admin": u.Admin})
 }
 
+// offered is the sizes a session can have here, small first.
+func (a *API) offered() []sessions.SizeInfo {
+	if a.sizer == nil {
+		return []sessions.SizeInfo{{Name: sessions.DefaultSize, Warm: true}}
+	}
+	return a.sizer.Sizes()
+}
+
+// sizes lists the sizes a session can have: what each gives the desktop
+// (the limits of the pod's browser container). What each costs, where
+// billing is on, is the catalogue's (GET /api/billing/catalogue).
+func (a *API) sizes(w http.ResponseWriter, _ *http.Request, _ auth.User) {
+	writeJSON(w, http.StatusOK, map[string]any{"default": sessions.DefaultSize, "sizes": a.offered()})
+}
+
+// checkSize is the size asked for, as the store names it ("" is small), or
+// the error of one that is not offered.
+func (a *API) checkSize(asked string) (string, error) {
+	if asked == "" {
+		return sessions.DefaultSize, nil
+	}
+	offered := a.offered()
+	names := make([]string, 0, len(offered))
+	for _, s := range offered {
+		if s.Name == asked {
+			return asked, nil
+		}
+		names = append(names, s.Name)
+	}
+	return "", &sessions.InvalidSizeError{Size: asked, Offered: names}
+}
+
 func (a *API) list(w http.ResponseWriter, r *http.Request, u auth.User) {
 	var list []sessions.Session
 	var err error
@@ -232,12 +303,32 @@ func (a *API) list(w http.ResponseWriter, r *http.Request, u auth.User) {
 func (a *API) create(w http.ResponseWriter, r *http.Request, u auth.User) {
 	var body struct {
 		Name   string        `json:"name"`
+		Size   string        `json:"size"`
 		Policy *policy.Input `json:"policy"`
+		// Container name to image digest: see SetCanary.
+		Canary map[string]string `json:"canary"`
 	}
 	// The name is optional, and so is a body that would only carry it.
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, a.maxCreateBody())).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "body must be JSON, optionally with a name")
 		return
+	}
+	size, err := a.checkSize(body.Size)
+	if err != nil {
+		a.storeError(w, err)
+		return
+	}
+	ctx := r.Context()
+	if body.Canary != nil {
+		if !a.canary[u.Subject] {
+			writeError(w, http.StatusForbidden, "canary sessions are for the deployment's admins")
+			return
+		}
+		if err := sessions.CheckImageDigests(body.Canary); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		ctx = sessions.WithImageDigests(ctx, body.Canary)
 	}
 	// Checked before anything is created: an invalid policy creates nothing.
 	asked, ok := a.policyFor(w, r, u, body.Policy)
@@ -254,13 +345,12 @@ func (a *API) create(w http.ResponseWriter, r *http.Request, u auth.User) {
 		return
 	}
 	// Before anything is made, and so before any warm-pool claim.
-	if err := a.mayCreate(r.Context(), u.Subject, mine); err != nil {
-		a.refused(w, err)
+	if err := a.admit(r.Context(), u.Subject, mine); err != nil {
+		a.notAdmitted(w, err)
 		return
 	}
-	// With billing enforced the plan's limit has been applied instead.
-	if !a.enforcing() && len(mine) >= a.cap {
-		writeError(w, http.StatusConflict, "session limit reached; delete one first")
+	if err := a.maySize(r.Context(), u.Subject, size); err != nil {
+		a.refused(w, err)
 		return
 	}
 	name := body.Name
@@ -269,13 +359,88 @@ func (a *API) create(w http.ResponseWriter, r *http.Request, u auth.User) {
 	}
 	// The owner is recorded on the session itself; that is all there is to
 	// who may use it.
-	s, err := a.store.CreateWithPolicy(r.Context(), name, u.Subject, asked)
+	// A small session is made as one always was; only another size needs
+	// a store that has sizes.
+	var s sessions.Session
+	if a.sizer != nil && size != sessions.DefaultSize {
+		s, err = a.sizer.CreateSized(ctx, name, u.Subject, size, asked)
+	} else {
+		s, err = a.store.CreateWithPolicy(ctx, name, u.Subject, asked)
+	}
 	if err != nil {
 		a.storeError(w, err)
 		return
 	}
+	if err := a.lostRace(r.Context(), u.Subject, s, len(mine)); err != nil {
+		a.notAdmitted(w, err)
+		return
+	}
 	a.created(s)
 	writeJSON(w, http.StatusCreated, a.view(r.Context(), s, a.summary(r.Context(), s)))
+}
+
+// errSessionLimit is admit's refusal for a user at MAX_SESSIONS_PER_USER.
+var errSessionLimit = errors.New("session limit reached; delete one first")
+
+// admit judges one more session for owner, who has mine: nil, or why not.
+func (a *API) admit(ctx context.Context, owner string, mine []sessions.Session) error {
+	if err := a.mayCreate(ctx, owner, mine); err != nil {
+		return err
+	}
+	// With billing enforced the plan's limit has been applied instead.
+	if !a.enforcing() && len(mine) >= a.cap {
+		return errSessionLimit
+	}
+	return nil
+}
+
+func (a *API) notAdmitted(w http.ResponseWriter, err error) {
+	if errors.Is(err, errSessionLimit) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	a.refused(w, err)
+}
+
+// lostRace finds out, once s is made, whether the same user created another
+// session meanwhile through another replica of the backend, which the lock
+// in create does not reach. had is how many sessions the user had when s
+// was admitted. If there are now more than had and s, s is judged again as
+// if it came after all the others: refused, it is deleted and its caller is
+// answered as one who came second. It is nil when s stays.
+//
+// Whichever of two such creates counts second sees the other's session, so
+// the user never ends up past the limit. Both may see each other's and both
+// give way; the user then has room, and asks again.
+//
+// With one replica nobody else creates for the user while the lock is held:
+// the count is one more than before, and nothing else is asked.
+func (a *API) lostRace(ctx context.Context, owner string, s sessions.Session, had int) error {
+	now, err := a.store.List(ctx, owner)
+	if err != nil {
+		slog.Error("sessions not counted again after a create; the session stays", "session", s.ID, "err", err)
+		return nil
+	}
+	if len(now) <= had+1 {
+		return nil
+	}
+	others := make([]sessions.Session, 0, len(now))
+	for _, other := range now {
+		if other.ID != s.ID {
+			others = append(others, other)
+		}
+	}
+	refusal := a.admit(ctx, owner, others)
+	if refusal == nil {
+		return nil
+	}
+	slog.Info("a session created at the same time as another of its user's, past the limit; deleted", "session", s.ID)
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if err := a.store.Delete(cleanup, s.ID); err != nil && !errors.Is(err, sessions.ErrNotFound) {
+		slog.Error("could not delete a session created past the limit; delete it by hand", "session", s.ID, "err", err)
+	}
+	return refusal
 }
 
 func (a *API) get(w http.ResponseWriter, r *http.Request, id string) {
@@ -291,6 +456,7 @@ func (a *API) patch(w http.ResponseWriter, r *http.Request, id string) {
 	var body struct {
 		Name   *string `json:"name"`
 		Action string  `json:"action"`
+		Size   *string `json:"size"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "body must be JSON")
@@ -300,6 +466,13 @@ func (a *API) patch(w http.ResponseWriter, r *http.Request, id string) {
 		a.refused(w, err)
 		return
 	}
+	// The size first: a resume in the same request starts at the new size.
+	// Everything of the request is checked before any of it is done.
+	if body.Size != nil {
+		if !a.resize(w, r, id, *body.Size, body.Name, body.Action) {
+			return
+		}
+	}
 	// One write, validated as a whole: a bad action must not leave a rename
 	// behind.
 	if err := a.store.Update(r.Context(), id, body.Name, body.Action); err != nil {
@@ -307,6 +480,49 @@ func (a *API) patch(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	a.get(w, r, id)
+}
+
+// resize changes a session's size (sessions.Store.Resize): at once for one
+// that is asleep or stopped, at its next start for one that is awake. The
+// name and action of the same request are only checked here, so that a bad
+// one leaves the size as it was. It reports whether the request goes on.
+func (a *API) resize(w http.ResponseWriter, r *http.Request, id, asked string, name *string, action string) bool {
+	// A resize names its size: "" is not small here.
+	size, err := a.checkSize(asked)
+	if err == nil && asked == "" {
+		_, err = a.checkSize("(none)")
+	}
+	if err == nil && action != "" && action != sessions.ActionStop && action != sessions.ActionResume {
+		err = sessions.ErrInvalidAction
+	}
+	if err == nil && name != nil {
+		err = sessions.CheckName(*name)
+	}
+	if err != nil {
+		a.storeError(w, err)
+		return false
+	}
+	s, err := a.store.Get(r.Context(), id)
+	if err != nil {
+		a.storeError(w, err)
+		return false
+	}
+	if size == s.Size && s.PendingSize == "" {
+		return true
+	}
+	// The plan is the session's owner's, whoever asks.
+	if err := a.maySize(r.Context(), s.Owner, size); err != nil {
+		a.refused(w, err)
+		return false
+	}
+	if a.sizer == nil {
+		return true // small is all there is, and it is small
+	}
+	if err := a.sizer.Resize(r.Context(), id, size); err != nil {
+		a.storeError(w, err)
+		return false
+	}
+	return true
 }
 
 // sleep puts a running session to sleep on its user's request: what the

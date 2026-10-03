@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
+	"sort"
 	"sync"
 	"time"
 
@@ -15,20 +17,42 @@ import (
 // option gives. Data, not code: the file is a ConfigMap, re-read when it
 // changes.
 type Catalogue struct {
-	Version       int           `json:"version"`
-	Currency      string        `json:"currency"`
-	Rates         Rates         `json:"rates"`
-	SessionDiskGB int           `json:"sessionDiskGB"`
-	SignupCredit  SignupOffer   `json:"signupCredit"`
-	Payg          Tier          `json:"payg"`
-	Plans         []Item        `json:"plans"`
-	Packs         []Item        `json:"packs"`
-	AutoRecharge  RechargeOffer `json:"autoRecharge"`
+	Version  int    `json:"version"`
+	Currency string `json:"currency"`
+	Rates    Rates  `json:"rates"`
+	// Sizes is the awake rate of each size of session other than small,
+	// whose rate is rates.awakeMicrosPerHour. A size not named here is
+	// charged as small.
+	Sizes         map[string]SizeRate `json:"sizes,omitempty"`
+	SessionDiskGB int                 `json:"sessionDiskGB"`
+	SignupCredit  SignupOffer         `json:"signupCredit"`
+	Payg          Tier                `json:"payg"`
+	Plans         []Item              `json:"plans"`
+	Packs         []Item              `json:"packs"`
+	AutoRecharge  RechargeOffer       `json:"autoRecharge"`
 }
 
 type Rates struct {
 	AwakeMicrosPerHour  int64 `json:"awakeMicrosPerHour"`
 	DiskMicrosPerGBHour int64 `json:"diskMicrosPerGBHour"`
+}
+
+// SizeRate is what a size of session costs.
+type SizeRate struct {
+	AwakeMicrosPerHour int64 `json:"awakeMicrosPerHour"`
+}
+
+// SizeSmall is the size whose awake rate is rates.awakeMicrosPerHour, and
+// which every plan includes: sessions.DefaultSize.
+const SizeSmall = "small"
+
+// AwakeRate is the awake rate of a session of size, in micro-dollars an
+// hour. A size the catalogue does not name, like no size, is small.
+func (c Catalogue) AwakeRate(size string) int64 {
+	if r, ok := c.Sizes[size]; ok && size != SizeSmall {
+		return r.AwakeMicrosPerHour
+	}
+	return c.Rates.AwakeMicrosPerHour
 }
 
 type SignupOffer struct {
@@ -43,6 +67,13 @@ type Tier struct {
 	Name        string `json:"name,omitempty"`
 	MaxSessions int    `json:"maxSessions"`
 	MaxAwake    int    `json:"maxAwake"`
+	// Sizes is the sizes of session the tier includes besides small.
+	Sizes []string `json:"sizes,omitempty"`
+}
+
+// Allows reports whether the tier includes sessions of size.
+func (t Tier) Allows(size string) bool {
+	return size == "" || size == SizeSmall || slices.Contains(t.Sizes, size)
 }
 
 // Item is a plan or a pack.
@@ -55,8 +86,10 @@ type Item struct {
 	CreditMicros int64  `json:"creditMicros"`
 	MaxSessions  int    `json:"maxSessions,omitempty"`
 	MaxAwake     int    `json:"maxAwake,omitempty"`
-	ValidDays    int    `json:"validDays,omitempty"`
-	Enabled      bool   `json:"enabled"`
+	// Sizes, of a plan: the sizes of session it includes besides small.
+	Sizes     []string `json:"sizes,omitempty"`
+	ValidDays int      `json:"validDays,omitempty"`
+	Enabled   bool     `json:"enabled"`
 }
 
 type RechargeOffer struct {
@@ -84,6 +117,11 @@ func ParseCatalogue(data []byte) (Catalogue, error) {
 	case c.Payg.MaxSessions <= 0 || c.Payg.MaxAwake <= 0:
 		return Catalogue{}, errors.New("catalogue: payg.maxSessions and payg.maxAwake must be positive")
 	}
+	for size, r := range c.Sizes {
+		if size == "" || size == SizeSmall || r.AwakeMicrosPerHour <= 0 {
+			return Catalogue{}, fmt.Errorf("catalogue: sizes.%s needs a positive awakeMicrosPerHour (small's is rates.awakeMicrosPerHour)", size)
+		}
+	}
 	for _, p := range c.Plans {
 		if p.Key == "" || p.Key == PlanPayg || p.MaxSessions <= 0 || p.MaxAwake <= 0 {
 			return Catalogue{}, fmt.Errorf("catalogue: plan %q needs a key, maxSessions and maxAwake", p.Key)
@@ -96,7 +134,7 @@ func ParseCatalogue(data []byte) (Catalogue, error) {
 // catalogue no longer has, like no plan, has pay as you go's.
 func (c Catalogue) Tier(plan string) Tier {
 	if p, ok := c.Plan(plan); ok {
-		return Tier{Name: p.Name, MaxSessions: p.MaxSessions, MaxAwake: p.MaxAwake}
+		return Tier{Name: p.Name, MaxSessions: p.MaxSessions, MaxAwake: p.MaxAwake, Sizes: p.Sizes}
 	}
 	return c.Payg
 }
@@ -192,9 +230,11 @@ type PublicCatalogue struct {
 	Currency     string       `json:"currency"`
 	Rates        PublicRates  `json:"rates"`
 	SignupCredit PublicSignup `json:"signupCredit"`
-	Payg         PublicTier   `json:"payg"`
-	Plans        []PublicItem `json:"plans"`
-	Packs        []PublicItem `json:"packs"`
+	// Every size that is charged, small first, then by rate.
+	Sizes []PublicSize `json:"sizes"`
+	Payg  PublicTier   `json:"payg"`
+	Plans []PublicItem `json:"plans"`
+	Packs []PublicItem `json:"packs"`
 }
 
 type PublicRates struct {
@@ -208,9 +248,16 @@ type PublicSignup struct {
 	ValidDays    int   `json:"validDays"`
 }
 
+type PublicSize struct {
+	Key                string `json:"key"`
+	AwakeMicrosPerHour int64  `json:"awakeMicrosPerHour"`
+}
+
 type PublicTier struct {
 	MaxSessions int `json:"maxSessions"`
 	MaxAwake    int `json:"maxAwake"`
+	// The sizes it includes, small among them.
+	Sizes []string `json:"sizes"`
 }
 
 type PublicItem struct {
@@ -222,6 +269,33 @@ type PublicItem struct {
 	MaxSessions  int    `json:"maxSessions,omitempty"`
 	MaxAwake     int    `json:"maxAwake,omitempty"`
 	ValidDays    int    `json:"validDays,omitempty"`
+	// Of a plan: the sizes it includes, small among them.
+	Sizes []string `json:"sizes,omitempty"`
+}
+
+// publicSizes is the catalogue's sizes, small first, then by rate.
+func (c Catalogue) publicSizes() []PublicSize {
+	out := []PublicSize{{SizeSmall, c.Rates.AwakeMicrosPerHour}}
+	for size, r := range c.Sizes {
+		out = append(out, PublicSize{size, r.AwakeMicrosPerHour})
+	}
+	sort.SliceStable(out[1:], func(i, j int) bool {
+		a, b := out[i+1], out[j+1]
+		return a.AwakeMicrosPerHour < b.AwakeMicrosPerHour || (a.AwakeMicrosPerHour == b.AwakeMicrosPerHour && a.Key < b.Key)
+	})
+	return out
+}
+
+// included is a tier's sizes as the public catalogue lists them: small,
+// then those of sizes it names, in the catalogue's order.
+func (c Catalogue) included(sizes []string) []string {
+	out := []string{}
+	for _, s := range c.publicSizes() {
+		if (Tier{Sizes: sizes}).Allows(s.Key) {
+			out = append(out, s.Key)
+		}
+	}
+	return out
 }
 
 func (c Catalogue) publicRates() PublicRates {
@@ -234,7 +308,12 @@ func (c Catalogue) Public() PublicCatalogue {
 		out := []PublicItem{}
 		for _, i := range all {
 			if i.Enabled {
-				out = append(out, PublicItem{i.Key, i.Name, i.LookupKey, i.Amount, i.CreditMicros, i.MaxSessions, i.MaxAwake, i.ValidDays})
+				item := PublicItem{Key: i.Key, Name: i.Name, LookupKey: i.LookupKey, Amount: i.Amount, CreditMicros: i.CreditMicros,
+					MaxSessions: i.MaxSessions, MaxAwake: i.MaxAwake, ValidDays: i.ValidDays}
+				if i.MaxSessions > 0 { // a plan
+					item.Sizes = c.included(i.Sizes)
+				}
+				out = append(out, item)
 			}
 		}
 		return out
@@ -243,7 +322,8 @@ func (c Catalogue) Public() PublicCatalogue {
 		Currency:     c.Currency,
 		Rates:        c.publicRates(),
 		SignupCredit: PublicSignup{c.SignupCredit.AmountMicros, c.SignupCredit.ValidDays},
-		Payg:         PublicTier{c.Payg.MaxSessions, c.Payg.MaxAwake},
+		Sizes:        c.publicSizes(),
+		Payg:         PublicTier{c.Payg.MaxSessions, c.Payg.MaxAwake, c.included(c.Payg.Sizes)},
 		Plans:        items(c.Plans),
 		Packs:        items(c.Packs),
 	}
