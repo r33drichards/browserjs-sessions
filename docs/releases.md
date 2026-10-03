@@ -6,6 +6,35 @@ it, the new site on a quarter of its pods, new session images on one
 session; a canary after; and an automatic way back. One cluster, no second
 environment, no service mesh.
 
+## Automatic site releases
+
+The VitePress site releases when a change to `site/` is merged into `main`.
+The `images` workflow builds and publishes it, then updates only the site
+Deployment to the published digest. Its existing Argo canary checks still
+run. The job verifies the serving pods' digest, restores the previous image
+on failure, and records successful releases in `ConfigMap/site-release`
+(image, source commit and workflow URL). Full cluster deploys remain manual.
+
+The site and full cluster deploy use the same Actions concurrency group,
+`deploy`, so they do not run together. Full deploys and cluster rollbacks
+preserve the running site's image in their checkout before applying the
+manifests. The site's Git pin is the initial installation's image; an
+independent site release does not write a commit or update the whole
+cluster's last-good-release record.
+
+To retry, run **images** on `main` with `images=site`. A manual run on another
+branch builds only. To roll back the site independently, use a checkout of
+current `main` with production credentials and run:
+
+```sh
+hack/site-release.sh deploy us-west1-docker.pkg.dev/browserjs-sessions/browserjs/site@sha256:…
+```
+
+Choose a previous published site's immutable digest from its Actions
+summary. Do not run this while an Actions deployment holds the `deploy`
+lock. It goes through the same canary and digest verification. Reverting
+the source change through a PR is another way to release the previous docs.
+
 ## What does the releasing, and why
 
 | | Released how | By |

@@ -15,6 +15,8 @@ on:
       - "deploy/gke/site.yaml"
       - "deploy/base/networkpolicy.yaml"
       - "hack/release.sh"
+      - "hack/site-release.sh"
+      - "test/site-release/**"
       - "test/release/**"
       - ".github/workflows/release-kind.yml"
   workflow_dispatch:
@@ -42,7 +44,8 @@ jobs:
       - name: Manifests
         run: |
           set -euo pipefail
-          shellcheck -S warning hack/release.sh test/release/run.sh
+          shellcheck -S warning hack/release.sh hack/site-release.sh test/release/run.sh
+          python3 test/site-release/test_release.py
           for overlay in deploy/gke deploy/gke-staging-issuer deploy/gke/argo-rollouts; do
             kubectl kustomize "$overlay" >"$RUNNER_TEMP/rendered.yaml"
           done

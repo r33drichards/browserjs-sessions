@@ -30,8 +30,8 @@ with a notice in the run, not failed.
 | Event | What happens |
 |---|---|
 | Pull request touching the paths above | The affected images are built. No sign-in, no push. |
-| Push to `main` touching the paths above | The affected images are built and pushed. |
-| Run by hand (Actions, **images**, Run workflow) on `main` | The chosen image, or all, is built and pushed. |
+| Push to `main` touching the paths above | The affected images are built and pushed. A published `site` image is automatically deployed through its Argo canary. |
+| Run by hand (Actions, **images**, Run workflow) on `main` | The chosen image, or all, is built and pushed. Choosing `site` also deploys it. |
 | Run by hand on any other branch | Build only. |
 
 Pull requests from forks build too: the build job needs no credentials.
@@ -83,7 +83,35 @@ The Kubernetes manifests pin images by digest, not by tag.
 
 - Or the console: Artifact Registry, `browserjs`, the image, its tags.
 
-## Rolling one out
+## Automatic site releases
+
+Merging changes under `site/` into `main` publishes the VitePress image and
+runs the `deploy site` job in `images.yml`. It uses the digest returned by
+that run's publish step, passed as the `site-image` artifact; it never deploys
+the moving `:main` tag. Changes to `hack/site-release.sh` also rebuild and
+release the site. Pull requests only build and test.
+
+The job authenticates with the existing `DEPLOY_SA` and GKE settings, and
+uses the `production` environment. Any environment approval rules still
+apply. The site and full cluster deploy share the `deploy` concurrency group
+with in-progress cancellation disabled. All selected images must publish
+successfully before the site deployment starts.
+
+Only `deployment/site` is updated. The existing Argo Rollout checks the new
+pods through `site-answers` before promoting them; the helper verifies the
+serving pods' image digest and records the commit, image and Actions run in
+`ConfigMap/site-release`. If promotion or verification fails, it restores
+the previous digest and fails the workflow. An initial full deploy must
+install the site Rollout and AnalysisTemplate before automatic releases work.
+
+The site digest in Git is now the bootstrap value. Full cluster deployments
+and rollbacks use `hack/site-release.sh preserve` to copy the currently
+running site's digest into their temporary checkout before applying it.
+This keeps a backend release from reverting an independently published site.
+To retry a site release, run **images** on `main` with `images=site`; to roll
+back only the site, see [Releases](releases.md#automatic-site-releases).
+
+## Rolling other images out
 
 1. Take the digest reference from the run summary.
 2. Pin it in the deploy overlay, for example with kustomize:
@@ -97,7 +125,8 @@ The Kubernetes manifests pin images by digest, not by tag.
 
    The session images (`browser`, `mcp-js`) are named in the Sandbox template;
    pin them there the same way. `hack/pin-images.sh` does all of this:
-   `hack/pin-images.sh site=sha256:…` pins one image.
+   `hack/pin-images.sh backend=sha256:…` pins one image. The site follows
+   the automatic release flow above.
 3. Commit, review, apply the overlay to the cluster.
 
 Running sessions keep the image they started with. A session picks up a new
