@@ -1,13 +1,17 @@
 name: site
 
 # Builds the public site (site/: landing page, docs, blog) on pull requests
-# that touch it. Build only: nothing is deployed from here yet.
+# that touch it. On main, images.yml publishes and deploys it automatically.
 
 on:
   pull_request:
     paths:
       - "site/**"
       - ".github/workflows/site.yml"
+      - ".github/workflows/images.yml"
+      - ".github/workflows/deploy.yml"
+      - "hack/site-release.sh"
+      - "test/site-release/**"
 
 permissions:
   contents: read
@@ -33,5 +37,7 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: site/package-lock.json
+      - name: Site release regression checks
+        run: python3 ../test/site-release/test_release.py
       - run: npm ci
       - run: npm run build

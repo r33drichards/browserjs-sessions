@@ -376,6 +376,9 @@ jobs:
             echo "the canary is off: secret/release-canary is absent"
           fi
 
+      - name: Preserve the independently released site
+        run: hack/site-release.sh preserve
+
       # What this run changes, and what there is to go back to.
       - name: "Release: what changes"
         id: changes

@@ -297,6 +297,8 @@ case "${1:-}" in
     echo "rolling back to $commit:"
     pinned "$tree" | sed 's/^/  /'
     (cd "$tree" && hack/pin-images.sh --check)
+    # Site releases are independent: a backend rollback must not revert docs.
+    hack/site-release.sh preserve "$tree"
     kubectl apply -k "$tree/deploy/gke"
     failed=""
     for deployment in policy-operator opa billing-operator; do
