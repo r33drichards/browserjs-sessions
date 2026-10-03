@@ -298,6 +298,9 @@ func newHandlerWith(cfg config.Config, verifier auth.Verifier, store *sessions.S
 	// start a session on other digests of the session images.
 	sessionAPI.SetCanary(cfg.AdminEmails)
 	sessionAPI.EnablePolicies(policies)
+	// A new session's Chromium starts in the background, ready for the first
+	// browser call (proxy/browser.go).
+	sessionAPI.OnCreated(px.StartBrowser)
 	bill.enable(sessionAPI, px, apiMux)
 	sessionAPI.Register(apiMux)
 	px.RegisterApp(apiMux)

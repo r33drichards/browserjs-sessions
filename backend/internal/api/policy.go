@@ -60,6 +60,9 @@ func (a *API) created(s sessions.Session) {
 	if a.policies != nil && s.PolicyCapable {
 		go a.policies.Watch(context.Background(), s.ID)
 	}
+	if a.onCreated != nil {
+		a.onCreated(s.ID)
+	}
 }
 
 // summary is the policy a session's view carries: nil when policies are

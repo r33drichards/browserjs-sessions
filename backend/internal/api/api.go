@@ -50,6 +50,8 @@ type API struct {
 
 	// Who may ask for a canary session (see SetCanary). Empty: nobody.
 	canary map[string]bool
+
+	onCreated func(id string) // nil: nothing (see OnCreated)
 }
 
 // SetCanary names the users, by email address, whose create requests may
@@ -64,6 +66,10 @@ func (a *API) SetCanary(emails []string) {
 		a.canary[email] = true
 	}
 }
+
+// OnCreated has f called with the ID of each session this API creates or
+// adopts from the warm pool, after it is made. f must not block.
+func (a *API) OnCreated(f func(id string)) { a.onCreated = f }
 
 func New(store Store, az authz.Checker, urls *sessions.URLTemplate, maxPerUser int) *API {
 	return &API{store: store, authz: az, urls: urls, cap: maxPerUser, petName: petName}

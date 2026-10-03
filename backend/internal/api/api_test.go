@@ -667,3 +667,22 @@ func TestCanaryIsForTheNamedAddressesOnly(t *testing.T) {
 		t.Errorf("sandboxes = %d, %v: the refusals are to make nothing", len(list.Items), err)
 	}
 }
+
+// Each session made is announced once, after it exists; a refused create
+// announces nothing.
+func TestCreateAnnouncesTheSession(t *testing.T) {
+	f := newFixture(t)
+	var got []string
+	f.api.OnCreated(func(id string) { got = append(got, id) })
+	created := decode[session](t, f.do(alice, "POST", "/api/sessions", `{"name":"one"}`))
+	if len(got) != 1 || got[0] != created.ID {
+		t.Fatalf("announced %v, want [%s]", got, created.ID)
+	}
+	f.do(alice, "POST", "/api/sessions", `{"name":"two"}`)
+	if rec := f.do(alice, "POST", "/api/sessions", `{"name":"three"}`); rec.Code != http.StatusConflict {
+		t.Fatalf("over cap: %d", rec.Code)
+	}
+	if len(got) != 2 {
+		t.Errorf("announced %d sessions for two creates and a refused one", len(got))
+	}
+}
