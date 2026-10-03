@@ -151,25 +151,31 @@ no new image). `DRY_RUN=1` pins locally and stops. Steps 1 to 3 can be done
 by hand, and step 4 is then Actions, **deploy**, Run workflow, confirm
 `deploy`: the canary is the workflow's, not the script's.
 
-## Turning it on: the owner's one step
+## Turning it on
 
-1. In the app, signed in as an admin of the deployment (an address in
-   `ADMIN_EMAILS`): **API tokens**, new token, with the scopes
-   `sessions:read`, `sessions:write`, `sessions:connect`, `policies:read`
-   and `policies:write`, 365 days.
-2. Repository Settings, Secrets and variables, Actions: the secret
-   **`CANARY_API_TOKEN`** = that token.
-3. The same page, Variables: **`CANARY`** = `on`.
+Repository Settings, Secrets and variables, Actions, Variables: **`CANARY`**
+= `on`. Nothing else: no token is made or kept by anyone.
 
-The token must be an admin's: the canary session of step 4.2 is an option
-only the deployment's admins have. It expires: the canary then fails at its
-first check ("the token is exchanged"), which says so; make another.
+**The canary's token.** Each run of the deploy workflow mints its own API
+token in the cluster (`hack/release.sh mint-token`), exactly as the backend
+makes one: a token of the form `bjs_<id>_<secret>` from fresh randomness,
+of which only the SHA-256 is written, in an `APIToken` resource labelled
+`app.kubernetes.io/managed-by: release-canary`. It acts as the first admin
+of the running backend (`ADMIN_EMAILS`) who may use tokens
+(`ALLOWED_EMAILS`), because the canary session is an option for the
+deployment's admins only; that address is never printed. It has the five
+scopes the canary uses and lasts an hour. The workflow masks it in the log
+before anything could print it, gives it to its later steps through the
+job's environment and to the backend's check through the Secret
+`release-canary`, and its last step deletes both, whatever happened: the
+token, and every access token made from it, is then refused from the next
+request. A run that was killed leaves a token that expires within the hour,
+and the next run deletes it.
 
-| `CANARY` | `CANARY_API_TOKEN` | A deploy |
-|---|---|---|
-| not set, or `off` | any | the rollouts still happen (a backend that does not become ready, or a site that does not answer, is still taken away), but the backend's check passes without checking, nothing is verified afterwards and nothing is rolled back; a warning says so |
-| `on` | not set | refused at once, before anything is touched, naming the secret |
-| `on` | set | the flow above |
+| `CANARY` | A deploy |
+|---|---|
+| not set, or `off` | the rollouts still happen (a backend that does not become ready, or a site that does not answer, is still taken away), but the backend's check passes without checking, nothing is verified afterwards and nothing is rolled back; a warning says so |
+| `on` | the flow above |
 
 Nothing in a log or a summary is secret: the token is never printed, and
 the canary's output has email addresses and tokens removed from it. The
@@ -186,7 +192,7 @@ One script, Python's standard library only, for the workflow and for a
 person:
 
 ```
-CANARY_API_TOKEN=bjs_… test/canary.py                 # production
+CANARY_API_TOKEN=bjs_… test/canary.py                 # production, with a token of your own
 CANARY_API_TOKEN=bjs_… DOMAIN=example.org test/canary.py
 test/canary-kind.sh                                   # the local cluster; makes its own token
 ```
@@ -287,7 +293,7 @@ ConfigMap's name, a `rollout restart`) makes the Rollout:
 
 The deploy workflow writes the script (ConfigMap `release-canary`, from
 `test/canary.py` of the commit being deployed) and the token (Secret
-`release-canary`, from `CANARY_API_TOKEN`) before the apply. Without the
+`release-canary`, this run's own token, above) before the apply. Without the
 Secret the Job passes, saying that it checked nothing.
 
 **Site.** Four pods. A change makes the Rollout bring up one new pod (a
