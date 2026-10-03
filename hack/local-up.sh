@@ -41,11 +41,11 @@ backend_changed=""
 # The session images are built once and reused: the browser image is a Nix
 # build of several GB. Remove the image (or build it yourself) to refresh it.
 if [ -z "$(image_id browserjs/mcp-js:dev)" ]; then
-  docker build -t browserjs/mcp-js:dev images/mcp-js
+  docker build -t browserjs/mcp-js:dev computer-use-mcp/code-mode
 fi
 if [ -z "$(image_id browserjs/browser:dev)" ]; then
   MIN_FREE_GB="${BROWSER_MIN_FREE_GB:-25}" check_disk "building the browser image (about 14 GB)"
-  docker build -t browserjs/browser:dev images/browser
+  docker build -t browserjs/browser:dev computer-use-mcp
 fi
 
 # The policy operator, once its source is in the tree. The context is the

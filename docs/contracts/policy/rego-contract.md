@@ -66,7 +66,7 @@ is refused whatever the policy says**: a policy written before a tool
 existed cannot have meant to allow it. A tool is added to the module in the
 pull request that adds it to this table.
 
-`browser_execute` (`images/browser/browser/server.js`; `input-sample.json`
+`browser_execute` (`computer-use-mcp/browser/server.js`; `input-sample.json`
 is a sample). Operation types and their `params`:
 `navigate {url, waitUntil}`, `click {selector}`, `type {selector, text,
 delay}`, `press {key}`, `select {selector, values}`, `wait {ms, selector}`,
@@ -74,8 +74,8 @@ delay}`, `press {key}`, `select {selector, values}`, `wait {ms, selector}`,
 `evaluate {script}` (runs script in the page), `setContent {html}`
 (replaces the page's content).
 
-`desktop_execute` (`images/browser/browser/desktop.js`, and "Desktop
-control" in `images/mcp-js/run_js.md`). Operation types: `mouse.setPosition`,
+`desktop_execute` (`computer-use-mcp/browser/desktop.js`, and "Desktop
+control" in `computer-use-mcp/code-mode/run_js.md`). Operation types: `mouse.setPosition`,
 `mouse.move`, `mouse.click`, `mouse.doubleClick` (`{x, y, button}`),
 `mouse.pressButton`, `mouse.releaseButton`, `mouse.drag {to, from}`,
 `mouse.scrollUp` / `Down` / `Left` / `Right {amount, x, y}`,

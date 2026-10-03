@@ -11,8 +11,8 @@ which Google hands only to workflows running on `refs/heads/main`.
 | Image | Build context | Dockerfile | Rebuilt when these change |
 |---|---|---|---|
 | `backend` | repository root | `Dockerfile` | `Dockerfile`, `.dockerignore`, `backend/**`, `web/**` |
-| `mcp-js` | `images/mcp-js` | `images/mcp-js/Dockerfile` | `images/mcp-js/**` |
-| `browser` | `images/browser` | `images/browser/Dockerfile` | `images/browser/**` |
+| `mcp-js` | `computer-use-mcp/code-mode` | `computer-use-mcp/code-mode/Dockerfile` | `computer-use-mcp/code-mode/**` |
+| `browser` | `computer-use-mcp` | `computer-use-mcp/Dockerfile` | `computer-use-mcp/**` |
 | `site` | `site` | `site/Dockerfile` | `site/**` |
 
 All are built for `linux/amd64` only, which is what the cluster's nodes are.

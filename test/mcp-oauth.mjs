@@ -18,7 +18,7 @@ import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import crypto from "node:crypto"
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
-const require = createRequire(ROOT + "/images/browser/browser/")
+const require = createRequire(ROOT + "/computer-use-mcp/browser/")
 const puppeteer = require("puppeteer-core")
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"
 const [target, email] = process.argv.slice(2)

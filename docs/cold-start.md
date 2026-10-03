@@ -60,7 +60,7 @@ Not in the 103 seconds:
   scheduled, attached and started inside one minute-resolution event bucket.
 
 The browser image is 905 MB compressed and about 3.6 GB unpacked, in a single
-layer (`images/browser/Dockerfile` ends in one `COPY --from=build /rootfs /`).
+layer (`computer-use-mcp/Dockerfile` ends in one `COPY --from=build /rootfs /`).
 3.6 GB in 31 s is about 115 MB/s, which is the speed of one gzip stream being
 decompressed: the pull is bound by unpacking, not by the network (ANALYSIS,
 not measured separately).
@@ -151,7 +151,7 @@ The image's content, from the binary cache for the pinned nixpkgs
 - **Smaller:** websockify drags in numpy and three BLAS libraries (about
   240 MB) for an optional speed-up of its unmasking loop; an override without
   numpy, and a session-only image without caddy, would cut about 330 MB
-  unpacked, roughly 9 % (UNVERIFIED: needs a build, and `images/browser/test`
+  unpacked, roughly 9 % (UNVERIFIED: needs a build, and `computer-use-mcp/test`
   rerun). Chromium's own closure (flite and freepats for speech, 96 MB; perl,
   58 MB) is harder to trim.
 - **Layered:** one 905 MB layer means every image release re-downloads

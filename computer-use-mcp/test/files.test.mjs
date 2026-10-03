@@ -1,4 +1,4 @@
-// Usage: node --test images/browser/test/files.test.mjs  (needs only node)
+// Usage: node --test computer-use-mcp/test/files.test.mjs  (needs only node)
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';

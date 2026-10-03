@@ -2,7 +2,7 @@
 
 A session's display used to hold one thing: Chromium, maximised by openbox.
 It is now an XFCE desktop with Chromium on it. This is what the browser
-image (`images/browser/`) starts, why it is put together this way, and what
+image (`computer-use-mcp/`) starts, why it is put together this way, and what
 has only been checked under Docker.
 
 ## What is on it
@@ -120,7 +120,7 @@ browser profile does:
 
 - XFCE's settings (`~/.config/xfce4`), the panel's layout, GTK settings
   (`GSETTINGS_BACKEND=keyfile`, a file under `~/.config`);
-- shell history and `~/.bashrc` (copied from `images/browser/desktop/bashrc`
+- shell history and `~/.bashrc` (copied from `computer-use-mcp/desktop/bashrc`
   the first time);
 - files made in the terminal or saved from the editor;
 - caches (`~/.cache`: fontconfig's, so later starts skip building it).
@@ -182,7 +182,7 @@ What each part needs, and where it comes from:
 | `/etc/machine-id` | a fixed one in the image (D-Bus asks for it) |
 | `/etc/passwd` entry | `browser`, home `/data/chrome/home`, shell `/bin/bash` |
 | GSettings schemas, pixbuf loaders, GIO modules | each program is nixpkgs' wrapped one (`wrapGAppsHook3`) |
-| Menu entries, icons, MIME database, Xfce defaults | one `buildEnv` (`desktop` in `flake.nix`) behind `XDG_DATA_DIRS` and `XDG_CONFIG_DIRS`, with `images/browser/desktop/` in front of it |
+| Menu entries, icons, MIME database, Xfce defaults | one `buildEnv` (`desktop` in `flake.nix`) behind `XDG_DATA_DIRS` and `XDG_CONFIG_DIRS`, with `computer-use-mcp/desktop/` in front of it |
 | GSettings backend | `keyfile` (no dconf daemon) |
 | Locale | `C.UTF-8`, built into glibc: no locale archive |
 | Open-file limit | lowered as before |
@@ -323,7 +323,7 @@ None of this was run on GKE with XFCE; see below.
 
 ## The smoke test
 
-`images/browser/test/desktop-image-smoke.sh <image>` starts the built image
+`computer-use-mcp/test/desktop-image-smoke.sh <image>` starts the built image
 the way a session pod does (uid 1000, all capabilities dropped,
 `SESSION_MODE=1`, a volume at `/data/chrome`) and checks, on its display:
 Xvnc, the session bus, `xfconfd` with the image's defaults, xfwm4, the

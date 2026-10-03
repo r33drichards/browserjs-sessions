@@ -104,7 +104,7 @@ Results: `.local/integration-results.json`.
 The UI through Pomerium and Dex, in a headless Chrome:
 
 ```bash
-(cd images/browser/browser && nix develop -c npm ci)   # once, for puppeteer-core
+(cd computer-use-mcp/browser && nix develop -c npm ci)   # once, for puppeteer-core
 nix develop -c node test/browser-e2e.mjs
 ```
 

@@ -6,8 +6,8 @@ constrains the programs an agent runs.
 
 Commands are run by [mcp-exec](https://github.com/r33drichards/mcp-exec),
 which mcp-js knows as the upstream server `"exec"`
-(`images/mcp-js/mcp-servers.json`). It runs inside the browser container
-(`images/browser/browser/exec-server.sh`), so a command runs on the desktop:
+(`computer-use-mcp/code-mode/mcp-servers.json`). It runs inside the browser container
+(`computer-use-mcp/browser/exec-server.sh`), so a command runs on the desktop:
 as its user, in its home directory, with its `PATH` and `DISPLAY`.
 
 Machine-readable: [`tools/exec.schema.json`](tools/exec.schema.json),
@@ -54,9 +54,9 @@ fields it gave, no defaults filled in, or `null` when it passed none.
 
 These are the fields of `ExecRequest`, `StreamLogsRequest`,
 `SearchLogsRequest` and `KillRequest` in mcp-exec's `src/service.rs` at the
-commit the image pins (`images/browser/flake.lock`); the image build compares
+commit the image pins (`computer-use-mcp/flake.lock`); the image build compares
 them with what the packaged server lists
-(`images/browser/test/exec-smoke.mjs`).
+(`computer-use-mcp/test/exec-smoke.mjs`).
 
 What mcp-exec does with an `exec` call:
 
