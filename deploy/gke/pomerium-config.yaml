@@ -19,6 +19,12 @@ idp_client_id: pomerium
 databroker_storage_type: file
 databroker_storage_connection_string: file:///data/databroker
 
+# v0.33.3 uses this flag for inbound MCP registration and discovery as well
+# as upstream DCR. Registration creates a client identity, not user access;
+# the MCP route policy and backend session ownership checks still apply.
+runtime_flags:
+  mcp_dynamic_client_registration: true
+
 # MCP clients that identify themselves by a metadata document under these
 # domains may sign users in (Claude's apps and Claude Code).
 mcp_allowed_client_id_domains:
