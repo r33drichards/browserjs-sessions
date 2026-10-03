@@ -172,4 +172,6 @@ and `sessions:write` for the session resource, and `policies:read` and
 `policies:write` for its policy. Apply waits for the policy to be in force by
 default. The app shows it read-only with a link to `managed_url`.
 
-The provider and its resources keep the product's earlier name.
+The provider and its resources keep the product's earlier name. See the
+[Terraform and OpenTofu reference](/reference/terraform) for installation,
+every resource and data source, complete configurations, and import commands.
