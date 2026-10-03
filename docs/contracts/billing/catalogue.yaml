@@ -25,9 +25,9 @@ sessionDiskGB: 5
 # small. The disk is the same 5 GB at every size.
 sizes:
   medium:
-    awakeMicrosPerHour: 400000   # $0.40: a third of a session node
+    awakeMicrosPerHour: 600000   # $0.60: three small sessions' places
   large:
-    awakeMicrosPerHour: 800000   # $0.80: a whole session node
+    awakeMicrosPerHour: 1600000  # $1.60: a whole session node, nine small places
 
 # Given once, when the first card is saved.
 signupCredit:

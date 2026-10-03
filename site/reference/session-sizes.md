@@ -59,7 +59,7 @@ users.
 ## Price
 
 The service is not charged for today. When it is, a bigger session will
-cost more for each hour it is awake (the planned rates are $0.20, $0.40 and
-$0.80 an hour for small, medium and large), the disk will cost the same at
+cost more for each hour it is awake (the planned rates are $0.20, $0.60 and
+$1.60 an hour for small, medium and large), the disk will cost the same at
 every size, and a session that is asleep will cost only its disk. The
 create page will show the rate beside each size.

@@ -232,8 +232,8 @@ run "metronome_objects" {
     condition = alltrue([
       metronome_rate.usage["Awake time"].price == 0 && metronome_rate.usage["Awake time"].commit_rate.price == 20,
       metronome_rate.usage["Disk"].price == 0 && metronome_rate.usage["Disk"].commit_rate.price == 28,
-      metronome_rate.usage["Awake time (medium)"].price == 0 && metronome_rate.usage["Awake time (medium)"].commit_rate.price == 40,
-      metronome_rate.usage["Awake time (large)"].price == 0 && metronome_rate.usage["Awake time (large)"].commit_rate.price == 80,
+      metronome_rate.usage["Awake time (medium)"].price == 0 && metronome_rate.usage["Awake time (medium)"].commit_rate.price == 60,
+      metronome_rate.usage["Awake time (large)"].price == 0 && metronome_rate.usage["Awake time (large)"].commit_rate.price == 160,
       metronome_product.usage["Awake time (large)"].quantity_conversion.conversion_factor == 3600,
       alltrue([for r in metronome_rate.usage : r.rate_type == "FLAT" && r.entitled && r.starting_at == "2026-10-01T00:00:00Z"]),
     ])

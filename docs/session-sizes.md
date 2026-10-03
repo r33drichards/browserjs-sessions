@@ -199,24 +199,34 @@ for when it is on:
 | | Awake, per hour | Disk |
 |---|---|---|
 | small | $0.20 | $1.40 a month |
-| medium | $0.40 | the same |
-| large | $0.80 | the same |
+| medium | $0.60 | the same |
+| large | $1.60 | the same |
 
-Reasoning, from section 7.4 of the billing design. A session node costs
-about $0.21 an hour on demand ($0.13 on Spot), and the design's planning
-cost of an awake hour (half-full nodes, traffic included) is $0.039 at nine
-sessions a node and $0.098 at three. A medium session is a third of a node:
-planning cost about $0.10, sold at $0.40, of which the cheapest tier keeps
-$0.16 after its credit discount and Stripe's fees. A large session is the
-whole node, and with one to a node there is no half-full node to average
-over: about $0.21 to $0.29, sold at $0.80, of which the cheapest tier keeps
-$0.32. Both are above cost on every tier.
+The rule: a size must make a profit on the cheapest plan at the pessimistic
+cost, and earn at least what the small sessions it keeps off the node would.
+Medium takes three small places and large nine, so medium is three times
+small's rate and large is eight times (a round $1.60 rather than $1.80).
 
-The rates are not proportional to the room taken: by places on a node small
-to medium to large is 1 : 3 : 9, and the rates are 1 : 2 : 4. Large is the
-thinnest (it also keeps every other user off its node). If large sessions
-turn out to be used for long hours, $1.20 to $1.80 is the number that the
-places justify; because rates are data, that is a change to one line.
+Costs per awake hour, from section 7.4 of the billing design: half-full
+nodes, disk and traffic included; "pessimistic" is the design's pessimistic
+case, about 1.36 times the planning cost. The large row is extrapolated: one
+session to a node leaves no half-full node to average over, so it is the
+whole node ($0.21 an hour on demand) plus its share of disk and traffic.
+
+| | Places | Planning cost | Pessimistic cost | Rate | Kept on the cheapest plan (Scale, 40 % of the rate after its credit and Stripe's fee) | Over pessimistic cost |
+|---|---|---|---|---|---|---|
+| small | 1 | $0.039 | $0.053 | $0.20 | $0.080 | +51 % |
+| medium | 3 | $0.098 | $0.134 | $0.60 | $0.240 | +79 % |
+| large | 9 | about $0.29 | about $0.40 | $1.60 | $0.640 | +60 % |
+
+Medium was proposed at $0.40 first. That keeps $0.16 on the cheapest plan:
+only 19 % over the pessimistic cost, and less than the three small sessions
+it displaces would keep ($0.24). So it is $0.60. Large at $0.80 kept $0.32,
+under its pessimistic cost; at $1.60 it is above it on every plan. Both
+margins rest on the unverified CPU and memory a large session really gets
+under gVisor; because rates are data, a change is one line of the catalogue
+(and a later `metronome_rates_starting_at` once the rates have been applied
+to Metronome).
 
 Which sizes a plan includes (`sizes` on `payg` and on each plan; small is
 in every plan): pay as you go and Starter have small and medium; Pro and

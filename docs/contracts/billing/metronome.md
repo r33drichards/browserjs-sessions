@@ -90,7 +90,7 @@ OpenTofu defines three more objects, named from the size:
 |---|---|---|
 | Billable metric | `cu_awake_<size>_seconds_v1` | as `cu_awake_seconds_v1`, with `event_type_filter: session.awake.<size>` |
 | Product (usage) | `Awake time (<size>)` | on that metric; divide by 3600 |
-| Rate on `cu-standard-v1` | list **0**, commit `sizes.<size>.awakeMicrosPerHour` / 10000 per hour | 40 for `medium`, 80 for `large` |
+| Rate on `cu-standard-v1` | list **0**, commit `sizes.<size>.awakeMicrosPerHour` / 10000 per hour | 60 for `medium`, 160 for `large` |
 
 A metric of its own, and not a `size` group key on `cu_awake_seconds_v1`
 with a rate for each value: a metric's definition cannot be changed, so
