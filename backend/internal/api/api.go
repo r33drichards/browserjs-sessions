@@ -359,8 +359,10 @@ func (a *API) create(w http.ResponseWriter, r *http.Request, u auth.User) {
 	}
 	// The owner is recorded on the session itself; that is all there is to
 	// who may use it.
+	// A small session is made as one always was; only another size needs
+	// a store that has sizes.
 	var s sessions.Session
-	if a.sizer != nil {
+	if a.sizer != nil && size != sessions.DefaultSize {
 		s, err = a.sizer.CreateSized(ctx, name, u.Subject, size, asked)
 	} else {
 		s, err = a.store.CreateWithPolicy(ctx, name, u.Subject, asked)
