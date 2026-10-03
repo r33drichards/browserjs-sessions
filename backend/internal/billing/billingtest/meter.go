@@ -36,6 +36,9 @@ type Observed struct {
 	Awake      bool       `json:"awake"`
 	ReadySince *time.Time `json:"readySince"`
 	DiskGB     int64      `json:"diskGB"`
+	// Size is the session's size: "" is small. Its awake seconds are
+	// charged at that size's rate.
+	Size string `json:"size,omitempty"`
 }
 
 // Charged is what one tick charged and left.
@@ -63,6 +66,14 @@ func live(g billing.Grant, now time.Time) bool {
 // fake ledger charges as the operator does; metering-vectors.json is run
 // against it, as it is against the operator. state is changed in place.
 func Step(state *Meter, grants []billing.Grant, observed map[string]Observed, now time.Time, rates billing.Rates) Charged {
+	return StepSized(state, grants, observed, now, billing.Catalogue{Rates: rates})
+}
+
+// StepSized is Step with the awake seconds of each session charged at the
+// rate of its size (cat.AwakeRate): what Metronome does with a metric and a
+// rate for each size.
+func StepSized(state *Meter, grants []billing.Grant, observed map[string]Observed, now time.Time, cat billing.Catalogue) Charged {
+	rates := cat.Rates
 	if state.Sessions == nil {
 		state.Sessions = map[string]MeterSession{}
 	}
@@ -70,7 +81,8 @@ func Step(state *Meter, grants []billing.Grant, observed map[string]Observed, no
 		state.Consumed = map[string]int64{}
 	}
 	out := Charged{AwakeSeconds: map[string]int64{}, DiskGBSeconds: map[string]int64{}}
-	var awakeSeconds, diskSeconds int64
+	// awakeWorth is awake seconds x micro-dollars an hour, over the sessions.
+	var awakeWorth, diskSeconds int64
 	for id, o := range observed {
 		prev, known := state.Sessions[id]
 		gap := now.Sub(prev.LastSeen)
@@ -95,7 +107,7 @@ func Step(state *Meter, grants []billing.Grant, observed map[string]Observed, no
 			}
 			if a != 0 {
 				out.AwakeSeconds[id] = a
-				awakeSeconds += a
+				awakeWorth += a * cat.AwakeRate(o.Size)
 			}
 		}
 		state.Sessions[id] = MeterSession{LastSeen: now, Awake: o.Awake}
@@ -106,7 +118,7 @@ func Step(state *Meter, grants []billing.Grant, observed map[string]Observed, no
 		}
 	}
 
-	awake := awakeSeconds*rates.AwakeMicrosPerHour + state.Carry.Awake
+	awake := awakeWorth + state.Carry.Awake
 	disk := diskSeconds*rates.DiskMicrosPerGBHour + state.Carry.Disk
 	out.AwakeMicros, state.Carry.Awake = awake/3600, awake%3600
 	out.DiskMicros, state.Carry.Disk = disk/3600, disk%3600

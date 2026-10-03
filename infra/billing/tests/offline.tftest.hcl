@@ -190,8 +190,10 @@ run "metronome_objects" {
   command = plan
 
   assert {
-    condition     = toset(keys(metronome_billable_metric.this)) == toset(["cu_awake_seconds_v1", "cu_disk_gb_seconds_v1"])
-    error_message = "The two metrics, under the names the observer's events are matched by."
+    condition = toset(keys(metronome_billable_metric.this)) == toset([
+      "cu_awake_seconds_v1", "cu_disk_gb_seconds_v1", "cu_awake_medium_seconds_v1", "cu_awake_large_seconds_v1",
+    ])
+    error_message = "The metrics, under the names the observer's events are matched by: awake time of each size, and the disk."
   }
 
   assert {
@@ -199,6 +201,10 @@ run "metronome_objects" {
       metronome_billable_metric.this["cu_awake_seconds_v1"].aggregation_type == "SUM",
       metronome_billable_metric.this["cu_awake_seconds_v1"].aggregation_key == "seconds",
       metronome_billable_metric.this["cu_awake_seconds_v1"].event_type_filter.in_values == tolist(["session.awake"]),
+      metronome_billable_metric.this["cu_awake_medium_seconds_v1"].event_type_filter.in_values == tolist(["session.awake.medium"]),
+      metronome_billable_metric.this["cu_awake_large_seconds_v1"].event_type_filter.in_values == tolist(["session.awake.large"]),
+      metronome_billable_metric.this["cu_awake_large_seconds_v1"].aggregation_key == "seconds",
+      metronome_billable_metric.this["cu_awake_large_seconds_v1"].group_keys == tolist([tolist(["session_id"])]),
       metronome_billable_metric.this["cu_disk_gb_seconds_v1"].aggregation_key == "gb_seconds",
       metronome_billable_metric.this["cu_disk_gb_seconds_v1"].event_type_filter.in_values == tolist(["session.kept"]),
       metronome_billable_metric.this["cu_disk_gb_seconds_v1"].group_keys == tolist([tolist(["session_id"])]),
@@ -226,6 +232,9 @@ run "metronome_objects" {
     condition = alltrue([
       metronome_rate.usage["Awake time"].price == 0 && metronome_rate.usage["Awake time"].commit_rate.price == 20,
       metronome_rate.usage["Disk"].price == 0 && metronome_rate.usage["Disk"].commit_rate.price == 28,
+      metronome_rate.usage["Awake time (medium)"].price == 0 && metronome_rate.usage["Awake time (medium)"].commit_rate.price == 40,
+      metronome_rate.usage["Awake time (large)"].price == 0 && metronome_rate.usage["Awake time (large)"].commit_rate.price == 80,
+      metronome_product.usage["Awake time (large)"].quantity_conversion.conversion_factor == 3600,
       alltrue([for r in metronome_rate.usage : r.rate_type == "FLAT" && r.entitled && r.starting_at == "2026-10-01T00:00:00Z"]),
     ])
     error_message = "List rate 0, commit rates 20 and 28 cents."

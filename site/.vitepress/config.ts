@@ -19,6 +19,7 @@ const guides = [
 
 const reference = [
   { text: "Session lifecycle", link: "/reference/lifecycle" },
+  { text: "Session sizes", link: "/reference/session-sizes" },
   { text: "MCP endpoint and run_js", link: "/reference/mcp" },
   { text: "Capabilities: browser, desktop, shell", link: "/reference/capabilities" },
   { text: "Policy format", link: "/reference/policy" },

@@ -96,6 +96,21 @@ Row 11 counts starts in the backend's memory (a rate limiter: lost on a
 restart, which errs towards allowing); row 12 counts from the session list
 the decision already reads. Neither is a copy of anyone's credit.
 
+## Sizes
+
+Beside the table, and not a row of it: a create with a `size`, and a resize
+(`PATCH` with `size`), are refused with `size_not_included` when the
+account's tier does not include that size (`sizes` of `payg` or of the plan
+in the catalogue; `small` is in every tier). It is asked after the table
+allows the create, and before anything is made. An exempt account has every
+size. In `meter` mode it is logged as `would_refuse` and allowed. A session
+that already has a size its owner's plan no longer includes keeps it and
+wakes at it: only a create and a resize are judged.
+
+That there is room in the cluster for a size is not billing's question: a
+session that does not fit is a `409` with `"code": "no_capacity"`
+(docs/session-sizes.md), whether billing is on or off.
+
 ## Where each check is made
 
 | Entry point | Code today | Check | Refusal reaches the user as |
@@ -128,6 +143,7 @@ HTTP, on the app and the API host:
 | `metering_unavailable` | 503, `Retry-After: 120` | Billing is unavailable right now. Try again in a few minutes. |
 | `account_blocked` | 403 | This account is suspended. Contact support. |
 | `terms_required` | 403 | Accept the terms to continue. |
+| `size_not_included` | 403 | Your plan does not include sessions of this size. Pick a smaller size, or change plan. |
 
 Body: `{"error": "<message>", "code": "<code>", "billingUrl": "<PUBLIC_URL>/billing"}`
 (`Error` of `backend-api.yaml`). `billingUrl` is the link an API or

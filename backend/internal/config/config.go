@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -36,7 +37,11 @@ type Config struct {
 	AdminEmails     []string // users who may see and manage every session
 
 	BlueprintPath string // session pod blueprint (YAML template)
-	WebDir        string // built UI to serve
+	// SizesPath is the sizes of session other than small (sizes.yaml,
+	// beside the blueprint unless SIZES_PATH says otherwise). It need not
+	// be there: every session is then small.
+	SizesPath string
+	WebDir    string // built UI to serve
 
 	// Passed through to the UI in /config.js.
 	SignOutURL string
@@ -125,6 +130,7 @@ func FromEnv(get func(string) string) (Config, error) {
 		SignOutURL:      or("SIGN_OUT_URL", "/.pomerium/sign_out"),
 		WarmPool:        get("WARM_POOL"),
 	}
+	c.SizesPath = or("SIZES_PATH", filepath.Join(filepath.Dir(c.BlueprintPath), "sizes.yaml"))
 	template := get("SESSION_URL_TEMPLATE")
 	for _, req := range []struct{ name, value string }{
 		{"PUBLIC_URL", c.PublicURL}, {"SESSION_URL_TEMPLATE", template}, {"POMERIUM_JWKS_URL", c.PomeriumJWKSURL},

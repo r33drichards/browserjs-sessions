@@ -119,7 +119,61 @@ func (s *Sessions) ForgetInFlight(_ context.Context, id string, replicas []strin
 }
 
 // CreateWithPolicy makes a session that is running at once.
-func (s *Sessions) CreateWithPolicy(_ context.Context, name, owner string, _ *sessions.PolicySpec) (sessions.Session, error) {
+func (s *Sessions) CreateWithPolicy(ctx context.Context, name, owner string, policy *sessions.PolicySpec) (sessions.Session, error) {
+	return s.CreateSized(ctx, name, owner, "", policy)
+}
+
+// TestSizes is the sizes the fake store offers.
+var TestSizes = []sessions.SizeInfo{
+	{Name: "small", CPUMillis: 1500, MemoryMiB: 2048, Warm: true},
+	{Name: "medium", CPUMillis: 2000, MemoryMiB: 5120},
+	{Name: "large", CPUMillis: 3000, MemoryMiB: 10240},
+}
+
+func (s *Sessions) Sizes() []sessions.SizeInfo { return TestSizes }
+
+func knownSize(size string) (string, error) {
+	if size == "" {
+		return sessions.DefaultSize, nil
+	}
+	for _, info := range TestSizes {
+		if info.Name == size {
+			return size, nil
+		}
+	}
+	return "", &sessions.InvalidSizeError{Size: size, Offered: []string{"small", "medium", "large"}}
+}
+
+// Resize changes a session's size as the store does: at once when it is
+// not awake, at its next start otherwise.
+func (s *Sessions) Resize(_ context.Context, id, size string) error {
+	size, err := knownSize(size)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.byID[id]
+	if !ok {
+		return sessions.ErrNotFound
+	}
+	switch {
+	case size == e.Size:
+		e.PendingSize = ""
+	case e.State == sessions.Running || e.State == sessions.Starting:
+		e.PendingSize = size
+	default:
+		e.Size, e.PendingSize, e.StateSaved = size, "", false
+	}
+	return nil
+}
+
+// CreateSized makes a session of a size that is running at once.
+func (s *Sessions) CreateSized(_ context.Context, name, owner, size string, _ *sessions.PolicySpec) (sessions.Session, error) {
+	size, err := knownSize(size)
+	if err != nil {
+		return sessions.Session{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.creates++
@@ -130,7 +184,7 @@ func (s *Sessions) CreateWithPolicy(_ context.Context, name, owner string, _ *se
 		return sessions.Session{}, sessions.ErrOwnerRequired
 	}
 	s.next++
-	e := &session{Session: sessions.Session{ID: id(s.next), Name: name, Owner: owner, Created: s.clock.Now()}}
+	e := &session{Session: sessions.Session{ID: id(s.next), Name: name, Owner: owner, Created: s.clock.Now(), Size: size}}
 	s.run(e)
 	s.byID[e.ID] = e
 	return e.Session, nil
@@ -353,7 +407,7 @@ func (s *Sessions) observedByAccount(diskGB int64) map[string]map[string]Observe
 		if out[account] == nil {
 			out[account] = map[string]Observed{}
 		}
-		o := Observed{Awake: e.State == sessions.Running, DiskGB: diskGB}
+		o := Observed{Awake: e.State == sessions.Running, DiskGB: diskGB, Size: e.Size}
 		if o.Awake {
 			since := e.readySince
 			o.ReadySince = &since

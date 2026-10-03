@@ -97,6 +97,7 @@ export type PolicySession = Session & { policy?: PolicySummary }
 
 export interface NewSession {
   name?: string
+  size?: string // left out: small
   policy?: PolicyInput
 }
 

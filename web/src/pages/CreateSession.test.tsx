@@ -158,8 +158,8 @@ describe("create session", () => {
     expect(screen.queryByTestId("landed")).toBeNull()
   })
 
-  it("is today's form where the backend has no policies", async () => {
-    const server = await openForm({ policies: false, tokens: false })
+  it("is today's form where the backend has no policies and one size", async () => {
+    const server = await openForm({ policies: false, tokens: false, sizes: false })
     expect(screen.queryByRole("heading", { name: "Policy" })).toBeNull()
     expect(screen.queryByRole("radio")).toBeNull()
     expect(screen.queryByRole("alert")).toBeNull()

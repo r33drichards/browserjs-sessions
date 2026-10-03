@@ -64,6 +64,8 @@ configMapGenerator:
     behavior: replace
     files:
       - blueprint.yaml
+      # The sizes of session other than small, which is the blueprint.
+      - sizes.yaml
   - name: pomerium-config
     behavior: replace
     files:

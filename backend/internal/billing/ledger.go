@@ -145,32 +145,43 @@ func (l *ledger) Usage(ctx context.Context, account string, from, to time.Time) 
 	if err != nil {
 		return Usage{}, err
 	}
-	// Money is quantity at the catalogue's rate.
-	rates := l.catalogue.Catalogue().Rates
-	awake := func(seconds int64) int64 { return seconds * rates.AwakeMicrosPerHour / 3600 }
+	// Money is quantity at the catalogue's rate: awake seconds at the rate
+	// of the size they were at.
+	cat := l.catalogue.Catalogue()
+	rates := cat.Rates
 	disk := func(gbSeconds int64) int64 { return gbSeconds * rates.DiskMicrosPerGBHour / 3600 }
 	u := Usage{Start: from, End: to}
-	type sums struct{ awake, disk int64 }
-	days, sessions := map[string]*sums{}, map[string]*sums{}
-	add := func(m map[string]*sums, key string, r MetronomeUsageRow) {
+	// worth is awake seconds x micro-dollars an hour, not yet divided.
+	type sums struct{ awake, worth, disk int64 }
+	days, sessions, total := map[string]*sums{}, map[string]*sums{}, &sums{}
+	add := func(s *sums, r MetronomeUsageRow) {
+		small := r.AwakeSeconds
+		for size, seconds := range r.AwakeBySize {
+			small -= seconds
+			s.worth += seconds * cat.AwakeRate(size)
+		}
+		s.worth += small * rates.AwakeMicrosPerHour
+		s.awake += r.AwakeSeconds
+		s.disk += r.DiskGBSeconds
+	}
+	at := func(m map[string]*sums, key string) *sums {
 		if m[key] == nil {
 			m[key] = &sums{}
 		}
-		m[key].awake += r.AwakeSeconds
-		m[key].disk += r.DiskGBSeconds
+		return m[key]
 	}
 	for _, r := range used.Rows {
-		u.AwakeSeconds += r.AwakeSeconds
-		u.DiskGBSeconds += r.DiskGBSeconds
-		add(days, r.Day, r)
-		add(sessions, r.SessionID, r)
+		add(total, r)
+		add(at(days, r.Day), r)
+		add(at(sessions, r.SessionID), r)
 	}
-	u.AwakeMicros, u.DiskMicros = awake(u.AwakeSeconds), disk(u.DiskGBSeconds)
+	u.AwakeSeconds, u.DiskGBSeconds = total.awake, total.disk
+	u.AwakeMicros, u.DiskMicros = total.worth/3600, disk(total.disk)
 	for day, s := range days {
-		u.Days = append(u.Days, DayUsage{Date: day, AwakeSeconds: s.awake, AwakeMicros: awake(s.awake), DiskMicros: disk(s.disk)})
+		u.Days = append(u.Days, DayUsage{Date: day, AwakeSeconds: s.awake, AwakeMicros: s.worth / 3600, DiskMicros: disk(s.disk)})
 	}
 	for id, s := range sessions {
-		u.Sessions = append(u.Sessions, SessionUsage{ID: id, AwakeSeconds: s.awake, AwakeMicros: awake(s.awake), DiskMicros: disk(s.disk)})
+		u.Sessions = append(u.Sessions, SessionUsage{ID: id, AwakeSeconds: s.awake, AwakeMicros: s.worth / 3600, DiskMicros: disk(s.disk)})
 	}
 	sort.Slice(u.Days, func(i, j int) bool { return u.Days[i].Date < u.Days[j].Date })
 	sort.Slice(u.Sessions, func(i, j int) bool { return u.Sessions[i].ID < u.Sessions[j].ID })

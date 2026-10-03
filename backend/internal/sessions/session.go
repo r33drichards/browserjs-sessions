@@ -100,9 +100,14 @@ type Session struct {
 	// StateSaved is whether a suspended session holds a snapshot of its pod
 	// to wake from (see snapshots.go). Without one it starts fresh, with its
 	// disk only.
-	StateSaved bool   `json:"stateSaved,omitempty"`
-	PodIP      string `json:"-"`
-	Node       string `json:"-"` // the node its pod is scheduled to, if any
+	StateSaved bool `json:"stateSaved,omitempty"`
+	// Size is the size the session runs at (sizes.go). PendingSize is one
+	// asked for while it was awake: it has it from its next start, which is
+	// a fresh one.
+	Size        string `json:"size"`
+	PendingSize string `json:"pendingSize,omitempty"`
+	PodIP       string `json:"-"`
+	Node        string `json:"-"` // the node its pod is scheduled to, if any
 	// PolicyCapable is whether the session's mcp-js asks OPA for decisions,
 	// and so whether the session can have a policy (see policy.go).
 	PolicyCapable bool `json:"-"`
@@ -153,6 +158,10 @@ func FromSandbox(obj *unstructured.Unstructured) Session {
 		Created: obj.GetCreationTimestamp().Time,
 
 		PolicyCapable: PolicyCapable(obj),
+		Size:          sizeOf(obj),
+	}
+	if to := obj.GetAnnotations()[AnnResizeTo]; to != s.Size {
+		s.PendingSize = to
 	}
 	if adopted, err := time.Parse(time.RFC3339, obj.GetAnnotations()[AnnCreated]); err == nil {
 		s.Created = adopted

@@ -76,6 +76,8 @@ interface StoredSession {
   unsupported?: boolean
   stoppedBy?: string
   stateSaved?: boolean // asleep with a snapshot to wake from
+  size?: string // absent with `sizes: false`
+  pendingSize?: string // asked for while awake: from its next start
   draining?: string
   deleteAfter?: string
 }
@@ -100,6 +102,8 @@ export interface MockOptions {
   policies?: boolean // false: a backend with the feature off (default true)
   tokens?: boolean // false: a backend without /tokens (default true)
   seed?: boolean // sessions in every policy state (default true)
+  sizes?: boolean // false: a backend from before sizes, with no /sizes and no size on a session (default true)
+  full?: string[] // sizes there is no room for: creating one is a 409 no_capacity
   snapshots?: boolean // false: a cluster without Pod Snapshots, where a sleep saves no state (default true)
   billing?: string // a scenario of mock/billing.ts; absent or "off": a backend with billing off
   checkoutPolls?: number
@@ -109,6 +113,12 @@ export interface MockOptions {
 // The tools a policy is asked about, by server. Any other pair is refused.
 const TOOLS: Record<string, string[]> = { browser: ["browser_execute", "desktop_execute"], exec: ["exec", "stream_logs", "search_logs", "kill"] }
 const UNRESTRICTED = "packagebrowserjs.policyimportrego.v1allow_tool_call:=true"
+// What GET /sizes answers: the desktop's limits at each size.
+const SIZES = [
+  { name: "small", cpuMillis: 1500, memoryMiB: 2048, warm: true },
+  { name: "medium", cpuMillis: 2000, memoryMiB: 5120, warm: false },
+  { name: "large", cpuMillis: 3000, memoryMiB: 10240, warm: false },
+]
 const SCOPES = ["sessions:read", "sessions:write", "policies:read", "policies:write"]
 const ME = { email: "you@example.com", name: "You", admin: false }
 const SESSION_ID = /^s-([a-z2-7]{10}|[a-z0-9]{5})$/
@@ -136,7 +146,7 @@ function sameJson(a: unknown, b: unknown): boolean {
 }
 
 export function createMockBackend(options: MockOptions) {
-  const { presets, policies = true, tokens: tokensOn = true, seed = true, snapshots = true, now = () => new Date() } = options
+  const { presets, policies = true, tokens: tokensOn = true, seed = true, snapshots = true, sizes = true, now = () => new Date() } = options
   const sessions = new Map<string, StoredSession>()
   const tokens: { id: string; name: string; scopes: string[]; created: string; expires: string; last_used?: string }[] = []
   let counter = 0
@@ -221,6 +231,8 @@ export function createMockBackend(options: MockOptions) {
     state: s.state,
     created: s.created,
     mcp_url: `https://sessions.example.com/${s.id}/mcp`,
+    ...(s.size ? { size: s.size } : {}),
+    ...(s.pendingSize ? { pendingSize: s.pendingSize } : {}),
     ...(s.stateSaved && s.state !== "running" && s.state !== "starting" ? { stateSaved: true } : {}),
     ...(policies ? { policy: summary(s) } : {}),
     ...billing.view(s),
@@ -244,7 +256,7 @@ export function createMockBackend(options: MockOptions) {
   function addSession(name: string, policy?: StoredPolicy, extra: Partial<StoredSession> = {}): StoredSession {
     // Five characters, as a session taken from the warm pool has.
     const id = `s-${(counter++).toString(36).padStart(5, "a")}`
-    const s: StoredSession = { id, name, owner: ME.email, state: "running", created: now().toISOString(), policy, ...extra }
+    const s: StoredSession = { id, name, owner: ME.email, state: "running", created: now().toISOString(), policy, ...(sizes ? { size: "small" } : {}), ...extra }
     sessions.set(id, s)
     return s
   }
@@ -278,6 +290,20 @@ export function createMockBackend(options: MockOptions) {
     checkoutPolls: options.checkoutPolls,
   })
 
+  const badSize = (size: string) =>
+    sizes && SIZES.some(s => s.name === size)
+      ? undefined
+      : error(400, `size must be one of ${JSON.stringify(sizes ? SIZES.map(s => s.name) : ["small"])}, got ${JSON.stringify(size)}`)
+  const noCapacity = (size: string) =>
+    json(409, {
+      error: `no capacity for a ${size} session right now: every session node is full. Try again later, or pick a smaller size.`,
+      code: "no_capacity",
+    })
+  // A session that has just gone down takes the size that was waiting.
+  const settle = (s: StoredSession) => {
+    if (s.pendingSize) Object.assign(s, { size: s.pendingSize, pendingSize: undefined })
+  }
+
   function handle(req: MockRequest): MockResponse {
     const [path, query = ""] = req.path.split("?")
     const method = req.method.toUpperCase()
@@ -287,6 +313,7 @@ export function createMockBackend(options: MockOptions) {
     const route = `${method} /${parts.slice(1).join("/")}`
 
     if (route === "GET /me") return json(200, ME)
+    if (route === "GET /sizes") return sizes ? json(200, { default: "small", sizes: SIZES }) : notRouted()
 
     if (route === "GET /sessions") {
       void query
@@ -298,6 +325,14 @@ export function createMockBackend(options: MockOptions) {
       const refused = billing.refuse("create")
       if (refused) return refused
       if (sessions.size >= 12) return error(409, "session limit reached")
+      const size = body.size === undefined ? undefined : String(body.size)
+      if (size !== undefined) {
+        const bad = badSize(size)
+        if (bad) return bad
+        const notIncluded = billing.refuseSize(size)
+        if (notIncluded) return notIncluded
+        if (options.full?.includes(size)) return noCapacity(size)
+      }
       let policy: StoredPolicy | undefined
       if (policies) {
         const input: Source = body.policy ?? presets[0]
@@ -310,7 +345,10 @@ export function createMockBackend(options: MockOptions) {
           return error(400, "managed_url must be an https URL when mode is iac")
         policy = store(input, management, "ui", undefined, true)
       }
-      const s = addSession(String(body.name || `session-${counter}`), policy, { state: policies ? "starting" : "running" })
+      const s = addSession(String(body.name || `session-${counter}`), policy, {
+        state: policies ? "starting" : "running",
+        ...(size ? { size } : {}),
+      })
       return json(201, sessionView(s))
     }
 
@@ -326,8 +364,22 @@ export function createMockBackend(options: MockOptions) {
           return json(200, sessionView(s))
         }
         if (method === "PATCH") {
+          if (body.size !== undefined) {
+            const size = String(body.size)
+            const bad = badSize(size)
+            if (bad) return bad
+            const notIncluded = size === s.size ? undefined : billing.refuseSize(size)
+            if (notIncluded) return notIncluded
+            // Awake: from its next start. Otherwise at once, and the saved state goes.
+            if (size === s.size) delete s.pendingSize
+            else if (s.state === "running" || s.state === "starting") s.pendingSize = size
+            else Object.assign(s, { size, pendingSize: undefined, stateSaved: false })
+          }
           if (typeof body.name === "string") s.name = body.name
-          if (body.action === "stop") Object.assign(s, { state: "stopped", stoppedBy: "user", stateSaved: false })
+          if (body.action === "stop") {
+            Object.assign(s, { state: "stopped", stoppedBy: "user", stateSaved: false })
+            settle(s)
+          }
           if (body.action === "resume") {
             const refused = billing.refuse("resume")
             if (refused) return refused
@@ -345,7 +397,9 @@ export function createMockBackend(options: MockOptions) {
         if (s.state === "asleep") return json(200, sessionView(s))
         if (s.state === "starting") return error(409, "session is still starting; put it to sleep once it is running")
         if (s.state !== "running") return error(409, `session is ${s.state}, with no running state to save; wake it to start it fresh`)
-        Object.assign(s, { state: "asleep", stoppedBy: "sleep", stateSaved: snapshots })
+        // A resize that was waiting: no state is saved, and it has the size.
+        Object.assign(s, { state: "asleep", stoppedBy: "sleep", stateSaved: snapshots && !s.pendingSize })
+        settle(s)
         return json(200, sessionView(s))
       }
       // PATCH's resume, as a route: from the snapshot if there is one.

@@ -83,15 +83,17 @@ type BillingView struct {
 	Balances          []SourceBalance   `json:"balances,omitempty"`
 	BurnMicrosPerHour int64             `json:"burnMicrosPerHour,omitempty"`
 	Rates             PublicRates       `json:"rates"`
-	ExhaustedAt       *time.Time        `json:"exhaustedAt,omitempty"`
-	SleepAt           *time.Time        `json:"sleepAt,omitempty"`
-	DeleteAt          *time.Time        `json:"deleteAt,omitempty"`
-	Period            PeriodView        `json:"period"`
-	Limits            PublicTier        `json:"limits"`
-	AutoRecharge      *AutoRechargeView `json:"autoRecharge,omitempty"`
-	Payments          string            `json:"payments"`
-	HasCustomer       bool              `json:"hasCustomer"`
-	TermsRequired     string            `json:"termsRequired,omitempty"`
+	// The awake rate of each size of session, small first.
+	Sizes         []PublicSize      `json:"sizes"`
+	ExhaustedAt   *time.Time        `json:"exhaustedAt,omitempty"`
+	SleepAt       *time.Time        `json:"sleepAt,omitempty"`
+	DeleteAt      *time.Time        `json:"deleteAt,omitempty"`
+	Period        PeriodView        `json:"period"`
+	Limits        PublicTier        `json:"limits"`
+	AutoRecharge  *AutoRechargeView `json:"autoRecharge,omitempty"`
+	Payments      string            `json:"payments"`
+	HasCustomer   bool              `json:"hasCustomer"`
+	TermsRequired string            `json:"termsRequired,omitempty"`
 }
 
 type SignupCreditView struct {
@@ -205,8 +207,9 @@ func (h *Handlers) viewOf(ctx context.Context, st standing) (BillingView, error)
 		Ledger:           "ok",
 		HasPaymentMethod: spec.PaymentMethod != nil && spec.PaymentMethod.Present,
 		Rates:            cat.publicRates(),
+		Sizes:            cat.publicSizes(),
 		ExhaustedAt:      st.exhaustedAt(),
-		Limits:           PublicTier{st.tier.MaxSessions, st.tier.MaxAwake},
+		Limits:           PublicTier{st.tier.MaxSessions, st.tier.MaxAwake, cat.included(st.tier.Sizes)},
 		Payments:         h.cfg.Payments,
 		HasCustomer:      spec.StripeCustomerID != "",
 	}
@@ -256,7 +259,7 @@ func (h *Handlers) viewOf(ctx context.Context, st standing) (BillingView, error)
 	}
 	for _, s := range mine {
 		if s.State == sessions.Running {
-			v.BurnMicrosPerHour += cat.Rates.AwakeMicrosPerHour
+			v.BurnMicrosPerHour += cat.AwakeRate(s.Size)
 		}
 		v.BurnMicrosPerHour += int64(cat.SessionDiskGB) * cat.Rates.DiskMicrosPerGBHour
 	}

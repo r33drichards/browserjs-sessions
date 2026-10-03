@@ -260,6 +260,32 @@ func (e *Enforcer) Create(ctx context.Context, owner string, mine []sessions.Ses
 	return e.check(ctx, OpCreate, owner, "", mine, true)
 }
 
+// Size judges a session of size for owner: a create at that size, or a
+// resize to it. The sizes a plan includes are the catalogue's; small is in
+// every one. It is not a row of the decision table: it is asked beside it.
+func (e *Enforcer) Size(ctx context.Context, owner, size string) error {
+	if e.cfg.Mode == Off || owner == "" || size == "" || size == SizeSmall {
+		return nil
+	}
+	st, err := e.standing(ctx, owner)
+	if err != nil {
+		if e.cfg.Mode != Enforce {
+			slog.Error("billing: size not judged; allowed (not enforcing)", "err", err)
+			return nil
+		}
+		return err
+	}
+	if st.state == StateExempt || st.tier.Allows(size) {
+		return nil
+	}
+	if e.cfg.Mode != Enforce {
+		slog.Info("would_refuse", "op", "size", "account", st.account.Name, "size", size, "code", CodeSizeNotIncluded)
+		return nil
+	}
+	slog.Info("billing: refused", "op", "size", "account", st.account.Name, "size", size, "code", CodeSizeNotIncluded)
+	return NewRefusal(CodeSizeNotIncluded, 0, e.cfg.BillingURL())
+}
+
 // Start judges making s awake: a resume, or a wake on a call. The account
 // is the session's owner's, whoever asks.
 func (e *Enforcer) Start(ctx context.Context, s sessions.Session) error {

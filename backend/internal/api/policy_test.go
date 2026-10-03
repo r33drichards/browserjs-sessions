@@ -217,6 +217,7 @@ type (
 		State   string         `json:"state"`
 		Message string         `json:"message"`
 		Created time.Time      `json:"created"`
+		Size    string         `json:"size"`
 		MCPURL  string         `json:"mcp_url"`
 		Policy  *policySummary `json:"policy"`
 	}

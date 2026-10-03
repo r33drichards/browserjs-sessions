@@ -33,6 +33,10 @@ locals {
   # Metronome prices are US cents and may be fractional; the catalogue's
   # rates are micro-dollars. 10000 micro-dollars are a cent.
   awake_cents_per_hour = local.catalogue.rates.awakeMicrosPerHour / 10000
+  # The same for each size of session other than small.
+  awake_cents_per_hour_by_size = {
+    for size, s in try(local.catalogue.sizes, {}) : size => s.awakeMicrosPerHour / 10000
+  }
   # A GB-month is 730 hours, rounded to the cent (metronome.md).
   disk_cents_per_gb_month = floor(local.catalogue.rates.diskMicrosPerGBHour * 730 / 10000 + 0.5)
 }

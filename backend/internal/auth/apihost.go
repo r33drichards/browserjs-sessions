@@ -113,6 +113,7 @@ var apiRoutes = []struct {
 	unbound bool
 }{
 	{pattern: "GET /v1/me"},
+	{pattern: "GET /v1/sizes"},
 	{pattern: "GET /v1/sessions", scope: ScopeSessionsRead, unbound: true},
 	{pattern: "POST /v1/sessions", scope: ScopeSessionsWrite, unbound: true},
 	{pattern: "GET /v1/sessions/{id}", scope: ScopeSessionsRead},

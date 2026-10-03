@@ -344,10 +344,13 @@ func (s *Store) sleep(ctx context.Context, id, by string, stillWanted func(Sessi
 		}
 		if by != StoppedByIdle && FromSandbox(obj).State != Running {
 			// Still starting: nothing to snapshot.
+		} else if FromSandbox(obj).PendingSize != "" {
+			// It starts next at another size, which cannot restore this pod.
 		} else if snap, err = s.snap.take(ctx, obj); err != nil {
 			slog.Warn("snapshot failed; the session will wake cold", "session", id, "err", err)
 		}
 	}
+	resized := false
 	err := s.modify(ctx, id, func(obj *unstructured.Unstructured) (bool, error) {
 		if operatingMode(obj) == "Suspended" || obj.GetDeletionTimestamp() != nil {
 			return false, ErrStateChanged
@@ -364,6 +367,12 @@ func (s *Store) sleep(ctx context.Context, id, by string, stillWanted func(Sessi
 				return false, err
 			}
 		}
+		// A resize that was waiting for the pod to go. After the snapshot
+		// is recorded: one of a pod of the old size is not kept.
+		var err error
+		if resized, err = s.applyResize(obj); err != nil {
+			return false, err
+		}
 		return true, unstructured.SetNestedField(obj.Object, "Suspended", "spec", "operatingMode")
 	})
 	if s.snap == nil {
@@ -377,7 +386,9 @@ func (s *Store) sleep(ctx context.Context, id, by string, stillWanted func(Sessi
 		return err
 	}
 	keep := ""
-	if snap != nil {
+	if snap != nil && resized {
+		s.snap.discard(ctx, snap.name)
+	} else if snap != nil {
 		keep = snap.name
 		slog.Info("session snapshotted", "session", id, "snapshot", snap.name, "pool", snap.pool)
 	}

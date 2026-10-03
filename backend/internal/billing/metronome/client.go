@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -31,6 +32,19 @@ const (
 	ProductCredit = "Credit"
 )
 
+// AwakeMetric is the metric of the awake seconds of sessions of a size:
+// MetricAwake for small, and one of its own for every other size
+// (metronome.md, "Sizes").
+func AwakeMetric(size string) string {
+	if size == "" || size == billing.SizeSmall {
+		return MetricAwake
+	}
+	return "cu_awake_" + size + "_seconds_v1"
+}
+
+// errNotDefined is an object OpenTofu has not defined in this environment.
+var errNotDefined = errors.New("not defined")
+
 // Client is billing.Metronome over HTTP: one method per endpoint, no
 // logic. The request and response shapes are from Metronome's
 // documentation as metronome.md records it and have not been run against
@@ -43,6 +57,10 @@ type Client struct {
 	base  string
 	token string
 	http  *http.Client
+
+	// Sizes, if set, is the sizes of session other than small that are
+	// charged (the catalogue's): the usage of each is read from its metric.
+	Sizes func() []string
 
 	mu  sync.Mutex
 	ids map[string]string // "product/Credit", "metric/cu_awake_seconds_v1" -> ID
@@ -169,7 +187,7 @@ func (c *Client) named(ctx context.Context, kind, listPath, method, name string)
 		return "", err
 	}
 	if found == "" {
-		return "", fmt.Errorf("metronome: no %s named %q; apply infra/billing to this environment", kind, name)
+		return "", fmt.Errorf("metronome: no %s named %q; apply infra/billing to this environment: %w", kind, name, errNotDefined)
 	}
 	c.mu.Lock()
 	c.ids[kind+"/"+name] = found
@@ -329,18 +347,36 @@ func (c *Client) ArchiveCredit(ctx context.Context, customer, id string) error {
 	return err
 }
 
-// Usage reads the customer's two metrics by session and UTC day.
+// Usage reads the customer's metrics by session and UTC day: awake seconds
+// (one metric for each size) and GB-seconds of disk.
 func (c *Client) Usage(ctx context.Context, customer string, from, to time.Time) (billing.MetronomeUsage, error) {
 	rows := map[[2]string]*billing.MetronomeUsageRow{}
 	var order [][2]string
-	for _, m := range []struct {
-		name string
-		add  func(*billing.MetronomeUsageRow, int64)
-	}{
-		{MetricAwake, func(r *billing.MetronomeUsageRow, n int64) { r.AwakeSeconds += n }},
-		{MetricDisk, func(r *billing.MetronomeUsageRow, n int64) { r.DiskGBSeconds += n }},
-	} {
+	type metric struct {
+		name     string
+		optional bool // a size's: absent until infra/billing is applied with it
+		add      func(*billing.MetronomeUsageRow, int64)
+	}
+	metrics := []metric{
+		{MetricAwake, false, func(r *billing.MetronomeUsageRow, n int64) { r.AwakeSeconds += n }},
+		{MetricDisk, false, func(r *billing.MetronomeUsageRow, n int64) { r.DiskGBSeconds += n }},
+	}
+	if c.Sizes != nil {
+		for _, size := range c.Sizes() {
+			metrics = append(metrics, metric{AwakeMetric(size), true, func(r *billing.MetronomeUsageRow, n int64) {
+				if r.AwakeBySize == nil {
+					r.AwakeBySize = map[string]int64{}
+				}
+				r.AwakeSeconds += n
+				r.AwakeBySize[size] += n
+			}})
+		}
+	}
+	for _, m := range metrics {
 		metric, err := c.metric(ctx, m.name)
+		if m.optional && errors.Is(err, errNotDefined) {
+			continue
+		}
 		if err != nil {
 			return billing.MetronomeUsage{}, err
 		}
