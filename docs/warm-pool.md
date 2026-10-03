@@ -174,6 +174,21 @@ affinity is ignored by the autoscaler when it chooses a pool, and a required
 one would give up the fallback pools, which exist for when a Spot machine
 type has no capacity.
 
+## Sizes
+
+The pool holds small sessions only: its template is the blueprint, and the
+blueprint is the size small. A medium or large session
+([session-sizes.md](session-sizes.md)) is never taken from the pool; it
+starts cold from the blueprint with that size's numbers. Keeping bigger
+ones warm would mean a template and a pool for each, and a waiting large
+pod holds a whole node.
+
+The pool's node is also why a medium session does not land beside it: seven
+waiting pods leave 3137Mi of the node's 12097Mi, and a medium asks for
+3328Mi. With the second session node taken by bigger sessions, the pool's
+replacements for claimed pods wait as `Pending` once the first node's nine
+places are used.
+
 ## Turning it off
 
 - `replicas: 0` in `warmpool.yaml`: nothing waits, nothing is paid; sessions

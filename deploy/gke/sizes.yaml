@@ -1,0 +1,81 @@
+# The sizes a session can have besides "small". Small is blueprint.yaml as it
+# is written (and the SandboxTemplate of warmpool.yaml, which is the same):
+# 1.5 CPU and 2 GiB for the desktop. A size here is that same pod with other
+# numbers, and can say nothing else: each container's requests and limits,
+# the size of /dev/shm, and environment variables that go with the size. The
+# backend (internal/sessions/sizes.go) puts them into the blueprint when a
+# session of that size is made or resized to it; deploy_test.go there holds
+# this file to the node it has to fit on and to the billing catalogue.
+#
+# Only small is kept warm. Any other size starts cold: from the blueprint, on
+# whichever node has room, or on a new one (docs/session-sizes.md has the
+# times).
+#
+# The numbers are sized for a session node of 4 vCPU and 16 GB, which has
+# 3213m of CPU and 12097Mi left for sessions (capacity, below).
+sizes:
+  # A third of a node. Three fit an empty one (3 x 3328Mi of 12097Mi); the
+  # node that holds the warm pool has no room for one (7 x 1280Mi are taken).
+  - name: medium
+    containers:
+      browser:
+        resources:
+          requests:
+            cpu: 500m
+            memory: 3Gi
+          limits:
+            cpu: "2"
+            memory: 5Gi
+      mcp-js:
+        resources:
+          requests:
+            cpu: 50m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 1Gi
+        # The heap one run_js call has when it names none, in MB (8 without
+        # this). A call can still ask for up to 64.
+        env:
+          MCP_V8_HEAP_MEMORY_MAX: "16"
+    # Memory, counted against the browser container's limit.
+    shm: 2Gi
+  # A whole node. Memory is requested in full (the request is the limit), so
+  # the scheduler puts nothing beside it and it is never short because of a
+  # neighbour: 11264Mi of the 12097Mi, the 833Mi left over fit no session.
+  # CPU is not: 2050m are its own, and it may use 3.5 cores when they are
+  # free, which on a node of its own they are.
+  - name: large
+    containers:
+      browser:
+        resources:
+          requests:
+            cpu: "2"
+            memory: 10Gi
+          limits:
+            cpu: "3"
+            memory: 10Gi
+      mcp-js:
+        resources:
+          requests:
+            cpu: 50m
+            memory: 1Gi
+          limits:
+            cpu: 500m
+            memory: 1Gi
+        env:
+          MCP_V8_HEAP_MEMORY_MAX: "32"
+    shm: 4Gi
+
+# The room there is for sessions, for refusing one that would only wait
+# ("no capacity for a large session right now") instead of leaving it
+# starting until it times out. nodes is how many session nodes the project's
+# quotas allow at once (12 CPUs: the system node and two session nodes of 4;
+# infra/main/terraform.tfvars), whatever session_max_nodes says. cpu and
+# memory are what one such node has left for session pods once GKE's own
+# pods have theirs: the "left for sessions" row of warmpool.yaml. Raise nodes
+# with the quota.
+capacity:
+  nodes: 2
+  cpu: 3213m
+  memory: 12097Mi

@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/r33drichards/computer-use/backend/internal/metrics"
 	"github.com/r33drichards/computer-use/backend/internal/sessions"
 )
 
@@ -34,6 +35,9 @@ type Gated struct {
 	// was created: a policy in force stays in force for as long as its
 	// session exists, and an ID can come back as another session.
 	inForce map[string]time.Time
+	// held is when each session not yet in force was first seen held, for
+	// the metrics only.
+	held map[string]time.Time
 }
 
 // Gate returns store gated by the policies of h. With policies off (h is
@@ -64,10 +68,23 @@ func (g *Gated) Get(ctx context.Context, id string) (sessions.Session, error) {
 		return sessions.Session{}, err
 	}
 	if gated := p.Gate(s); gated.State != sessions.Running {
+		metrics.GateHeld.Inc()
+		g.mu.Lock()
+		if g.held == nil {
+			g.held = map[string]time.Time{}
+		}
+		if _, was := g.held[id]; !was {
+			g.held[id] = time.Now()
+		}
+		g.mu.Unlock()
 		return gated, nil
 	}
 	g.mu.Lock()
 	g.inForce[id] = s.Created
+	if since, was := g.held[id]; was {
+		metrics.GateWait.Observe(time.Since(since).Seconds())
+		delete(g.held, id)
+	}
 	g.mu.Unlock()
 	return s, nil
 }

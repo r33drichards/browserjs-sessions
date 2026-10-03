@@ -23,11 +23,13 @@ var (
 	_ api.Store   = (*billingtest.Sessions)(nil)
 	_ proxy.Store = (*billingtest.Sessions)(nil)
 	_ idle.Store  = (*billingtest.Sessions)(nil)
+	_ idle.Marker = (*billingtest.Sessions)(nil)
 	_ authz.Store = (*billingtest.Sessions)(nil)
 
 	_ api.Store        = (*sessions.Store)(nil)
 	_ proxy.Store      = (*sessions.Store)(nil)
 	_ idle.Store       = (*sessions.Store)(nil)
+	_ idle.Marker      = (*sessions.Store)(nil)
 	_ billing.Sessions = billing.Store{}
 	_ billing.InFlight = (*proxy.Proxy)(nil)
 )

@@ -63,7 +63,10 @@ export interface Billing {
     awakeMicros: Micros
     diskMicros: Micros
   }
-  limits: { maxSessions: number; maxAwake: number }
+  // The awake rate of each size of session, small first; and the sizes the
+  // plan includes. Absent from a backend without sizes.
+  sizes?: SizeRate[]
+  limits: { maxSessions: number; maxAwake: number; sizes?: string[] }
   autoRecharge?: AutoRecharge
   payments: "off" | "test" | "live"
   hasCustomer?: boolean
@@ -99,14 +102,21 @@ export interface Item {
   creditMicros: Micros
   maxSessions?: number
   maxAwake?: number
+  sizes?: string[] // of a plan: the sizes of session it includes
   validDays?: number
+}
+
+export interface SizeRate {
+  key: string
+  awakeMicrosPerHour: Micros
 }
 
 export interface Catalogue {
   currency: string
   rates: Rates
+  sizes?: SizeRate[]
   signupCredit: { amountMicros?: Micros; validDays?: number }
-  payg: { maxSessions?: number; maxAwake?: number }
+  payg: { maxSessions?: number; maxAwake?: number; sizes?: string[] }
   plans: Item[]
   packs: Item[]
 }
@@ -255,6 +265,18 @@ export function ratesInWords(rates: Rates): { awake: string; kept: string } {
   return { awake: dollars(rates.awakeMicrosPerHour), kept: dollars(diskMicrosPerMonth(rates)) }
 }
 
+// The awake rate of a session of `size`: its own, or small's where the
+// backend names none for it.
+export function awakeRate(billing: Pick<Billing, "rates" | "sizes">, size?: string): Micros {
+  return billing.sizes?.find(s => s.key === size)?.awakeMicrosPerHour ?? billing.rates.awakeMicrosPerHour
+}
+
+// Whether the account's plan includes sessions of `size`. A backend that
+// does not say includes them all: it is the one that refuses.
+export function planIncludes(billing: Pick<Billing, "limits">, size: string): boolean {
+  return !billing.limits.sizes || billing.limits.sizes.includes(size)
+}
+
 export const SOURCE_LABEL: Record<BalanceSource, string> = {
   plan: "Plan credit",
   signup: "Sign-up credit",
@@ -295,6 +317,7 @@ export type RefusalCode =
   | "metering_unavailable"
   | "account_blocked"
   | "terms_required"
+  | "size_not_included"
 
 export interface Refusal {
   code: RefusalCode
@@ -318,6 +341,7 @@ export function createRefusal(b: Billing, sessions: Pick<Session, "state">[]): R
 }
 
 const REFUSALS = new Set([
+  "size_not_included",
   "payment_method_required",
   "out_of_credit",
   "session_limit",

@@ -140,7 +140,8 @@ other languages, build a `ClientOptions` with `ClientOptionsBuilder`, or use
 | --- | --- | --- |
 | `me()` | Who the token acts as | any |
 | `list_sessions()` | Your sessions | `sessions:read` |
-| `create_session(request)` | Creates a session and returns a handle. The request has an optional `name`, and an optional `policy` or `policy_preset` | `sessions:write` |
+| `sizes()` | The sizes a session can have, and the default | any |
+| `create_session(request)` | Creates a session and returns a handle. The request has an optional `name`, an optional `size`, and an optional `policy` or `policy_preset` | `sessions:write` |
 | `get_session(id)` | Reads a session and returns a handle | `sessions:read` |
 | `session(id)` | A handle, without a request. For a token that has `sessions:connect` only | none |
 | `policy_presets()` | The ready-made policies | any |
@@ -159,6 +160,7 @@ other languages, build a `ClientOptions` with `ClientOptionsBuilder`, or use
 | `last_info()` | What the API last said about the session. No request | none |
 | `refresh()` | Reads the session | `sessions:read` |
 | `rename(name)` | Renames it | `sessions:write` |
+| `resize(size)` | Changes its size. An awake session changes at its next start (`pending_size`). The next start is fresh: the snapshot is dropped, the disk is kept | `sessions:write` |
 | `sleep()` | Sleeps it now, with a snapshot. Answers when the snapshot is taken | `sessions:write` |
 | `wake()` | Starts a session that is asleep or stopped. Does not wait | `sessions:write` |
 | `stop()` | Stops it. No snapshot. An agent's call does not wake it | `sessions:write` |
@@ -198,7 +200,7 @@ Each documented answer of the API is its own error.
 | `PaymentRequired` | `402`. Billing refused. Carries `code` and `billing_url` |
 | `Forbidden` | `403`. The token lacks the scope, or is for another session, or billing blocked the account (`code`, `billing_url`) |
 | `NotFound` | `404`. No such session, or not yours |
-| `Conflict` | `409`. The session limit, a stopped session, a session that cannot sleep, a policy managed elsewhere (`managed_url`), or a plan's limit (`code`, `billing_url`) |
+| `Conflict` | `409`. The session limit, a stopped session, a session that cannot sleep, no room for the size asked for (`code` is `no_capacity`), a policy managed elsewhere (`managed_url`), or a plan's limit (`code`, `billing_url`) |
 | `InvalidPolicy` | `422`. The policy does not validate. Carries the diagnostics. Nothing was saved |
 | `RateLimited` | `429`, after the retries |
 | `Api` | Any other status, with `status` and `message` |

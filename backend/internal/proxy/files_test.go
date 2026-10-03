@@ -297,15 +297,14 @@ func TestListingFilesIsNotUseOfTheSession(t *testing.T) {
 	e.podFiles(`[]`)
 	list := "/api/sessions/" + e.id + "/files"
 
-	e.tracker.Idle([]string{e.id})
 	e.skew.Add(int64(16 * time.Minute))
 	if rec := e.app("GET", list, alice, ""); rec.Code != http.StatusOK {
 		t.Fatalf("list: %d", rec.Code)
 	}
-	if !isIdle(e.tracker, e.id) {
+	if !e.isIdle(e.id) {
 		t.Error("listing files was recorded as activity")
 	}
-	if _ = e.app("GET", list+"/a.txt", alice, ""); isIdle(e.tracker, e.id) {
+	if _ = e.app("GET", list+"/a.txt", alice, ""); e.isIdle(e.id) {
 		t.Error("a download was not recorded as activity")
 	}
 

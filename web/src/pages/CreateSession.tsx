@@ -29,6 +29,8 @@ import type { PolicyInput, PolicySession, PolicySource, Preset } from "../policy
 import { KIND_LABEL, PolicyApiError, ifAvailable, managedUrlError, policyApi } from "../policyApi"
 import type { Flash } from "../shell"
 import { Shell, api } from "../shell"
+import type { Sizes } from "../sizes"
+import { sizeLabel, sizeNumbers, sizeStart } from "../sizes"
 import { useUnsavedChanges } from "../useUnsavedChanges"
 
 const COPY = "copy"
@@ -82,7 +84,11 @@ export function CreateSession() {
   const [formError, setFormError] = useState("")
   const [refused, setRefused] = useState<Problems | null>(null) // the 422 of a create
   const [busy, setBusy] = useState(false)
-  const gate = useCreateGate() // billing: why a session cannot be created, and what one costs
+  // The sizes on offer; null where there is one size only (or none are told).
+  const [sizes, setSizes] = useState<Sizes | null>(null)
+  const [size, setSize] = useState("") // "" until chosen: the default
+  const chosenSize = size || sizes?.default || ""
+  const gate = useCreateGate(chosenSize || undefined) // billing: why a session cannot be created, and what one costs
 
   useEffect(() => {
     let cancelled = false
@@ -96,6 +102,14 @@ export function CreateSession() {
       .catch(e => {
         if (!cancelled && !signedOutHandled(e)) setPresets(null)
       })
+    // The sizes a session can have here. Without them the form is as it
+    // was, and the session is the one size there is.
+    api
+      .listSizes()
+      .then(answer => {
+        if (!cancelled && answer.sizes.length > 1) setSizes(answer)
+      })
+      .catch(signedOutHandled)
     // The sessions already there: names the placeholder should avoid, and
     // policies that can be copied. The form works without them.
     api
@@ -121,7 +135,7 @@ export function CreateSession() {
   const panelBase = custom ?? NEW_DRAFT
   const panelDirty = panelOpen && !same(panelDraft, panelBase)
   const dirty =
-    name.trim() !== "" || choice !== defaultChoice || custom !== null || panelDirty || managedUrl !== "" || copyFrom !== ""
+    name.trim() !== "" || (size !== "" && size !== sizes?.default) || choice !== defaultChoice || custom !== null || panelDirty || managedUrl !== "" || copyFrom !== ""
   const unsaved = useUnsavedChanges(dirty)
 
   function openPanel() {
@@ -172,6 +186,8 @@ export function CreateSession() {
 
     // Left empty, the session gets the name shown as the placeholder.
     const sessionName = name.trim() || suggested
+    // Sent only when it is not the default: the request is then what it always was.
+    const sized = sizes && chosenSize !== sizes.default ? { size: chosenSize } : {}
     setBusy(true)
     try {
       let session: PolicySession
@@ -183,10 +199,10 @@ export function CreateSession() {
           copied = { kind: from.kind, source: from.source }
         }
         const policy = policyForChoice({ choice, presets, copied, custom: custom ?? undefined, managedUrl })
-        session = await policyApi.createSession({ name: sessionName, policy })
+        session = await policyApi.createSession({ name: sessionName, ...sized, policy })
       } else {
         // No policies on this deployment: the request it has always been.
-        session = await api.createSession(sessionName)
+        session = await api.createSession(sessionName, sized.size)
       }
       unsaved.markSaved()
       const flash: Flash = { type: "success", content: `Session ${session.name} created` }
@@ -241,6 +257,41 @@ export function CreateSession() {
               <Input value={name} placeholder={suggested} onChange={e => setName(e.detail.value)} autoFocus />
             </FormField>
           </Container>
+
+          {sizes && (
+            <Container
+              header={
+                <Header
+                  variant="h2"
+                  description="How much processor and memory the desktop has. You can change it later; a session starts fresh at its new size."
+                >
+                  Size
+                </Header>
+              }
+            >
+              <RadioGroup
+                ariaLabel="Size"
+                value={chosenSize}
+                onChange={e => setSize(e.detail.value)}
+                items={sizes.sizes.map(s => {
+                  const hourly = gate.hourly(s.name)
+                  const included = gate.includes(s.name)
+                  return {
+                    value: s.name,
+                    label: sizeLabel(s.name),
+                    disabled: !included,
+                    description: [
+                      `${sizeNumbers(s)}.`,
+                      hourly ? `${hourly} an hour while awake.` : "",
+                      included ? sizeStart(s) : "Not included in your plan.",
+                    ]
+                      .filter(Boolean)
+                      .join(" "),
+                  }
+                })}
+              />
+            </Container>
+          )}
 
           {presets && (
             <Container

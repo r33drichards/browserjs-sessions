@@ -199,6 +199,12 @@ impl CreateSession<'_> {
         self
     }
 
+    /// The session's size, such as `medium`. Left out: the default.
+    pub fn size(mut self, size: impl Into<String>) -> Self {
+        self.request.size = Some(size.into());
+        self
+    }
+
     /// Creates the session.
     pub async fn send(self) -> Result<Arc<Session>, ComputerUseError> {
         self.client.create_session(self.request).await

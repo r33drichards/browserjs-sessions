@@ -349,6 +349,8 @@ components:
         owner: {type: string}
         state: {type: string, description: As today. A new session stays `starting` until its policy is `ready`.}
         mcp_url: {type: string}
+        size: {type: string, description: "The size the session runs at: `small`, `medium` or `large` (docs/session-sizes.md)."}
+        pendingSize: {type: string, description: "Present while a resize waits for the session's next start."}
         stateSaved: {type: boolean, description: "Present, and true, when a session that is asleep (or on its way there) holds a snapshot to wake from."}
         policy: {$ref: "#/components/schemas/PolicySummary"}
     PolicySummary:

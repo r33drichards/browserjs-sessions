@@ -72,7 +72,10 @@ spec:
           protocol: TCP
 ---
 # Identity is whatever Pomerium says it is, and the upload and VNC routes
-# have no login at all: nothing but Pomerium talks to the backend.
+# have no login at all: nothing but Pomerium talks to the backend. The one
+# exception is a release's canary (deploy/gke/rollouts.yaml), which asks a
+# backend that is not serving yet, as the API host, with an API token: that
+# host believes no header, only the token.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -87,8 +90,24 @@ spec:
         - podSelector:
             matchLabels:
               app: pomerium
+        - podSelector:
+            matchLabels:
+              app: release-canary
       ports:
         - port: 8080
+          protocol: TCP
+    # The metrics port, to the collectors of Google Cloud Managed Service
+    # for Prometheus (deploy/gke/monitoring.yaml) and to nothing else. On a
+    # cluster without them nothing matches, and the port answers nobody.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gmp-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: collector
+      ports:
+        - port: 9090
           protocol: TCP
 ---
 # OPA answers the sessions and the operator, and fetches its bundle from the

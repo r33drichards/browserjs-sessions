@@ -42,6 +42,11 @@ output "mcp_url" {
 ### Optional
 
 - `name` (String) The session's name. Changed in place. Left out, the server names the session.
+- `size` (String) How much CPU and memory the desktop gets: `small`, `medium` or `large`, as the deployment offers. Left out, the server's default (`small`).
+
+Changed in place, without replacing the session, and the disk is kept. A session that is asleep or stopped changes at once. One that is awake keeps running at its size until its next start (see `pending_size`).
+
+~> **A resize makes the session's next start a fresh one.** Its saved state is dropped: open windows and running programs are lost, as after a stop. Files, the browser's logins and agent memory are on the disk and are kept.
 - `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
 
 ### Read-Only
@@ -49,6 +54,7 @@ output "mcp_url" {
 - `id` (String) The session ID, such as `s-ab2cd`.
 - `mcp_url` (String) What an MCP client is pointed at.
 - `owner` (String) Who owns the session: the owner of the API token that created it.
+- `pending_size` (String) The size the session takes at its next start, while a resize of an awake session is waiting. Empty when none is. `size` already reports it.
 - `state` (String) The session's state as the API reported it when last read (for example `running`). Not waited on after creation.
 
 <a id="nestedblock--timeouts"></a>

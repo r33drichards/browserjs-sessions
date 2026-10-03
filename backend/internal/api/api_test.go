@@ -22,6 +22,7 @@ import (
 	"github.com/r33drichards/computer-use/backend/internal/authz"
 	"github.com/r33drichards/computer-use/backend/internal/sessions"
 	"github.com/r33drichards/computer-use/backend/internal/sessions/sessionstest"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type fixture struct {
@@ -317,6 +318,116 @@ func TestConcurrentCreatesRespectTheCap(t *testing.T) {
 	}
 }
 
+// racing is a store through which another replica of the backend creates a
+// session for the same user at the worst moment: after this replica counted
+// the user's sessions, before it creates its own.
+type racing struct {
+	*sessions.Store
+	meanwhile func()
+}
+
+func (r racing) CreateWithPolicy(ctx context.Context, name, owner string, policy *sessions.PolicySpec) (sessions.Session, error) {
+	if r.meanwhile != nil {
+		r.meanwhile()
+	}
+	return r.Store.CreateWithPolicy(ctx, name, owner, policy)
+}
+
+// The lock that keeps a user's creates apart is one replica's. A create
+// through another replica is caught after the fact: the session that came
+// second is deleted and its caller refused.
+func TestACreateThroughAnotherReplicaDoesNotPassTheCap(t *testing.T) {
+	store, _ := sessionstest.New(t)
+	ctx := t.Context()
+	other := func() {
+		if _, err := store.Create(ctx, "from the other replica", alice.Subject); err != nil {
+			t.Error(err)
+		}
+	}
+	replica := func(meanwhile func()) http.Handler {
+		mux := http.NewServeMux()
+		api.New(racing{store, meanwhile}, authz.NewOwners(store, 0), sessionstest.URLs(), 2).Register(mux)
+		return mux
+	}
+	create := func(h http.Handler) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", "/api/sessions", strings.NewReader(`{"name":"x"}`))
+		h.ServeHTTP(rec, req.WithContext(auth.WithUser(req.Context(), alice)))
+		return rec
+	}
+	count := func() int {
+		t.Helper()
+		mine, err := store.List(ctx, alice.Subject)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(mine)
+	}
+
+	// Room for both: the other replica's create is no reason to refuse.
+	if rec := create(replica(other)); rec.Code != http.StatusCreated || count() != 2 {
+		t.Fatalf("with room for both: %d %s, %d sessions; want 201 and 2", rec.Code, rec.Body, count())
+	}
+	if err := store.Delete(ctx, firstOf(t, store, alice.Subject)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Room for one, and the other replica takes it.
+	rec := create(replica(other))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "session limit reached") {
+		t.Fatalf("past the cap: %d %s, want 409 session limit reached", rec.Code, rec.Body)
+	}
+	if count() != 2 {
+		t.Fatalf("alice has %d sessions, want 2: the one past the cap is deleted", count())
+	}
+
+	// Many at once, through two replicas.
+	for _, id := range all(t, store, alice.Subject) {
+		if err := store.Delete(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	replicas := []http.Handler{replica(nil), replica(nil)}
+	const n = 20
+	codes := make([]int, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Go(func() { codes[i] = create(replicas[i%2]).Code })
+	}
+	wg.Wait()
+	created := 0
+	for _, code := range codes {
+		switch code {
+		case http.StatusCreated:
+			created++
+		case http.StatusConflict:
+		default:
+			t.Errorf("a create answered %d", code)
+		}
+	}
+	if got := count(); got > 2 || got != created {
+		t.Errorf("alice has %d sessions after %d creates were answered 201; want the same number, and at most 2", got, created)
+	}
+}
+
+func all(t *testing.T, store *sessions.Store, owner string) []string {
+	t.Helper()
+	mine, err := store.List(t.Context(), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]string, 0, len(mine))
+	for _, s := range mine {
+		ids = append(ids, s.ID)
+	}
+	return ids
+}
+
+func firstOf(t *testing.T, store *sessions.Store, owner string) string {
+	t.Helper()
+	return all(t, store, owner)[0]
+}
+
 // A PATCH is checked as a whole before any of it is applied.
 func TestPatchIsAllOrNothing(t *testing.T) {
 	f := newFixture(t)
@@ -504,5 +615,74 @@ func TestGeneratedNameAvoidsTheUsersOwn(t *testing.T) {
 	if rec := f.do(bob, "POST", "/api/sessions", `{}`); rec.Code != http.StatusCreated ||
 		decode[session](t, rec).Name != "brave-otter" {
 		t.Errorf("exhausted tries: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// "canary" starts a session on other digests of the session images. It is
+// for the addresses SetCanary names and nobody else, whatever else they are.
+func TestCanaryIsForTheNamedAddressesOnly(t *testing.T) {
+	store, client := sessionstest.NewPinned(t)
+	mux := http.NewServeMux()
+	a := api.New(store, authz.NewOwners(store, 0), sessionstest.URLs(), 2)
+	a.SetCanary([]string{"root@example.com"})
+	a.Register(mux)
+	f := &fixture{t: t, handler: mux, api: a, store: store, client: client}
+
+	const digest = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+	body := `{"name":"canary","canary":{"mcp-js":"` + digest + `"}}`
+	// A token is never an admin: it is the address that counts.
+	token := auth.User{Subject: "root@example.com"}
+	rec := f.do(token, "POST", "/api/sessions", body)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("the named address: %d %s", rec.Code, rec.Body)
+	}
+	id := decode[session](t, rec).ID
+	obj, err := client.Resource(sessions.SandboxGVR).Namespace(sessionstest.Namespace).Get(t.Context(), id, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := obj.GetAnnotations()[sessions.AnnCanary]; got != "mcp-js="+digest {
+		t.Errorf("annotation = %q", got)
+	}
+
+	for name, c := range map[string]struct {
+		user auth.User
+		body string
+		want int
+	}{
+		"somebody else":         {alice, body, http.StatusForbidden},
+		"an admin not named":    {auth.User{Subject: "other@example.com", Admin: true}, body, http.StatusForbidden},
+		"not a digest":          {token, `{"canary":{"mcp-js":"latest"}}`, http.StatusBadRequest},
+		"nothing named":         {token, `{"canary":{}}`, http.StatusBadRequest},
+		"no such container":     {token, `{"canary":{"sidecar":"` + digest + `"}}`, http.StatusBadRequest},
+		"a whole image instead": {token, `{"canary":{"mcp-js":"evil.test/x@` + digest + `"}}`, http.StatusBadRequest},
+	} {
+		rec := f.do(c.user, "POST", "/api/sessions", c.body)
+		if rec.Code != c.want {
+			t.Errorf("%s: %d %s, want %d", name, rec.Code, rec.Body, c.want)
+		}
+	}
+	list, err := client.Resource(sessions.SandboxGVR).Namespace(sessionstest.Namespace).List(t.Context(), metav1.ListOptions{})
+	if err != nil || len(list.Items) != 1 {
+		t.Errorf("sandboxes = %d, %v: the refusals are to make nothing", len(list.Items), err)
+	}
+}
+
+// Each session made is announced once, after it exists; a refused create
+// announces nothing.
+func TestCreateAnnouncesTheSession(t *testing.T) {
+	f := newFixture(t)
+	var got []string
+	f.api.OnCreated(func(id string) { got = append(got, id) })
+	created := decode[session](t, f.do(alice, "POST", "/api/sessions", `{"name":"one"}`))
+	if len(got) != 1 || got[0] != created.ID {
+		t.Fatalf("announced %v, want [%s]", got, created.ID)
+	}
+	f.do(alice, "POST", "/api/sessions", `{"name":"two"}`)
+	if rec := f.do(alice, "POST", "/api/sessions", `{"name":"three"}`); rec.Code != http.StatusConflict {
+		t.Fatalf("over cap: %d", rec.Code)
+	}
+	if len(got) != 2 {
+		t.Errorf("announced %d sessions for two creates and a refused one", len(got))
 	}
 }

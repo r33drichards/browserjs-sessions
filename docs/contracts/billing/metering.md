@@ -37,7 +37,7 @@ rates of `catalogue.yaml`:
 
 | Charge | Rate (proposed) | Counted |
 |---|---|---|
-| **Awake time** | `awakeMicrosPerHour` = 200000 ($0.20 an hour) | for each session, while it is awake |
+| **Awake time** | `awakeMicrosPerHour` = 200000 ($0.20 an hour) for a small session; `sizes.medium.awakeMicrosPerHour` = 400000 ($0.40) and `sizes.large.awakeMicrosPerHour` = 800000 ($0.80) for the bigger sizes (`metronome.md`, "Sizes") | for each session, while it is awake, at the rate of the size it runs at |
 | **Disk** | `diskMicrosPerGBHour` = 384 ($0.28 per GB-month; $1.40 a month for a 5 GB session) | for each session, from creation to deletion, awake or asleep |
 
 The operator is the only thing that decrements the balance. The backend

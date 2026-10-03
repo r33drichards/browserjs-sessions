@@ -625,6 +625,100 @@ mod sessions {
     }
 
     #[tokio::test]
+    async fn sizes_are_listed_asked_for_and_changed() {
+        let fake = Fake::api(|request| {
+            if request.is("GET", "/v1/sizes") {
+                return Reply::json(
+                    200,
+                    json!({"default": "small", "sizes": [
+                        {"name": "small", "cpuMillis": 1500, "memoryMiB": 2048, "warm": true},
+                        {"name": "large", "cpuMillis": 3000, "memoryMiB": 10240, "warm": false},
+                    ]}),
+                );
+            }
+            let body = request.json();
+            if body["size"] == "huge" {
+                return Reply::json(
+                    400,
+                    json!({"error": "size must be one of [\"small\" \"large\"], got \"huge\""}),
+                );
+            }
+            let mut session = session_json(ID, "a", "running");
+            if request.method == "PATCH" {
+                // Awake: the size it runs at, and the one that is waiting.
+                session["size"] = json!("small");
+                session["pendingSize"] = body["size"].clone();
+            } else {
+                session["size"] = body.get("size").cloned().unwrap_or(json!("small"));
+            }
+            Reply::json(if request.method == "POST" { 201 } else { 200 }, session)
+        })
+        .await;
+        let client = client(&fake);
+
+        let sizes = client.sizes().await.unwrap();
+        assert_eq!(sizes.default_size, "small");
+        assert_eq!(sizes.sizes[1].name, "large");
+        assert_eq!(
+            (
+                sizes.sizes[1].cpu_millis,
+                sizes.sizes[1].memory_mib,
+                sizes.sizes[1].warm
+            ),
+            (3000, 10240, false)
+        );
+
+        let session = client
+            .sessions()
+            .create()
+            .size("large")
+            .send()
+            .await
+            .unwrap();
+        let info = session.last_info().unwrap();
+        assert_eq!(
+            (info.size.as_deref(), info.pending_size),
+            (Some("large"), None)
+        );
+        assert_eq!(
+            fake.requests().last().unwrap().json(),
+            json!({"size": "large"})
+        );
+
+        let resized = session.resize("small".into()).await.unwrap();
+        assert_eq!(resized.size.as_deref(), Some("small"));
+        assert_eq!(resized.pending_size.as_deref(), Some("small"));
+        assert_eq!(
+            fake.requests().last().unwrap().json(),
+            json!({"size": "small"})
+        );
+
+        let error = session.resize("huge".into()).await.unwrap_err();
+        assert_eq!(error.status(), Some(400));
+    }
+
+    #[tokio::test]
+    async fn no_room_for_a_size_is_a_conflict_that_is_not_tried_again() {
+        let fake = Fake::api(|_| {
+            Reply::json(409, json!({"error": "no capacity for a large session right now", "code": "no_capacity"}))
+                .header("retry-after", "120")
+        })
+        .await;
+        let error = client(&fake)
+            .sessions()
+            .create()
+            .size("large")
+            .send()
+            .await
+            .unwrap_err();
+        assert_eq!(
+            (error.status(), error.code()),
+            (Some(409), Some("no_capacity"))
+        );
+        assert_eq!(fake.calls().len(), 1);
+    }
+
+    #[tokio::test]
     async fn deletes() {
         let fake = Fake::api(|_| Reply::empty(204)).await;
         client(&fake)

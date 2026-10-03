@@ -14,6 +14,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
+
+	"github.com/r33drichards/computer-use/backend/internal/metrics"
 )
 
 // GKE Pod Snapshots (podsnapshot.gke.io/v1): a checkpoint of a running gVisor
@@ -298,14 +300,36 @@ func (s *Store) keepOrDropSnapshot(ctx context.Context, obj *unstructured.Unstru
 // time does not stop the sleep; the session then wakes cold. A session put
 // to sleep for billing before it ever ran has no pod worth a snapshot.
 //
-// stillWanted, if not nil, is asked once the snapshot is done: a session
-// used in the meantime (or whose owner's credit came back) is left running
-// (ErrStateChanged). Like an idle Suspend, Sleep never takes over a session
-// that is already suspended. The draining mark, if any, goes with the sleep.
-func (s *Store) Sleep(ctx context.Context, id, by string, stillWanted func() bool) error {
+// stillWanted, if not nil, is asked of the session as it is read for the
+// write that suspends it, so once the snapshot is done: a session used in
+// the meantime (or whose owner's credit came back) is left running
+// (ErrStateChanged). That write goes through only if nobody wrote since the
+// read (modify), and a replica that proxies a call says so with a write
+// (Mark): whichever of the two lands second sees the other. Like an idle
+// Suspend, Sleep never takes over a session that is already suspended. The
+// draining mark, if any, goes with the sleep, and so does what was said of
+// the session's use.
+func (s *Store) Sleep(ctx context.Context, id, by string, stillWanted func(Session) bool) error {
 	if !sleepReason(by) {
 		return fmt.Errorf("sleep: unknown reason %q", by)
 	}
+	began := time.Now()
+	err := s.sleep(ctx, id, by, stillWanted)
+	result := "ok"
+	switch {
+	case errors.Is(err, ErrStateChanged), errors.Is(err, ErrNotFound):
+		result = "changed"
+	case err != nil:
+		result = "error"
+	}
+	metrics.Sleeps.WithLabelValues(by, result).Inc()
+	if err == nil {
+		metrics.SleepDuration.WithLabelValues(by).Observe(time.Since(began).Seconds())
+	}
+	return err
+}
+
+func (s *Store) sleep(ctx context.Context, id, by string, stillWanted func(Session) bool) error {
 	var snap *snapshot
 	if s.snap != nil {
 		obj, err := s.client.Get(ctx, id, metav1.GetOptions{})
@@ -320,20 +344,21 @@ func (s *Store) Sleep(ctx context.Context, id, by string, stillWanted func() boo
 		}
 		if by != StoppedByIdle && FromSandbox(obj).State != Running {
 			// Still starting: nothing to snapshot.
+		} else if FromSandbox(obj).PendingSize != "" {
+			// It starts next at another size, which cannot restore this pod.
 		} else if snap, err = s.snap.take(ctx, obj); err != nil {
 			slog.Warn("snapshot failed; the session will wake cold", "session", id, "err", err)
 		}
-		if stillWanted != nil && !stillWanted() {
-			if snap != nil {
-				s.snap.discard(ctx, snap.name)
-			}
-			return ErrStateChanged
-		}
 	}
+	resized := false
 	err := s.modify(ctx, id, func(obj *unstructured.Unstructured) (bool, error) {
 		if operatingMode(obj) == "Suspended" || obj.GetDeletionTimestamp() != nil {
 			return false, ErrStateChanged
 		}
+		if stillWanted != nil && !stillWanted(FromSandbox(obj)) {
+			return false, ErrStateChanged
+		}
+		stopClock(obj)
 		setAnnotation(obj, AnnStoppedBy, by)
 		setAnnotation(obj, AnnDraining, "")
 		setAnnotation(obj, AnnDrainingSince, "")
@@ -341,6 +366,12 @@ func (s *Store) Sleep(ctx context.Context, id, by string, stillWanted func() boo
 			if err := setSnapshot(obj, snap); err != nil {
 				return false, err
 			}
+		}
+		// A resize that was waiting for the pod to go. After the snapshot
+		// is recorded: one of a pod of the old size is not kept.
+		var err error
+		if resized, err = s.applyResize(obj); err != nil {
+			return false, err
 		}
 		return true, unstructured.SetNestedField(obj.Object, "Suspended", "spec", "operatingMode")
 	})
@@ -355,7 +386,9 @@ func (s *Store) Sleep(ctx context.Context, id, by string, stillWanted func() boo
 		return err
 	}
 	keep := ""
-	if snap != nil {
+	if snap != nil && resized {
+		s.snap.discard(ctx, snap.name)
+	} else if snap != nil {
 		keep = snap.name
 		slog.Info("session snapshotted", "session", id, "snapshot", snap.name, "pool", snap.pool)
 	}

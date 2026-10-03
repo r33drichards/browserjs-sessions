@@ -19,6 +19,13 @@ resources:
   - site.yaml
   # The Accounts' daily backup; suspended until billing is enforced.
   - billing-export.yaml
+  # The backend's metrics, collected by Managed Service for Prometheus. Off
+  # until the cluster is known to serve the PodMonitoring resource: without
+  # it the whole apply fails. docs/metrics.md says how to check, then
+  # uncomment.
+  # - monitoring.yaml
+  # How the backend and the site are released (docs/releases.md).
+  - rollouts.yaml
 
 # THE ONE PLACE the deployed images are chosen. Each digest is what the
 # "images" workflow printed in its run summary for the commit to deploy.
@@ -41,22 +48,24 @@ images:
     digest: REPLACE_WITH_DIGEST
   - name: browserjs/backend
     newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/backend
-    digest: sha256:76bdac6f7dbc70f4fee80fdaf7a6a5356b1ceb236d5d4b06d41dfd5c8695f884
+    digest: sha256:540d0a4eea2ebfb01df4fb0d0272a145026bc1f9770bf26cb6df87211252bdaa
   - name: browserjs/browser
     newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/browser
-    digest: sha256:86340ed9a2531e364e53d30a0c70a9d68fad120631bb0956e60b238315579bb4
+    digest: sha256:58b11812b7651f2b3af7a754feda7a3eca05d21db81af73916b47d037faad3de
   - name: browserjs/mcp-js
     newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/mcp-js
-    digest: sha256:067a7822501da8ed78b5afaeded49227f982b4300e937c9c773f3e9129f119f1
+    digest: sha256:e3e1e5501814d36c33a02c66bac9ed3b0c0c799e9c3597b144b854621f69a1a6
   - name: browserjs/site
     newName: us-west1-docker.pkg.dev/browserjs-sessions/browserjs/site
-    digest: sha256:12620230ee0104d2e6b7e09f1937bfb0f358601b31cb08420b186433ebf4131b
+    digest: sha256:d1a7a021f622487174854376c616b6bf7d070f62c19233ed4f2ecd9129c1d839
 
 configMapGenerator:
   - name: session-blueprint
     behavior: replace
     files:
       - blueprint.yaml
+      # The sizes of session other than small, which is the blueprint.
+      - sizes.yaml
   - name: pomerium-config
     behavior: replace
     files:
@@ -69,6 +78,7 @@ configMapGenerator:
 patches:
   - path: patch-backend.yaml
   - path: patch-pomerium.yaml
+  - path: patch-rollouts.yaml
   # Pomerium's disk (sessions, MCP client registrations, MCP refresh tokens):
   # a zonal Persistent Disk that outlives the pod. A StatefulSet's claim
   # template cannot be changed once it exists.

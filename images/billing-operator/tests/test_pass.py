@@ -243,6 +243,37 @@ async def test_a_failed_list_remembers_nothing_and_the_next_gap_decides(make):
     assert (await observer.run_once(T0 + 120)).awake_seconds == 120
 
 
+def sized(name, size):
+    sb = sandbox(name)
+    sb["metadata"]["annotations"]["browserjs.dev/size"] = size
+    return sb
+
+
+async def test_a_bigger_session_is_metered_by_an_event_type_of_its_size(make):
+    observer, kube, sink = make(sandbox("s-aaaaa"), sized("s-bbbbb", "medium"), sized("s-ccccc", "large"))
+    await ticks(observer, *minutes(5))
+    # Small is what it always was; the others have their own type, the same
+    # key, the same seconds, and say their size.
+    assert sent(sink, AWAKE) == [(f"awake/s-aaaaa/{T0}", acct(), {"session_id": "s-aaaaa", "seconds": "300"})]
+    assert sent(sink, AWAKE + ".medium") == [
+        (f"awake/s-bbbbb/{T0}", acct(), {"session_id": "s-bbbbb", "seconds": "300", "size": "medium"})]
+    assert sent(sink, AWAKE + ".large") == [
+        (f"awake/s-ccccc/{T0}", acct(), {"session_id": "s-ccccc", "seconds": "300", "size": "large"})]
+    # The disk is the same at every size.
+    assert {e.event_type for e in sink.events.values()} == {AWAKE, AWAKE + ".medium", AWAKE + ".large"}
+
+
+async def test_a_session_resized_between_two_ticks_is_charged_each_part_at_its_size(make):
+    observer, kube, sink = make(sandbox("s-aaaaa"))
+    await ticks(observer, T0, T0 + 60, T0 + 120)
+    # Stopped, resized and started again without the observer seeing it asleep.
+    kube.sandboxes["s-aaaaa"]["metadata"]["annotations"]["browserjs.dev/size"] = "large"
+    await ticks(observer, T0 + 180, T0 + 240, T0 + 300)
+    assert sent(sink, AWAKE) == [(f"awake/s-aaaaa/{T0}", acct(), {"session_id": "s-aaaaa", "seconds": "120"})]
+    assert sent(sink, AWAKE + ".large") == [
+        (f"awake/s-aaaaa/{T0}/{T0 + 180}", acct(), {"session_id": "s-aaaaa", "seconds": "180", "size": "large"})]
+
+
 async def test_the_disk_size_is_the_catalogues_and_follows_it(make, catalogue_path, caplog):
     observer, kube, sink = make(asleep("s-aaaaa"))
     await ticks(observer, T0, T0 + 60)

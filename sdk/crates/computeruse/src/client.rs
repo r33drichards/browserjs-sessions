@@ -2,7 +2,7 @@ use crate::session::Session;
 use crate::transport::{Call, Retry, Transport};
 use crate::types::{
     ClientOptions, CreateSessionRequest, Evaluation, Me, PolicyInput, PolicyPreset, SessionInfo,
-    Validation,
+    SessionSizes, Validation,
 };
 use crate::ComputerUseError;
 use reqwest::Method;
@@ -81,7 +81,10 @@ impl Client {
     /// An MCP call waits for it; so does
     /// [`Session::wait_until_running`].
     ///
-    /// `409` ([`ComputerUseError::Conflict`]) at the session limit, `422`
+    /// `409` ([`ComputerUseError::Conflict`]) at the session limit, and with
+    /// the code `no_capacity` when there is no room for the size asked for
+    /// (nothing is created; try later or smaller). `400` for a size the
+    /// deployment does not have. `422`
     /// ([`ComputerUseError::InvalidPolicy`]) for a policy that does not
     /// validate, in which case nothing was created.
     pub async fn create_session(
@@ -117,6 +120,9 @@ impl Client {
         if let Some(policy) = policy {
             body.insert("policy".into(), policy);
         }
+        if let Some(size) = request.size {
+            body.insert("size".into(), Value::String(size));
+        }
         let info: SessionInfo = self
             .transport
             .send(
@@ -150,6 +156,14 @@ impl Client {
             )));
         }
         Ok(Session::attach(self.transport.clone(), id, None))
+    }
+
+    /// The sizes a session can have here, and the default. Needs no scope.
+    pub async fn sizes(&self) -> Result<SessionSizes, ComputerUseError> {
+        self.transport
+            .send(Call::new(Method::GET, "/v1/sizes", "list sizes"))
+            .await?
+            .json()
     }
 
     /// The ready-made policies, `unrestricted` first. Needs no scope.

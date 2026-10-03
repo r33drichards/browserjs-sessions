@@ -1,5 +1,7 @@
 """The catalogue (docs/contracts/billing/catalogue.yaml), as far as the
-observer uses it: how many GB a session's disk is. The rates are
+observer uses it: how many GB a session's disk is, and which sizes of
+session have a rate of their own (`sizes`: their awake seconds are sent as
+an event type of their own, events.py). The rates are
 Metronome's (its rate card is made from the same file by the backend's
 setup command).
 
@@ -25,6 +27,7 @@ class CatalogueError(ValueError):
 @dataclass(frozen=True)
 class Catalogue:
     session_disk_gb: int
+    sizes: frozenset[str] = frozenset()  # the sizes other than small that have a rate
 
 
 def parse(text: str) -> Catalogue:
@@ -39,7 +42,10 @@ def parse(text: str) -> Catalogue:
     gb = doc.get("sessionDiskGB")
     if isinstance(gb, bool) or not isinstance(gb, int) or gb < 1:
         raise CatalogueError(f"sessionDiskGB must be a whole number of at least 1, not {gb!r}")
-    return Catalogue(session_disk_gb=gb)
+    sizes = doc.get("sizes") or {}
+    if not isinstance(sizes, dict) or not all(isinstance(k, str) and k and k != "small" for k in sizes):
+        raise CatalogueError(f"sizes must be a mapping of sizes other than small, not {sizes!r}")
+    return Catalogue(session_disk_gb=gb, sizes=frozenset(sizes))
 
 
 class CatalogueFile:

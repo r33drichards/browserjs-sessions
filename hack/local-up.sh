@@ -44,7 +44,7 @@ if [ -z "$(image_id browserjs/mcp-js:dev)" ]; then
   docker build -t browserjs/mcp-js:dev images/mcp-js
 fi
 if [ -z "$(image_id browserjs/browser:dev)" ]; then
-  MIN_FREE_GB=25 check_disk "building the browser image (about 14 GB)"
+  MIN_FREE_GB="${BROWSER_MIN_FREE_GB:-25}" check_disk "building the browser image (about 14 GB)"
   docker build -t browserjs/browser:dev images/browser
 fi
 
@@ -166,9 +166,13 @@ kubectl apply -k deploy/local
 kubectl wait --for=condition=Established crd/sessionpolicies.browserjs.dev --timeout=60s
 # Billing: the backend, in any stage but off, wants it served.
 kubectl wait --for=condition=Established --timeout=60s crd/accounts.browserjs.dev
-[ -z "$backend_changed" ] || kubectl -n "$NS" rollout restart deploy/backend
 # A new CA: Pomerium must serve the new certificate and the backend trust it.
-[ -z "$new_certificate" ] || kubectl -n "$NS" rollout restart statefulset/pomerium deploy/backend
+if [ -n "$new_certificate" ]; then
+  kubectl -n "$NS" rollout restart statefulset/pomerium deploy/backend
+elif [ -n "$backend_changed" ]; then
+  # One restart, not two in the same second: kubectl refuses the second.
+  kubectl -n "$NS" rollout restart deploy/backend
+fi
 # Dex and Pomerium read their Secrets at startup only.
 kubectl -n "$NS" rollout status deploy/dex --timeout=300s
 kubectl -n "$NS" rollout status statefulset/pomerium --timeout=300s

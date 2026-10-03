@@ -41,6 +41,11 @@ type Store struct {
 	urls      *URLTemplate
 	snap      *snapshotter // nil: no Pod Snapshots (see EnableSnapshots)
 
+	// See sizes.go. small is the blueprint's own Sandbox spec; sizes is
+	// never nil, and holds small alone until EnableSizes.
+	small map[string]any
+	sizes *sizes
+
 	// See warm.go. warmPool is "" when new sessions do not come from a pool.
 	claims   dynamic.ResourceInterface
 	warmPool string
@@ -62,13 +67,37 @@ func NewStore(client dynamic.Interface, namespace, blueprint, publicURL string, 
 	if err != nil {
 		return nil, fmt.Errorf("blueprint: %w", err)
 	}
-	return &Store{
+	s := &Store{
 		client:    client.Resource(SandboxGVR).Namespace(namespace),
 		claims:    client.Resource(ClaimGVR).Namespace(namespace),
 		blueprint: tmpl,
 		publicURL: publicURL,
 		urls:      urls,
-	}, nil
+	}
+	// What small is: the blueprint's resources do not depend on the session.
+	// A blueprint that does not render is reported when a session is made.
+	if s.small, err = s.render("s-aaaaaaaaaa"); err != nil {
+		s.small = map[string]any{}
+	}
+	if s.sizes, err = newSizes(s.small, SizesFile{}); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// render is the blueprint as the Sandbox spec of the session id.
+func (s *Store) render(id string) (map[string]any, error) {
+	var rendered bytes.Buffer
+	if err := s.blueprint.Execute(&rendered, map[string]string{
+		"ID": id, "SessionURL": s.urls.Base(id), "PublicURL": s.publicURL,
+	}); err != nil {
+		return nil, fmt.Errorf("render blueprint: %w", err)
+	}
+	spec := map[string]any{}
+	if err := yaml.Unmarshal(rendered.Bytes(), &spec); err != nil {
+		return nil, fmt.Errorf("parse blueprint: %w", err)
+	}
+	return spec, nil
 }
 
 func newID() string {
@@ -87,6 +116,12 @@ func cleanName(name string) (string, error) {
 	return name, nil
 }
 
+// CheckName reports ErrInvalidName for a name a session cannot have.
+func CheckName(name string) error {
+	_, err := cleanName(name)
+	return err
+}
+
 func (s *Store) Create(ctx context.Context, name, owner string) (Session, error) {
 	return s.CreateWithPolicy(ctx, name, owner, nil)
 }
@@ -96,7 +131,19 @@ func (s *Store) Create(ctx context.Context, name, owner string) (Session, error)
 // has had the operator check it. With policies not enabled, only nil can be
 // asked for.
 func (s *Store) CreateWithPolicy(ctx context.Context, name, owner string, asked *PolicySpec) (Session, error) {
-	name, err := cleanName(name)
+	return s.CreateSized(ctx, name, owner, "", asked)
+}
+
+// CreateSized is CreateWithPolicy for a session of a size ("" is small).
+// Only a small one can come from the warm pool; any other starts cold. One
+// that no session node has room for, and no new node could take, is not
+// made: ErrNoCapacity.
+func (s *Store) CreateSized(ctx context.Context, name, owner, size string, asked *PolicySpec) (Session, error) {
+	size, err := s.size(size)
+	if err != nil {
+		return Session{}, err
+	}
+	name, err = cleanName(name)
 	if err != nil {
 		return Session{}, err
 	}
@@ -112,7 +159,14 @@ func (s *Store) CreateWithPolicy(ctx context.Context, name, owner string, asked 
 	default:
 		policy = asked
 	}
-	if s.warmPool != "" {
+	// A canary session has images no warm pod runs: it starts cold.
+	canary := imageDigests(ctx)
+	if canary != nil {
+		if err := CheckImageDigests(canary); err != nil {
+			return Session{}, err
+		}
+	}
+	if s.warmPool != "" && canary == nil && size == DefaultSize {
 		warm, err := s.createWarm(ctx, name, owner, policy)
 		if err == nil {
 			return warm, nil
@@ -121,17 +175,29 @@ func (s *Store) CreateWithPolicy(ctx context.Context, name, owner string, asked 
 	}
 	id := newID()
 
-	var rendered bytes.Buffer
-	if err := s.blueprint.Execute(&rendered, map[string]string{
-		"ID": id, "SessionURL": s.urls.Base(id), "PublicURL": s.publicURL,
-	}); err != nil {
-		return Session{}, fmt.Errorf("render blueprint: %w", err)
+	spec, err := s.render(id)
+	if err != nil {
+		return Session{}, err
 	}
-	spec := map[string]any{}
-	if err := yaml.Unmarshal(rendered.Bytes(), &spec); err != nil {
-		return Session{}, fmt.Errorf("parse blueprint: %w", err)
+	annotations := map[string]any{AnnName: name, AnnOwner: owner}
+	if size != DefaultSize {
+		if err := s.sizes.apply(spec, size); err != nil {
+			return Session{}, err
+		}
+		annotations[AnnSize] = size
+	}
+	if err := s.room(ctx, size, spec, ""); err != nil {
+		return Session{}, err
 	}
 	spec["operatingMode"] = "Running"
+	// Its idle period starts now (activity.go).
+	annotations[AnnLastActive] = time.Now().UTC().Format(timeLayout)
+	if canary != nil {
+		if err := applyImageDigests(spec, canary); err != nil {
+			return Session{}, err
+		}
+		annotations[AnnCanary] = canaryAnnotation(canary)
+	}
 	// Stamp the owner on the pod as well as the Sandbox.
 	if err := unstructured.SetNestedField(spec, OwnerLabel(owner), "podTemplate", "metadata", "labels", LabelOwner); err != nil {
 		return Session{}, fmt.Errorf("blueprint podTemplate.metadata.labels: %w", err)
@@ -151,7 +217,7 @@ func (s *Store) CreateWithPolicy(ctx context.Context, name, owner string, asked 
 		"metadata": map[string]any{
 			"name":        id,
 			"labels":      map[string]any{LabelOwner: OwnerLabel(owner)},
-			"annotations": map[string]any{AnnName: name, AnnOwner: owner},
+			"annotations": annotations,
 		},
 		"spec": spec,
 	}}
@@ -233,15 +299,24 @@ func (s *Store) Update(ctx context.Context, id string, name *string, action stri
 	case "":
 	case ActionStop:
 		annotations[AnnStoppedBy] = StoppedByUser
+		annotations[AnnLastActive] = nil
 		patch["spec"] = map[string]any{"operatingMode": "Suspended"}
 	case ActionResume:
 		annotations[AnnStoppedBy] = nil
+		// Its idle period starts now (activity.go).
+		annotations[AnnLastActive] = time.Now().UTC().Format(timeLayout)
 		patch["spec"] = map[string]any{"operatingMode": "Running"}
 	default:
 		return ErrInvalidAction
 	}
 	if len(annotations) == 0 {
 		return nil
+	}
+	if action == ActionResume {
+		// A resize that was waiting for this start, and room to start in.
+		if _, err := s.start(ctx, id); err != nil {
+			return err
+		}
 	}
 	if s.snap != nil && action != "" {
 		// A user's stop takes no snapshot, and an older one must not be
@@ -275,7 +350,32 @@ func (s *Store) Update(ctx context.Context, id string, name *string, action stri
 	if err == nil && s.snap != nil && action == ActionStop {
 		s.snap.pruneLogged(ctx, id, "")
 	}
+	if err == nil && action == ActionStop {
+		s.settle(ctx, id)
+	}
 	return err
+}
+
+// settle applies a resize that was waiting to a session that has just been
+// suspended. One that is missed here is applied when the session starts.
+func (s *Store) settle(ctx context.Context, id string) {
+	resized := false
+	err := s.modify(ctx, id, func(obj *unstructured.Unstructured) (bool, error) {
+		resized = false
+		if operatingMode(obj) != "Suspended" || obj.GetAnnotations()[AnnResizeTo] == "" {
+			return false, nil
+		}
+		var err error
+		resized, err = s.applyResize(obj)
+		return true, err
+	})
+	if err != nil {
+		slog.Warn("resize not applied at the stop; it is at the next start", "session", id, "err", err)
+		return
+	}
+	if resized && s.snap != nil {
+		s.snap.pruneLogged(ctx, id, "")
+	}
 }
 
 func (s *Store) Rename(ctx context.Context, id, name string) error {
@@ -310,8 +410,14 @@ func (s *Store) Resume(ctx context.Context, id string) error {
 // then, if there is one. It does nothing to one that is already awake, and
 // returns ErrStateChanged for one its user stopped, including a stop that
 // lands while Wake is in progress.
+//
+// It is safe from any number of replicas at once: the write is conditional
+// on what was read, so one of them resumes the session and the others, on
+// reading again, find it awake and do nothing.
 func (s *Store) Wake(ctx context.Context, id string) error {
-	return s.modify(ctx, id, func(obj *unstructured.Unstructured) (bool, error) {
+	resized := false
+	err := s.modify(ctx, id, func(obj *unstructured.Unstructured) (bool, error) {
+		resized = false
 		if operatingMode(obj) != "Suspended" {
 			return false, nil
 		}
@@ -319,11 +425,24 @@ func (s *Store) Wake(ctx context.Context, id string) error {
 			return false, ErrStateChanged
 		}
 		setAnnotation(obj, AnnStoppedBy, "")
+		// A resize that was waiting for this start, and room to start in.
+		var err error
+		if resized, err = s.applyResize(obj); err != nil {
+			return false, err
+		}
+		if err := s.roomToStart(ctx, obj); err != nil {
+			return false, err
+		}
+		startClock(obj)
 		if err := s.keepOrDropSnapshot(ctx, obj); err != nil {
 			return false, err
 		}
 		return true, unstructured.SetNestedField(obj.Object, "Running", "spec", "operatingMode")
 	})
+	if err == nil && resized && s.snap != nil {
+		s.snap.pruneLogged(ctx, id, "")
+	}
+	return err
 }
 
 func operatingMode(obj *unstructured.Unstructured) string {

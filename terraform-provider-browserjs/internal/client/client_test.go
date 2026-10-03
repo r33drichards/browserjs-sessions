@@ -165,15 +165,18 @@ func TestSessionCalls(t *testing.T) {
 		}
 	})
 	ctx := context.Background()
-	s, err := c.CreateSession(ctx, "")
+	s, err := c.CreateSession(ctx, "", "")
 	if err != nil || s.ID != "s-ab2cd" || s.Policy.State != StateLoading || s.MCPURL != "https://x/s-ab2cd/mcp" {
 		t.Errorf("%+v %v", s, err)
 	}
-	if _, err := c.CreateSession(ctx, "n"); err != nil {
+	if _, err := c.CreateSession(ctx, "n", "large"); err != nil {
 		t.Error(err)
 	}
 	if s, err := c.RenameSession(ctx, "s-ab2cd", "m"); err != nil || s.Name != "m" {
 		t.Errorf("%+v %v", s, err)
+	}
+	if _, err := c.ResizeSession(ctx, "s-ab2cd", "medium"); err != nil {
+		t.Error(err)
 	}
 	if err := c.DeleteSession(ctx, "s-ab2cd"); err != nil {
 		t.Error(err)
@@ -183,8 +186,9 @@ func TestSessionCalls(t *testing.T) {
 	}
 	want := []string{
 		"POST /v1/sessions {}",
-		`POST /v1/sessions {"name":"n"}`,
+		`POST /v1/sessions {"name":"n","size":"large"}`,
 		`PATCH /v1/sessions/s-ab2cd {"name":"m"}`,
+		`PATCH /v1/sessions/s-ab2cd {"size":"medium"}`,
 		"DELETE /v1/sessions/s-ab2cd ",
 		"DELETE /v1/sessions/s-ab2cd/policy ",
 	}
@@ -215,7 +219,7 @@ func TestBillingRefusal(t *testing.T) {
 		w.WriteHeader(http.StatusPaymentRequired)
 		_, _ = io.WriteString(w, `{"error":"Add a payment method to create or wake sessions.","code":"payment_method_required","billingUrl":"https://app.computeruse.site/billing"}`)
 	})
-	_, err := c.CreateSession(context.Background(), "ci")
+	_, err := c.CreateSession(context.Background(), "ci", "")
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusPaymentRequired || apiErr.Code != "payment_method_required" ||
 		apiErr.BillingURL != "https://app.computeruse.site/billing" {

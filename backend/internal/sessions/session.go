@@ -37,6 +37,16 @@ const (
 	// ones are refused. AnnDrainingSince is when the mark was made.
 	AnnDraining      = "browserjs.dev/draining"
 	AnnDrainingSince = "browserjs.dev/draining-since"
+
+	// AnnLastActive is when the session was last used, as far as anyone has
+	// said (activity.go): the idle sweep reads nothing else. A replica of
+	// the backend that proxies to the session writes it, coarsely, and keeps
+	// writing it while it holds a connection or a call open.
+	AnnLastActive = "browserjs.dev/last-active"
+	// AnnInFlightPrefix, followed by a replica's ID, is until when that
+	// replica vouches for a call in flight to the session. It renews the
+	// mark while the call lasts and lets it run out afterwards.
+	AnnInFlightPrefix = "browserjs.dev/in-flight."
 )
 
 // wakes reports whether a session suspended for reason by wakes on its next
@@ -90,9 +100,14 @@ type Session struct {
 	// StateSaved is whether a suspended session holds a snapshot of its pod
 	// to wake from (see snapshots.go). Without one it starts fresh, with its
 	// disk only.
-	StateSaved bool   `json:"stateSaved,omitempty"`
-	PodIP      string `json:"-"`
-	Node       string `json:"-"` // the node its pod is scheduled to, if any
+	StateSaved bool `json:"stateSaved,omitempty"`
+	// Size is the size the session runs at (sizes.go). PendingSize is one
+	// asked for while it was awake: it has it from its next start, which is
+	// a fresh one.
+	Size        string `json:"size"`
+	PendingSize string `json:"pendingSize,omitempty"`
+	PodIP       string `json:"-"`
+	Node        string `json:"-"` // the node its pod is scheduled to, if any
 	// PolicyCapable is whether the session's mcp-js asks OPA for decisions,
 	// and so whether the session can have a policy (see policy.go).
 	PolicyCapable bool `json:"-"`
@@ -103,6 +118,11 @@ type Session struct {
 	StoppedBy     string    `json:"-"`
 	Draining      string    `json:"-"`
 	DrainingSince time.Time `json:"-"`
+	// LastActive is when the session was last used (AnnLastActive), zero if
+	// nobody has said. InFlight is, by replica, until when that replica
+	// vouches for a call in flight (AnnInFlightPrefix); see activity.go.
+	LastActive time.Time            `json:"-"`
+	InFlight   map[string]time.Time `json:"-"`
 }
 
 type condition struct {
@@ -138,6 +158,10 @@ func FromSandbox(obj *unstructured.Unstructured) Session {
 		Created: obj.GetCreationTimestamp().Time,
 
 		PolicyCapable: PolicyCapable(obj),
+		Size:          sizeOf(obj),
+	}
+	if to := obj.GetAnnotations()[AnnResizeTo]; to != s.Size {
+		s.PendingSize = to
 	}
 	if adopted, err := time.Parse(time.RFC3339, obj.GetAnnotations()[AnnCreated]); err == nil {
 		s.Created = adopted
@@ -189,5 +213,6 @@ func FromSandbox(obj *unstructured.Unstructured) Session {
 		s.StoppedBy = obj.GetAnnotations()[AnnStoppedBy]
 		s.StateSaved = obj.GetAnnotations()[AnnSnapshot] != ""
 	}
+	s.LastActive, s.InFlight = activityOf(obj)
 	return s
 }

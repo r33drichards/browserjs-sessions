@@ -8,6 +8,8 @@ from .meter import ts
 LABEL_OWNER = "browserjs.dev/owner"   # sessions.OwnerLabel(owner)
 ANN_OWNER = "browserjs.dev/owner-id"  # the owner's email address
 ANN_CREATED = "browserjs.dev/created"  # when a warm-pool Sandbox became this owner's session
+ANN_SIZE = "browserjs.dev/size"  # the size its pod has (sessions.AnnSize); none is small
+SMALL = "small"
 
 
 def owner_label(owner: str) -> str:
@@ -46,10 +48,14 @@ def ready_since(sandbox: dict) -> str | None:
         return ready
 
 
-def observe(sandboxes: list[dict], disk_gb: int) -> dict[str, dict[str, dict]]:
-    """{owner hash: {session ID: {"awake", "readySince", "diskGB"}}} for
-    every Sandbox that has an owner and is not being deleted. A warm-pool
-    Sandbox before adoption has no owner and is not in it.
+def observe(sandboxes: list[dict], disk_gb: int, sizes: frozenset[str] = frozenset()) -> dict[str, dict[str, dict]]:
+    """{owner hash: {session ID: {"awake", "readySince", "diskGB", "size"}}}
+    for every Sandbox that has an owner and is not being deleted. A
+    warm-pool Sandbox before adoption has no owner and is not in it.
+
+    `sizes` is the sizes the catalogue has a rate for. A session of any
+    other size, like one with none, is "small": charged at the base rate,
+    which is the lowest.
     """
     out: dict[str, dict[str, dict]] = {}
     for sandbox in sandboxes:
@@ -63,5 +69,6 @@ def observe(sandboxes: list[dict], disk_gb: int) -> dict[str, dict[str, dict]]:
             "awake": is_awake,
             "readySince": ready_since(sandbox) if is_awake else None,
             "diskGB": disk_gb,
+            "size": size if (size := (meta.get("annotations") or {}).get(ANN_SIZE)) in sizes else SMALL,
         }
     return out

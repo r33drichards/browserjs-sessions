@@ -14,6 +14,7 @@ export interface BillingSession {
   stoppedBy?: string
   draining?: string
   deleteAfter?: string
+  size?: string
 }
 
 export const BILLING_SCENARIOS = [
@@ -59,9 +60,15 @@ const RATES = { awakeMicrosPerHour: 200_000, diskMicrosPerGBHour: 384, sessionDi
 const USD = 1_000_000
 const DAY = 86_400_000
 
+// The awake rate of each size, and the sizes each plan includes.
+const SIZES = [
+  { key: "small", awakeMicrosPerHour: 200_000 },
+  { key: "medium", awakeMicrosPerHour: 400_000 },
+  { key: "large", awakeMicrosPerHour: 800_000 },
+]
 const PLANS = [
-  { key: "starter", name: "Starter", lookupKey: "cu_starter_monthly_v1", amount: 500, creditMicros: 10 * USD, maxSessions: 3, maxAwake: 2 },
-  { key: "pro", name: "Pro", lookupKey: "cu_pro_monthly_v1", amount: 2000, creditMicros: 44 * USD, maxSessions: 10, maxAwake: 4 },
+  { key: "starter", name: "Starter", lookupKey: "cu_starter_monthly_v1", amount: 500, creditMicros: 10 * USD, maxSessions: 3, maxAwake: 2, sizes: ["small", "medium"] },
+  { key: "pro", name: "Pro", lookupKey: "cu_pro_monthly_v1", amount: 2000, creditMicros: 44 * USD, maxSessions: 10, maxAwake: 4, sizes: ["small", "medium", "large"] },
 ]
 const PACKS = [5, 20, 50].map(n => ({
   key: `credit-${n}`,
@@ -71,10 +78,10 @@ const PACKS = [5, 20, 50].map(n => ({
   creditMicros: n * USD,
   validDays: 365,
 }))
-const PAYG = { maxSessions: 3, maxAwake: 2 }
+const PAYG = { maxSessions: 3, maxAwake: 2, sizes: ["small", "medium"] }
 const SIGNUP = { amountMicros: 5 * USD, validDays: 90 }
 
-const CATALOGUE = { currency: "usd", rates: RATES, signupCredit: SIGNUP, payg: PAYG, plans: PLANS, packs: PACKS }
+const CATALOGUE = { currency: "usd", rates: RATES, sizes: SIZES, signupCredit: SIGNUP, payg: PAYG, plans: PLANS, packs: PACKS }
 
 const json = (status: number, body: unknown, headers?: Record<string, string>): MockResponse => ({ status, body, headers })
 const refusal = (status: number, code: string, message: string, extra: object = {}) =>
@@ -115,7 +122,7 @@ export function createBillingMock(options: BillingMockOptions) {
 
   function subscribe(plan: (typeof PLANS)[number]) {
     b.plan = { key: plan.key, name: plan.name, amount: plan.amount, creditMicros: plan.creditMicros }
-    b.limits = { maxSessions: plan.maxSessions, maxAwake: plan.maxAwake }
+    b.limits = { maxSessions: plan.maxSessions, maxAwake: plan.maxAwake, sizes: plan.sizes }
     b.subscription = { status: "active", renewsAt: b.period.end }
     b.period.planCreditMicros = plan.creditMicros
   }
@@ -270,6 +277,7 @@ export function createBillingMock(options: BillingMockOptions) {
       signupCredit: { state: "granted", amountMicros: SIGNUP.amountMicros },
       level: "ok",
       rates: RATES,
+      sizes: SIZES,
       period: { start, end, awakeSeconds: 163_800, awakeMicros: 9_100_000, diskMicros: 3_360_000 },
       payments: "test",
       hasCustomer: true,
@@ -288,6 +296,13 @@ export function createBillingMock(options: BillingMockOptions) {
   set(options.scenario)
 
   // enforcement.md's decision table, as far as the UI can meet it.
+  // Asked beside `refuse`: whether the plan includes a session of `size`.
+  function refuseSize(size: string | undefined): MockResponse | undefined {
+    if (!on || !b || b.mode !== "enforce" || b.state === "exempt") return undefined
+    if (!size || !b.limits.sizes || b.limits.sizes.includes(size)) return undefined
+    return refusal(403, "size_not_included", "Your plan does not include sessions of this size. Pick a smaller size, or change plan.")
+  }
+
   function refuse(start: "create" | "resume"): MockResponse | undefined {
     if (!on || b.mode !== "enforce" || b.state === "exempt") return undefined
     if (b.state === "blocked") return refusal(403, "account_blocked", "This account is suspended. Contact support.")
@@ -494,5 +509,5 @@ export function createBillingMock(options: BillingMockOptions) {
         }
       : {}
 
-  return { handle, refuse, view, set, isOn: () => on, state: () => b }
+  return { handle, refuse, refuseSize, view, set, isOn: () => on, state: () => b }
 }

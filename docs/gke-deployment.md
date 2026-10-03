@@ -61,6 +61,10 @@ collected at the end.
     node selector and toleration, `serviceAccountName: session`, no service
     account token, all capabilities dropped, CPU and memory limits, disks
     from the StorageClass below.
+  - The sizes of session (`sizes.yaml`, [session-sizes.md](session-sizes.md)):
+    small is the blueprint; medium and large are the numbers in that file,
+    in the blueprint's ConfigMap. The file's `capacity` is what the backend
+    refuses a session by when no node has room; raise it with the quota.
   - The warm pool (`warmpool.yaml`, [warm-pool.md](warm-pool.md)): a
     `SandboxWarmPool` of one node's worth of sessions (seven) started ahead of time, over a
     `SandboxTemplate` that repeats the blueprint, and `WARM_POOL=s` on the

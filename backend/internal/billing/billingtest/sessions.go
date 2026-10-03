@@ -3,6 +3,7 @@ package billingtest
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -52,15 +53,127 @@ func (s *Sessions) run(e *session) {
 	e.State, e.StoppedBy, e.StateSaved = sessions.Running, "", false
 	e.PodIP = "10.0.0.1"
 	e.readySince = s.clock.Now()
+	e.LastActive, e.InFlight = s.clock.Now(), nil
 }
 
 func (s *Sessions) suspend(e *session, state sessions.State, by string) {
 	e.State, e.StoppedBy, e.PodIP, e.StateSaved = state, by, "", false
 	e.Draining, e.DrainingSince = "", time.Time{}
+	e.LastActive, e.InFlight = time.Time{}, nil
+}
+
+// Mark writes what a replica says of a session's use, as the store does.
+func (s *Sessions) Mark(_ context.Context, id string, a sessions.Activity) (sessions.Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.byID[id]
+	if !ok {
+		return sessions.Session{}, sessions.ErrNotFound
+	}
+	if !a.Active.IsZero() {
+		e.LastActive = a.Active
+	}
+	if !a.InFlightUntil.IsZero() {
+		// A new map: the sessions handed out share the old one.
+		marks := map[string]time.Time{a.Replica: a.InFlightUntil}
+		for replica, until := range e.InFlight {
+			if replica != a.Replica {
+				marks[replica] = until
+			}
+		}
+		e.InFlight = marks
+	}
+	return e.Session, nil
+}
+
+// MarkActiveSince moves a running session's last use forward to at.
+func (s *Sessions) MarkActiveSince(_ context.Context, id string, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.byID[id]
+	if !ok {
+		return sessions.ErrNotFound
+	}
+	if (e.State == sessions.Running || e.State == sessions.Starting) && e.LastActive.Before(at) {
+		e.LastActive = at
+	}
+	return nil
+}
+
+// ForgetInFlight removes the replicas' in-flight marks.
+func (s *Sessions) ForgetInFlight(_ context.Context, id string, replicas []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.byID[id]
+	if !ok {
+		return sessions.ErrNotFound
+	}
+	marks := map[string]time.Time{}
+	for replica, until := range e.InFlight {
+		if !slices.Contains(replicas, replica) {
+			marks[replica] = until
+		}
+	}
+	e.InFlight = marks
+	return nil
 }
 
 // CreateWithPolicy makes a session that is running at once.
-func (s *Sessions) CreateWithPolicy(_ context.Context, name, owner string, _ *sessions.PolicySpec) (sessions.Session, error) {
+func (s *Sessions) CreateWithPolicy(ctx context.Context, name, owner string, policy *sessions.PolicySpec) (sessions.Session, error) {
+	return s.CreateSized(ctx, name, owner, "", policy)
+}
+
+// TestSizes is the sizes the fake store offers.
+var TestSizes = []sessions.SizeInfo{
+	{Name: "small", CPUMillis: 1500, MemoryMiB: 2048, Warm: true},
+	{Name: "medium", CPUMillis: 2000, MemoryMiB: 5120},
+	{Name: "large", CPUMillis: 3000, MemoryMiB: 10240},
+}
+
+func (s *Sessions) Sizes() []sessions.SizeInfo { return TestSizes }
+
+func knownSize(size string) (string, error) {
+	if size == "" {
+		return sessions.DefaultSize, nil
+	}
+	for _, info := range TestSizes {
+		if info.Name == size {
+			return size, nil
+		}
+	}
+	return "", &sessions.InvalidSizeError{Size: size, Offered: []string{"small", "medium", "large"}}
+}
+
+// Resize changes a session's size as the store does: at once when it is
+// not awake, at its next start otherwise.
+func (s *Sessions) Resize(_ context.Context, id, size string) error {
+	size, err := knownSize(size)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.byID[id]
+	if !ok {
+		return sessions.ErrNotFound
+	}
+	switch {
+	case size == e.Size:
+		e.PendingSize = ""
+	case e.State == sessions.Running || e.State == sessions.Starting:
+		e.PendingSize = size
+	default:
+		e.Size, e.PendingSize, e.StateSaved = size, "", false
+	}
+	return nil
+}
+
+// CreateSized makes a session of a size that is running at once.
+func (s *Sessions) CreateSized(_ context.Context, name, owner, size string, _ *sessions.PolicySpec) (sessions.Session, error) {
+	size, err := knownSize(size)
+	if err != nil {
+		return sessions.Session{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.creates++
@@ -71,7 +184,7 @@ func (s *Sessions) CreateWithPolicy(_ context.Context, name, owner string, _ *se
 		return sessions.Session{}, sessions.ErrOwnerRequired
 	}
 	s.next++
-	e := &session{Session: sessions.Session{ID: id(s.next), Name: name, Owner: owner, Created: s.clock.Now()}}
+	e := &session{Session: sessions.Session{ID: id(s.next), Name: name, Owner: owner, Created: s.clock.Now(), Size: size}}
 	s.run(e)
 	s.byID[e.ID] = e
 	return e.Session, nil
@@ -118,7 +231,7 @@ func (s *Sessions) ListAll(context.Context) ([]sessions.Session, error) {
 // Sleep takes a snapshot of a running session, then suspends it with the
 // reason. stillWanted is asked after the snapshot, as the store asks it;
 // a no discards the snapshot.
-func (s *Sessions) Sleep(_ context.Context, id, stoppedBy string, stillWanted func() bool) error {
+func (s *Sessions) Sleep(_ context.Context, id, stoppedBy string, stillWanted func(sessions.Session) bool) error {
 	switch stoppedBy {
 	case sessions.StoppedByIdle, sessions.StoppedBySleep, sessions.StoppedByCredit, sessions.StoppedByPaymentMethod, sessions.StoppedByBlocked:
 	default:
@@ -135,10 +248,11 @@ func (s *Sessions) Sleep(_ context.Context, id, stoppedBy string, stillWanted fu
 		return sessions.ErrStateChanged
 	}
 	snapshot := e.State == sessions.Running
+	fresh := e.Session
 	s.mu.Unlock()
 
 	// Asked without the lock: it reads the store.
-	if stillWanted != nil && !stillWanted() {
+	if stillWanted != nil && !stillWanted(fresh) {
 		return sessions.ErrStateChanged
 	}
 	s.mu.Lock()
@@ -293,7 +407,7 @@ func (s *Sessions) observedByAccount(diskGB int64) map[string]map[string]Observe
 		if out[account] == nil {
 			out[account] = map[string]Observed{}
 		}
-		o := Observed{Awake: e.State == sessions.Running, DiskGB: diskGB}
+		o := Observed{Awake: e.State == sessions.Running, DiskGB: diskGB, Size: e.Size}
 		if o.Awake {
 			since := e.readySince
 			o.ReadySince = &since
@@ -317,6 +431,9 @@ func (f *InFlight) Calls(id string) int {
 	defer f.mu.Unlock()
 	return f.calls[id]
 }
+
+// Replica is the name of the replica these are the calls of.
+func (f *InFlight) Replica() string { return "test" }
 
 func (f *InFlight) CloseStreams(id string) {
 	f.mu.Lock()

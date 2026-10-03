@@ -141,6 +141,7 @@ func (s *Store) adopt(ctx context.Context, claimName string, wait time.Duration)
 		setAnnotation(obj, AnnOwner, owner)
 		setAnnotation(obj, AnnName, name)
 		setAnnotation(obj, AnnCreated, time.Now().UTC().Format(time.RFC3339))
+		startClock(obj) // its idle period is its user's, not the pool's
 		return true, unstructured.SetNestedField(obj.Object, "Running", "spec", "operatingMode")
 	})
 	if err != nil {

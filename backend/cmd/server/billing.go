@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sort"
 	"time"
 
 	"k8s.io/client-go/dynamic"
@@ -63,7 +64,17 @@ func newBilling(ctx context.Context, cfg config.Config, dyn dynamic.Interface, s
 	}
 	// Neither holds anything but its client: every answer is read when it
 	// is asked for.
-	ledger := billing.NewLedger(metronome.New(cfg.MetronomeURL, cfg.MetronomeToken.Reveal()), accounts, clock, catalogue)
+	meter := metronome.New(cfg.MetronomeURL, cfg.MetronomeToken.Reveal())
+	// Each size of session other than small has a metric of its own.
+	meter.Sizes = func() []string {
+		sizes := make([]string, 0, len(catalogue.Catalogue().Sizes))
+		for size := range catalogue.Catalogue().Sizes {
+			sizes = append(sizes, size)
+		}
+		sort.Strings(sizes)
+		return sizes
+	}
+	ledger := billing.NewLedger(meter, accounts, clock, catalogue)
 	enforcer := billing.NewEnforcer(cfg.Billing, accounts, ledger, billing.Store{Store: store}, clock, catalogue)
 	parts := &billingParts{
 		enforcer: enforcer,
@@ -118,7 +129,9 @@ func (b *billingParts) enable(sessionAPI *api.API, px *proxy.Proxy, mux *http.Se
 	b.handlers.Register(mux)
 }
 
-// run sweeps until ctx is done.
+// run sweeps until ctx is done. It is one of the leader's passes (main.go):
+// px is the replica's own calls in flight, and the other replicas' are read
+// off the sessions.
 func (b *billingParts) run(ctx context.Context, px *proxy.Proxy) {
 	if b == nil {
 		return

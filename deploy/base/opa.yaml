@@ -87,11 +87,18 @@ spec:
             - name: http
               containerPort: 8181
           # Not ready, so not behind the Service, until the bundle is active:
-          # a replica never answers from a partial or empty state.
+          # a replica never answers from a partial or empty state. And not
+          # in its first seconds: the NetworkPolicy that lets session pods in
+          # is programmed for a new pod's address a moment after the pod
+          # exists, and a connection sent before that would be dropped
+          # without an answer (a hazard the model in spec/opa-replacement
+          # finds; not seen on kind). The old replica is still serving
+          # meanwhile (maxUnavailable: 0), so the wait costs nothing.
           readinessProbe:
             httpGet:
               path: /health?bundles
               port: http
+            initialDelaySeconds: 5
             periodSeconds: 2
           livenessProbe:
             httpGet:
@@ -99,12 +106,14 @@ spec:
               port: http
             periodSeconds: 20
           # The Service stops sending to a pod a moment after the pod is told
-          # to stop. Keep answering through that moment. (The image has no
+          # to stop. Keep answering through that moment, with room to spare:
+          # a connection that arrives after SIGTERM is refused, and a call
+          # is denied for it (spec/opa-replacement). (The image has no
           # shell; this is the kubelet's own sleep.)
           lifecycle:
             preStop:
               sleep:
-                seconds: 5
+                seconds: 10
           resources:
             requests:
               cpu: 100m

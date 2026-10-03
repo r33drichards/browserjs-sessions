@@ -1,3 +1,5 @@
+import type { Sizes } from "./sizes"
+
 export type SessionState = "starting" | "running" | "stopping" | "asleep" | "stopped" | "failed"
 
 export interface Session {
@@ -11,6 +13,10 @@ export interface Session {
   // A session that is asleep holds a snapshot of its pod to wake from. Absent
   // (asleep without one, or stopped), it starts fresh, with its disk only.
   stateSaved?: boolean
+  // The size it runs at, and one asked for while it was awake: it has that
+  // one from its next start. Absent from a backend without sizes.
+  size?: string
+  pendingSize?: string
   // Only where the backend has billing on (docs/contracts/billing/backend-api.yaml).
   stoppedBy?: StoppedBy // why it is asleep or stopped
   draining?: StoppedBy // finishing calls before such a sleep
@@ -51,7 +57,7 @@ export class ApiError extends Error {
     super(message)
   }
   // The `Error` of the billing contract, when the backend refused for billing.
-  code?: string
+  code?: string // also "no_capacity": no room for a session of that size
   billingUrl?: string
   limit?: number
 }
@@ -124,7 +130,12 @@ export function createApi(fetchImpl: Fetch = fetch) {
     me: () => call<Me>("GET", "/api/me"),
     listSessions: (all = false) => call<Session[]>("GET", all ? "/api/sessions?all=1" : "/api/sessions"),
     getSession: async (id: string) => call<Session>("GET", await sessionPath(id)),
-    createSession: (name: string) => call<Session>("POST", "/api/sessions", { name }),
+    // The sizes a session can have here. A backend from before sizes has no such route.
+    listSizes: () => call<Sizes>("GET", "/api/sizes"),
+    // `size` is sent only when one is chosen: left out, the session is small.
+    createSession: (name: string, size?: string) => call<Session>("POST", "/api/sessions", size ? { name, size } : { name }),
+    // Takes effect at the session's next start, which is then a fresh one.
+    resizeSession: async (id: string, size: string) => call<Session>("PATCH", await sessionPath(id), { size }),
     renameSession: async (id: string, name: string) => call<Session>("PATCH", await sessionPath(id), { name }),
     setRunning: async (id: string, running: boolean) =>
       call<Session>("PATCH", await sessionPath(id), { action: running ? "resume" : "stop" }),
