@@ -42,6 +42,11 @@ type Session struct {
 	State  string         `json:"state"`
 	MCPURL string         `json:"mcp_url"`
 	Policy *PolicySummary `json:"policy,omitempty"`
+	// Size is the size the session runs at. PendingSize is the size asked
+	// for while it was awake, which it takes at its next start; empty when
+	// no resize is waiting.
+	Size        string `json:"size,omitempty"`
+	PendingSize string `json:"pendingSize,omitempty"`
 }
 
 // Management says who manages a policy.
@@ -319,7 +324,8 @@ func deref[T any](p *T) (zero T) {
 }
 
 func session(in computeruse.SessionInfo) *Session {
-	out := &Session{ID: in.Id, Name: in.Name, Owner: in.Owner, State: named(sessionStates, in.State), MCPURL: deref(in.McpUrl)}
+	out := &Session{ID: in.Id, Name: in.Name, Owner: in.Owner, State: named(sessionStates, in.State), MCPURL: deref(in.McpUrl),
+		Size: deref(in.Size), PendingSize: deref(in.PendingSize)}
 	if p := in.Policy; p != nil {
 		out.Policy = &PolicySummary{Kind: deref(p.Kind), Version: deref(p.Version), Hash: deref(p.Hash),
 			State: named(policyStates, p.State), Management: management(p.Management)}
@@ -351,11 +357,15 @@ func (c *Client) handle(id string) (*computeruse.Session, error) {
 	return h, nil
 }
 
-// CreateSession makes a session; an empty name lets the server choose one.
-func (c *Client) CreateSession(ctx context.Context, name string) (*Session, error) {
+// CreateSession makes a session; an empty name lets the server choose one,
+// and an empty size is the deployment's default.
+func (c *Client) CreateSession(ctx context.Context, name, size string) (*Session, error) {
 	request := computeruse.CreateSessionRequest{}
 	if name != "" {
 		request.Name = &name
+	}
+	if size != "" {
+		request.Size = &size
 	}
 	return call(ctx, func() (*Session, error) {
 		created, err := c.sdk.CreateSession(request)
@@ -405,6 +415,22 @@ func (c *Client) RenameSession(ctx context.Context, id, name string) (*Session, 
 	}
 	return call(ctx, func() (*Session, error) {
 		info, err := h.Rename(name)
+		if err != nil {
+			return nil, err
+		}
+		return session(info), nil
+	})
+}
+
+// ResizeSession changes a session's size. An awake session takes it at its
+// next start; either way that start is fresh, without its snapshot.
+func (c *Client) ResizeSession(ctx context.Context, id, size string) (*Session, error) {
+	h, err := c.handle(id)
+	if err != nil {
+		return nil, err
+	}
+	return call(ctx, func() (*Session, error) {
+		info, err := h.Resize(size)
 		if err != nil {
 			return nil, err
 		}

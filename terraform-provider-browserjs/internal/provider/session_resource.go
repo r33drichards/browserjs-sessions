@@ -35,12 +35,25 @@ func newSessionResource() resource.Resource { return &sessionResource{} }
 type sessionResource struct{ data *providerData }
 
 type sessionResourceModel struct {
-	ID       types.String   `tfsdk:"id"`
-	Name     types.String   `tfsdk:"name"`
-	MCPURL   types.String   `tfsdk:"mcp_url"`
-	State    types.String   `tfsdk:"state"`
-	Owner    types.String   `tfsdk:"owner"`
-	Timeouts timeouts.Value `tfsdk:"timeouts"`
+	ID          types.String   `tfsdk:"id"`
+	Name        types.String   `tfsdk:"name"`
+	MCPURL      types.String   `tfsdk:"mcp_url"`
+	State       types.String   `tfsdk:"state"`
+	Owner       types.String   `tfsdk:"owner"`
+	Size        types.String   `tfsdk:"size"`
+	PendingSize types.String   `tfsdk:"pending_size"`
+	Timeouts    timeouts.Value `tfsdk:"timeouts"`
+}
+
+// wantedSize is the size a session is to have: the one waiting for its next
+// start if there is one, else the one it runs at. It is what `size` reports,
+// so that a resize of an awake session does not show as a change to make
+// again on every plan.
+func wantedSize(s *client.Session) string {
+	if s.PendingSize != "" {
+		return s.PendingSize
+	}
+	return s.Size
 }
 
 func (m *sessionResourceModel) set(s *client.Session) {
@@ -49,6 +62,8 @@ func (m *sessionResourceModel) set(s *client.Session) {
 	m.MCPURL = types.StringValue(s.MCPURL)
 	m.State = types.StringValue(s.State)
 	m.Owner = types.StringValue(s.Owner)
+	m.Size = types.StringValue(wantedSize(s))
+	m.PendingSize = types.StringValue(s.PendingSize)
 }
 
 func (r *sessionResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -90,6 +105,21 @@ func (r *sessionResource) Schema(ctx context.Context, _ resource.SchemaRequest, 
 				MarkdownDescription: "Who owns the session: the owner of the API token that created it.",
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
+			"size": schema.StringAttribute{
+				Optional: true,
+				Computed: true,
+				MarkdownDescription: "How much CPU and memory the desktop gets: `small`, `medium` or `large`, as the deployment offers. Left out, the server's default (`small`).\n\n" +
+					"Changed in place, without replacing the session, and the disk is kept. A session that is asleep or stopped changes at once. " +
+					"One that is awake keeps running at its size until its next start (see `pending_size`).\n\n" +
+					"~> **A resize makes the session's next start a fresh one.** Its saved state is dropped: open windows and running programs are lost, " +
+					"as after a stop. Files, the browser's logins and agent memory are on the disk and are kept.",
+				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				Validators:    []validator.String{stringvalidator.LengthAtLeast(1)},
+			},
+			"pending_size": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "The size the session takes at its next start, while a resize of an awake session is waiting. Empty when none is. `size` already reports it.",
+			},
 		},
 		Blocks: map[string]schema.Block{
 			"timeouts": timeouts.Block(ctx, timeouts.Opts{
@@ -116,7 +146,7 @@ func (r *sessionResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 
-	s, err := r.data.client.CreateSession(ctx, plan.Name.ValueString())
+	s, err := r.data.client.CreateSession(ctx, plan.Name.ValueString(), plan.Size.ValueString())
 	if err != nil {
 		apiError(&resp.Diagnostics, "create the session", err)
 		return
@@ -192,15 +222,24 @@ func (r *sessionResource) Update(ctx context.Context, req resource.UpdateRequest
 	id := state.ID.ValueString()
 	var s *client.Session
 	var err error
-	if plan.Name.Equal(state.Name) {
-		// Only the timeouts changed.
-		s, err = r.data.client.GetSession(ctx, id)
-	} else {
-		s, err = r.data.client.RenameSession(ctx, id, plan.Name.ValueString())
+	if !plan.Size.Equal(state.Size) {
+		if s, err = r.data.client.ResizeSession(ctx, id, plan.Size.ValueString()); err != nil {
+			apiError(&resp.Diagnostics, "resize session "+id, err)
+			return
+		}
 	}
-	if err != nil {
-		apiError(&resp.Diagnostics, "update session "+id, err)
-		return
+	if !plan.Name.Equal(state.Name) {
+		if s, err = r.data.client.RenameSession(ctx, id, plan.Name.ValueString()); err != nil {
+			apiError(&resp.Diagnostics, "rename session "+id, err)
+			return
+		}
+	}
+	if s == nil {
+		// Only the timeouts changed.
+		if s, err = r.data.client.GetSession(ctx, id); err != nil {
+			apiError(&resp.Diagnostics, "read session "+id, err)
+			return
+		}
 	}
 	plan.set(s)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)

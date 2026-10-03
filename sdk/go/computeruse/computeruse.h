@@ -435,6 +435,11 @@ uint64_t uniffi_computeruse_fn_method_client_policy_presets(uint64_t ptr
 uint64_t uniffi_computeruse_fn_method_client_session(uint64_t ptr, RustBuffer id, RustCallStatus *out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_FN_METHOD_CLIENT_SIZES
+#define UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_FN_METHOD_CLIENT_SIZES
+uint64_t uniffi_computeruse_fn_method_client_sizes(uint64_t ptr
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_FN_METHOD_CLIENT_VALIDATE_POLICY
 #define UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_FN_METHOD_CLIENT_VALIDATE_POLICY
 uint64_t uniffi_computeruse_fn_method_client_validate_policy(uint64_t ptr, RustBuffer source
@@ -503,6 +508,11 @@ uint64_t uniffi_computeruse_fn_method_session_rename(uint64_t ptr, RustBuffer na
 #ifndef UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_FN_METHOD_SESSION_RESET_POLICY
 #define UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_FN_METHOD_SESSION_RESET_POLICY
 uint64_t uniffi_computeruse_fn_method_session_reset_policy(uint64_t ptr
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_FN_METHOD_SESSION_RESIZE
+#define UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_FN_METHOD_SESSION_RESIZE
+uint64_t uniffi_computeruse_fn_method_session_resize(uint64_t ptr, RustBuffer size
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_FN_METHOD_SESSION_RESUME
@@ -660,6 +670,11 @@ uint64_t uniffi_computeruse_fn_method_createsessionrequestbuilder_policy(uint64_
 #ifndef UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_FN_METHOD_CREATESESSIONREQUESTBUILDER_POLICY_PRESET
 #define UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_FN_METHOD_CREATESESSIONREQUESTBUILDER_POLICY_PRESET
 uint64_t uniffi_computeruse_fn_method_createsessionrequestbuilder_policy_preset(uint64_t ptr, RustBuffer value, RustCallStatus *out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_FN_METHOD_CREATESESSIONREQUESTBUILDER_SIZE
+#define UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_FN_METHOD_CREATESESSIONREQUESTBUILDER_SIZE
+uint64_t uniffi_computeruse_fn_method_createsessionrequestbuilder_size(uint64_t ptr, RustBuffer value, RustCallStatus *out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_FN_CLONE_MANAGEMENTBUILDER
@@ -1091,6 +1106,12 @@ uint16_t uniffi_computeruse_checksum_method_client_session(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_CHECKSUM_METHOD_CLIENT_SIZES
+#define UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_CHECKSUM_METHOD_CLIENT_SIZES
+uint16_t uniffi_computeruse_checksum_method_client_sizes(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_CHECKSUM_METHOD_CLIENT_VALIDATE_POLICY
 #define UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_CHECKSUM_METHOD_CLIENT_VALIDATE_POLICY
 uint16_t uniffi_computeruse_checksum_method_client_validate_policy(void
@@ -1160,6 +1181,12 @@ uint16_t uniffi_computeruse_checksum_method_session_rename(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_CHECKSUM_METHOD_SESSION_RESET_POLICY
 #define UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_CHECKSUM_METHOD_SESSION_RESET_POLICY
 uint16_t uniffi_computeruse_checksum_method_session_reset_policy(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_CHECKSUM_METHOD_SESSION_RESIZE
+#define UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_CHECKSUM_METHOD_SESSION_RESIZE
+uint16_t uniffi_computeruse_checksum_method_session_resize(void
     
 );
 #endif
@@ -1310,6 +1337,12 @@ uint16_t uniffi_computeruse_checksum_method_createsessionrequestbuilder_policy(v
 #ifndef UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_CHECKSUM_METHOD_CREATESESSIONREQUESTBUILDER_POLICY_PRESET
 #define UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_CHECKSUM_METHOD_CREATESESSIONREQUESTBUILDER_POLICY_PRESET
 uint16_t uniffi_computeruse_checksum_method_createsessionrequestbuilder_policy_preset(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_CHECKSUM_METHOD_CREATESESSIONREQUESTBUILDER_SIZE
+#define UNIFFI_FFIDEF_UNIFFI_COMPUTERUSE_CHECKSUM_METHOD_CREATESESSIONREQUESTBUILDER_SIZE
+uint16_t uniffi_computeruse_checksum_method_createsessionrequestbuilder_size(void
     
 );
 #endif

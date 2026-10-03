@@ -402,7 +402,7 @@ func uniffiCheckChecksums() {
 		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
 			return C.uniffi_computeruse_checksum_method_client_create_session()
 		})
-		if checksum != 53219 {
+		if checksum != 59956 {
 			// If this happens try cleaning and rebuilding your project
 			panic("computeruse: uniffi_computeruse_checksum_method_client_create_session: UniFFI API checksum mismatch")
 		}
@@ -459,6 +459,15 @@ func uniffiCheckChecksums() {
 		if checksum != 4961 {
 			// If this happens try cleaning and rebuilding your project
 			panic("computeruse: uniffi_computeruse_checksum_method_client_session: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_computeruse_checksum_method_client_sizes()
+		})
+		if checksum != 51046 {
+			// If this happens try cleaning and rebuilding your project
+			panic("computeruse: uniffi_computeruse_checksum_method_client_sizes: UniFFI API checksum mismatch")
 		}
 	}
 	{
@@ -567,6 +576,15 @@ func uniffiCheckChecksums() {
 		if checksum != 30937 {
 			// If this happens try cleaning and rebuilding your project
 			panic("computeruse: uniffi_computeruse_checksum_method_session_reset_policy: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_computeruse_checksum_method_session_resize()
+		})
+		if checksum != 53764 {
+			// If this happens try cleaning and rebuilding your project
+			panic("computeruse: uniffi_computeruse_checksum_method_session_resize: UniFFI API checksum mismatch")
 		}
 	}
 	{
@@ -792,6 +810,15 @@ func uniffiCheckChecksums() {
 		if checksum != 10001 {
 			// If this happens try cleaning and rebuilding your project
 			panic("computeruse: uniffi_computeruse_checksum_method_createsessionrequestbuilder_policy_preset: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_computeruse_checksum_method_createsessionrequestbuilder_size()
+		})
+		if checksum != 36408 {
+			// If this happens try cleaning and rebuilding your project
+			panic("computeruse: uniffi_computeruse_checksum_method_createsessionrequestbuilder_size: UniFFI API checksum mismatch")
 		}
 	}
 	{
@@ -1270,7 +1297,10 @@ type ClientInterface interface {
 	// An MCP call waits for it; so does
 	// [`Session::wait_until_running`].
 	//
-	// `409` ([`ComputerUseError::Conflict`]) at the session limit, `422`
+	// `409` ([`ComputerUseError::Conflict`]) at the session limit, and with
+	// the code `no_capacity` when there is no room for the size asked for
+	// (nothing is created; try later or smaller). `400` for a size the
+	// deployment does not have. `422`
 	// ([`ComputerUseError::InvalidPolicy`]) for a policy that does not
 	// validate, in which case nothing was created.
 	CreateSession(request CreateSessionRequest) (*Session, error)
@@ -1290,6 +1320,8 @@ type ClientInterface interface {
 	// A handle to the session `id`, without asking the API whether it
 	// exists. Enough for a token with `sessions:connect` alone.
 	Session(id string) (*Session, error)
+	// The sizes a session can have here, and the default. Needs no scope.
+	Sizes() (SessionSizes, error)
 	// Checks a Rego policy without saving it. An invalid policy is not an
 	// error here: it is a [`Validation`] whose `ok` is false. Needs no
 	// scope.
@@ -1386,7 +1418,10 @@ func (_self *Client) BaseUrl() string {
 // An MCP call waits for it; so does
 // [`Session::wait_until_running`].
 //
-// `409` ([`ComputerUseError::Conflict`]) at the session limit, `422`
+// `409` ([`ComputerUseError::Conflict`]) at the session limit, and with
+// the code `no_capacity` when there is no room for the size asked for
+// (nothing is created; try later or smaller). `400` for a size the
+// deployment does not have. `422`
 // ([`ComputerUseError::InvalidPolicy`]) for a policy that does not
 // validate, in which case nothing was created.
 func (_self *Client) CreateSession(request CreateSessionRequest) (*Session, error) {
@@ -1618,6 +1653,42 @@ func (_self *Client) Session(id string) (*Session, error) {
 	} else {
 		return FfiConverterSessionINSTANCE.Lift(_uniffiRV), nil
 	}
+}
+
+// The sizes a session can have here, and the default. Needs no scope.
+func (_self *Client) Sizes() (SessionSizes, error) {
+	_pointer := _self.ffiObject.incrementPointer("*Client")
+	defer _self.ffiObject.decrementPointer()
+	res, err := uniffiRustCallAsync[*ComputerUseError](
+		FfiConverterComputerUseErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) RustBufferI {
+			res := C.ffi_computeruse_rust_future_complete_rust_buffer(handle, status)
+			return GoRustBuffer{
+				inner: res,
+			}
+		},
+		// liftFn
+		func(ffi RustBufferI) SessionSizes {
+			return FfiConverterSessionSizesINSTANCE.Lift(ffi)
+		},
+		C.uniffi_computeruse_fn_method_client_sizes(
+			_pointer),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_computeruse_rust_future_poll_rust_buffer(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_computeruse_rust_future_free_rust_buffer(handle)
+		},
+	)
+
+	if err == nil {
+		return res, nil
+	}
+
+	return res, err
 }
 
 // Checks a Rego policy without saving it. An invalid policy is not an
@@ -1968,6 +2039,10 @@ type CreateSessionRequestBuilderInterface interface {
 	// The id of a preset (`GET /v1/policy-presets`) to use as the policy.
 	// The SDK reads the preset and sends its source. Not with `policy`.
 	PolicyPreset(value string) *CreateSessionRequestBuilder
+	// How much CPU and memory the desktop gets: one of the names
+	// [`Client::sizes`](crate::Client::sizes) lists, such as `small`,
+	// `medium` or `large`. Left out: the deployment's default (`small`).
+	Size(value string) *CreateSessionRequestBuilder
 }
 
 // Builds a [`CreateSessionRequest`]. Each setter returns a new builder; the receiver is unchanged.
@@ -2028,6 +2103,18 @@ func (_self *CreateSessionRequestBuilder) PolicyPreset(value string) *CreateSess
 	defer _self.ffiObject.decrementPointer()
 	return FfiConverterCreateSessionRequestBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
 		return C.uniffi_computeruse_fn_method_createsessionrequestbuilder_policy_preset(
+			_pointer, FfiConverterStringINSTANCE.Lower(value), _uniffiStatus)
+	}))
+}
+
+// How much CPU and memory the desktop gets: one of the names
+// [`Client::sizes`](crate::Client::sizes) lists, such as `small`,
+// `medium` or `large`. Left out: the deployment's default (`small`).
+func (_self *CreateSessionRequestBuilder) Size(value string) *CreateSessionRequestBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*CreateSessionRequestBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterCreateSessionRequestBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_computeruse_fn_method_createsessionrequestbuilder_size(
 			_pointer, FfiConverterStringINSTANCE.Lower(value), _uniffiStatus)
 	}))
 }
@@ -2503,6 +2590,17 @@ type SessionInterface interface {
 	// Returns the policy to unrestricted, in `editor` mode. Scope
 	// `policies:write`.
 	ResetPolicy() (Policy, error)
+	// Changes the session's size (a name from
+	// [`Client::sizes`](crate::Client::sizes)). Scope `sessions:write`.
+	//
+	// A session that is asleep or stopped changes at once. One that is
+	// awake keeps running at its size, shows the new one as
+	// `pending_size`, and changes at its next start; asking for the size
+	// it runs at withdraws that. Either way **the next start is fresh**:
+	// the snapshot is dropped, so open windows and running programs are
+	// lost. The disk is kept. `400` for a size the deployment does not
+	// have.
+	Resize(size string) (SessionInfo, error)
 	// Starts a stopped session from its disk, or wakes a sleeping one:
 	// the `resume` action, which [`Session::wake`] is a route for. Scope
 	// `sessions:write`. `402` where billing refuses it.
@@ -2878,6 +2976,51 @@ func (_self *Session) ResetPolicy() (Policy, error) {
 		},
 		C.uniffi_computeruse_fn_method_session_reset_policy(
 			_pointer),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_computeruse_rust_future_poll_rust_buffer(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_computeruse_rust_future_free_rust_buffer(handle)
+		},
+	)
+
+	if err == nil {
+		return res, nil
+	}
+
+	return res, err
+}
+
+// Changes the session's size (a name from
+// [`Client::sizes`](crate::Client::sizes)). Scope `sessions:write`.
+//
+// A session that is asleep or stopped changes at once. One that is
+// awake keeps running at its size, shows the new one as
+// `pending_size`, and changes at its next start; asking for the size
+// it runs at withdraws that. Either way **the next start is fresh**:
+// the snapshot is dropped, so open windows and running programs are
+// lost. The disk is kept. `400` for a size the deployment does not
+// have.
+func (_self *Session) Resize(size string) (SessionInfo, error) {
+	_pointer := _self.ffiObject.incrementPointer("*Session")
+	defer _self.ffiObject.decrementPointer()
+	res, err := uniffiRustCallAsync[*ComputerUseError](
+		FfiConverterComputerUseErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) RustBufferI {
+			res := C.ffi_computeruse_rust_future_complete_rust_buffer(handle, status)
+			return GoRustBuffer{
+				inner: res,
+			}
+		},
+		// liftFn
+		func(ffi RustBufferI) SessionInfo {
+			return FfiConverterSessionInfoINSTANCE.Lift(ffi)
+		},
+		C.uniffi_computeruse_fn_method_session_resize(
+			_pointer, FfiConverterStringINSTANCE.Lower(size)),
 		// pollFn
 		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
 			C.ffi_computeruse_rust_future_poll_rust_buffer(handle, continuation, data)
@@ -3475,12 +3618,17 @@ type CreateSessionRequest struct {
 	// The id of a preset (`GET /v1/policy-presets`) to use as the policy.
 	// The SDK reads the preset and sends its source. Not with `policy`.
 	PolicyPreset *string
+	// How much CPU and memory the desktop gets: one of the names
+	// [`Client::sizes`](crate::Client::sizes) lists, such as `small`,
+	// `medium` or `large`. Left out: the deployment's default (`small`).
+	Size *string
 }
 
 func (r *CreateSessionRequest) Destroy() {
 	FfiDestroyerOptionalString{}.Destroy(r.Name)
 	FfiDestroyerOptionalPolicyInput{}.Destroy(r.Policy)
 	FfiDestroyerOptionalString{}.Destroy(r.PolicyPreset)
+	FfiDestroyerOptionalString{}.Destroy(r.Size)
 }
 
 type FfiConverterCreateSessionRequest struct{}
@@ -3495,6 +3643,7 @@ func (c FfiConverterCreateSessionRequest) Read(reader io.Reader) CreateSessionRe
 	return CreateSessionRequest{
 		FfiConverterOptionalStringINSTANCE.Read(reader),
 		FfiConverterOptionalPolicyInputINSTANCE.Read(reader),
+		FfiConverterOptionalStringINSTANCE.Read(reader),
 		FfiConverterOptionalStringINSTANCE.Read(reader),
 	}
 }
@@ -3511,6 +3660,7 @@ func (c FfiConverterCreateSessionRequest) Write(writer io.Writer, value CreateSe
 	FfiConverterOptionalStringINSTANCE.Write(writer, value.Name)
 	FfiConverterOptionalPolicyInputINSTANCE.Write(writer, value.Policy)
 	FfiConverterOptionalStringINSTANCE.Write(writer, value.PolicyPreset)
+	FfiConverterOptionalStringINSTANCE.Write(writer, value.Size)
 }
 
 type FfiDestroyerCreateSessionRequest struct{}
@@ -4151,6 +4301,13 @@ type SessionInfo struct {
 	McpUrl *string
 	// Absent where policies are off.
 	Policy *PolicySummary
+	// The size the session runs at: `small`, `medium`, `large`. Absent
+	// from a service that predates sizes.
+	Size *string
+	// The size asked for with [`Session::resize`](crate::Session::resize)
+	// while the session was awake. It takes effect at the next start;
+	// absent when no resize is waiting.
+	PendingSize *string
 	// True when a suspended session holds a snapshot of its running
 	// desktop, which a wake restores. Absent otherwise.
 	StateSaved *bool
@@ -4172,6 +4329,8 @@ func (r *SessionInfo) Destroy() {
 	FfiDestroyerOptionalString{}.Destroy(r.Created)
 	FfiDestroyerOptionalString{}.Destroy(r.McpUrl)
 	FfiDestroyerOptionalPolicySummary{}.Destroy(r.Policy)
+	FfiDestroyerOptionalString{}.Destroy(r.Size)
+	FfiDestroyerOptionalString{}.Destroy(r.PendingSize)
 	FfiDestroyerOptionalBool{}.Destroy(r.StateSaved)
 	FfiDestroyerOptionalString{}.Destroy(r.StoppedBy)
 	FfiDestroyerOptionalString{}.Destroy(r.Draining)
@@ -4196,6 +4355,8 @@ func (c FfiConverterSessionInfo) Read(reader io.Reader) SessionInfo {
 		FfiConverterOptionalStringINSTANCE.Read(reader),
 		FfiConverterOptionalStringINSTANCE.Read(reader),
 		FfiConverterOptionalPolicySummaryINSTANCE.Read(reader),
+		FfiConverterOptionalStringINSTANCE.Read(reader),
+		FfiConverterOptionalStringINSTANCE.Read(reader),
 		FfiConverterOptionalBoolINSTANCE.Read(reader),
 		FfiConverterOptionalStringINSTANCE.Read(reader),
 		FfiConverterOptionalStringINSTANCE.Read(reader),
@@ -4220,6 +4381,8 @@ func (c FfiConverterSessionInfo) Write(writer io.Writer, value SessionInfo) {
 	FfiConverterOptionalStringINSTANCE.Write(writer, value.Created)
 	FfiConverterOptionalStringINSTANCE.Write(writer, value.McpUrl)
 	FfiConverterOptionalPolicySummaryINSTANCE.Write(writer, value.Policy)
+	FfiConverterOptionalStringINSTANCE.Write(writer, value.Size)
+	FfiConverterOptionalStringINSTANCE.Write(writer, value.PendingSize)
 	FfiConverterOptionalBoolINSTANCE.Write(writer, value.StateSaved)
 	FfiConverterOptionalStringINSTANCE.Write(writer, value.StoppedBy)
 	FfiConverterOptionalStringINSTANCE.Write(writer, value.Draining)
@@ -4229,6 +4392,110 @@ func (c FfiConverterSessionInfo) Write(writer io.Writer, value SessionInfo) {
 type FfiDestroyerSessionInfo struct{}
 
 func (_ FfiDestroyerSessionInfo) Destroy(value SessionInfo) {
+	value.Destroy()
+}
+
+// One size a session can have.
+type SessionSize struct {
+	// What `size` is set to: `small`, `medium`, `large`.
+	Name string
+	// CPU, in thousandths of a core.
+	CpuMillis uint32
+	// Memory, in MiB.
+	MemoryMib uint32
+	// Whether desktops of this size are kept warm, so that a new session
+	// is ready in seconds.
+	Warm bool
+}
+
+func (r *SessionSize) Destroy() {
+	FfiDestroyerString{}.Destroy(r.Name)
+	FfiDestroyerUint32{}.Destroy(r.CpuMillis)
+	FfiDestroyerUint32{}.Destroy(r.MemoryMib)
+	FfiDestroyerBool{}.Destroy(r.Warm)
+}
+
+type FfiConverterSessionSize struct{}
+
+var FfiConverterSessionSizeINSTANCE = FfiConverterSessionSize{}
+
+func (c FfiConverterSessionSize) Lift(rb RustBufferI) SessionSize {
+	return LiftFromRustBuffer[SessionSize](c, rb)
+}
+
+func (c FfiConverterSessionSize) Read(reader io.Reader) SessionSize {
+	return SessionSize{
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterUint32INSTANCE.Read(reader),
+		FfiConverterUint32INSTANCE.Read(reader),
+		FfiConverterBoolINSTANCE.Read(reader),
+	}
+}
+
+func (c FfiConverterSessionSize) Lower(value SessionSize) C.RustBuffer {
+	return LowerIntoRustBuffer[SessionSize](c, value)
+}
+
+func (c FfiConverterSessionSize) LowerExternal(value SessionSize) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[SessionSize](c, value))
+}
+
+func (c FfiConverterSessionSize) Write(writer io.Writer, value SessionSize) {
+	FfiConverterStringINSTANCE.Write(writer, value.Name)
+	FfiConverterUint32INSTANCE.Write(writer, value.CpuMillis)
+	FfiConverterUint32INSTANCE.Write(writer, value.MemoryMib)
+	FfiConverterBoolINSTANCE.Write(writer, value.Warm)
+}
+
+type FfiDestroyerSessionSize struct{}
+
+func (_ FfiDestroyerSessionSize) Destroy(value SessionSize) {
+	value.Destroy()
+}
+
+// The sizes a deployment offers: `GET /v1/sizes`.
+type SessionSizes struct {
+	// The size of a session created without one.
+	DefaultSize string
+	Sizes       []SessionSize
+}
+
+func (r *SessionSizes) Destroy() {
+	FfiDestroyerString{}.Destroy(r.DefaultSize)
+	FfiDestroyerSequenceSessionSize{}.Destroy(r.Sizes)
+}
+
+type FfiConverterSessionSizes struct{}
+
+var FfiConverterSessionSizesINSTANCE = FfiConverterSessionSizes{}
+
+func (c FfiConverterSessionSizes) Lift(rb RustBufferI) SessionSizes {
+	return LiftFromRustBuffer[SessionSizes](c, rb)
+}
+
+func (c FfiConverterSessionSizes) Read(reader io.Reader) SessionSizes {
+	return SessionSizes{
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterSequenceSessionSizeINSTANCE.Read(reader),
+	}
+}
+
+func (c FfiConverterSessionSizes) Lower(value SessionSizes) C.RustBuffer {
+	return LowerIntoRustBuffer[SessionSizes](c, value)
+}
+
+func (c FfiConverterSessionSizes) LowerExternal(value SessionSizes) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[SessionSizes](c, value))
+}
+
+func (c FfiConverterSessionSizes) Write(writer io.Writer, value SessionSizes) {
+	FfiConverterStringINSTANCE.Write(writer, value.DefaultSize)
+	FfiConverterSequenceSessionSizeINSTANCE.Write(writer, value.Sizes)
+}
+
+type FfiDestroyerSessionSizes struct{}
+
+func (_ FfiDestroyerSessionSizes) Destroy(value SessionSizes) {
 	value.Destroy()
 }
 
@@ -6175,6 +6442,53 @@ type FfiDestroyerSequenceSessionInfo struct{}
 func (FfiDestroyerSequenceSessionInfo) Destroy(sequence []SessionInfo) {
 	for _, value := range sequence {
 		FfiDestroyerSessionInfo{}.Destroy(value)
+	}
+}
+
+type FfiConverterSequenceSessionSize struct{}
+
+var FfiConverterSequenceSessionSizeINSTANCE = FfiConverterSequenceSessionSize{}
+
+func (c FfiConverterSequenceSessionSize) Lift(rb RustBufferI) []SessionSize {
+	return LiftFromRustBuffer[[]SessionSize](c, rb)
+}
+
+func (c FfiConverterSequenceSessionSize) Read(reader io.Reader) []SessionSize {
+	length := readInt32(reader)
+	if length == 0 {
+		return nil
+	}
+	result := make([]SessionSize, 0, length)
+	for i := int32(0); i < length; i++ {
+		result = append(result, FfiConverterSessionSizeINSTANCE.Read(reader))
+	}
+	return result
+}
+
+func (c FfiConverterSequenceSessionSize) Lower(value []SessionSize) C.RustBuffer {
+	return LowerIntoRustBuffer[[]SessionSize](c, value)
+}
+
+func (c FfiConverterSequenceSessionSize) LowerExternal(value []SessionSize) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[[]SessionSize](c, value))
+}
+
+func (c FfiConverterSequenceSessionSize) Write(writer io.Writer, value []SessionSize) {
+	if len(value) > math.MaxInt32 {
+		panic("[]SessionSize is too large to fit into Int32")
+	}
+
+	writeInt32(writer, int32(len(value)))
+	for _, item := range value {
+		FfiConverterSessionSizeINSTANCE.Write(writer, item)
+	}
+}
+
+type FfiDestroyerSequenceSessionSize struct{}
+
+func (FfiDestroyerSequenceSessionSize) Destroy(sequence []SessionSize) {
+	for _, value := range sequence {
+		FfiDestroyerSessionSize{}.Destroy(value)
 	}
 }
 

@@ -151,6 +151,15 @@ pub struct SessionInfo {
     /// Absent where policies are off.
     #[serde(default)]
     pub policy: Option<PolicySummary>,
+    /// The size the session runs at: `small`, `medium`, `large`. Absent
+    /// from a service that predates sizes.
+    #[serde(default)]
+    pub size: Option<String>,
+    /// The size asked for with [`Session::resize`](crate::Session::resize)
+    /// while the session was awake. It takes effect at the next start;
+    /// absent when no resize is waiting.
+    #[serde(default, rename = "pendingSize")]
+    pub pending_size: Option<String>,
     /// True when a suspended session holds a snapshot of its running
     /// desktop, which a wake restores. Absent otherwise.
     #[serde(default, rename = "stateSaved")]
@@ -354,6 +363,38 @@ pub struct CreateSessionRequest {
     /// The SDK reads the preset and sends its source. Not with `policy`.
     #[uniffi(default = None)]
     pub policy_preset: Option<String>,
+    /// How much CPU and memory the desktop gets: one of the names
+    /// [`Client::sizes`](crate::Client::sizes) lists, such as `small`,
+    /// `medium` or `large`. Left out: the deployment's default (`small`).
+    #[uniffi(default = None)]
+    pub size: Option<String>,
+}
+
+/// One size a session can have.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
+pub struct SessionSize {
+    /// What `size` is set to: `small`, `medium`, `large`.
+    pub name: String,
+    /// CPU, in thousandths of a core.
+    #[serde(default, rename = "cpuMillis")]
+    pub cpu_millis: u32,
+    /// Memory, in MiB.
+    #[serde(default, rename = "memoryMiB")]
+    pub memory_mib: u32,
+    /// Whether desktops of this size are kept warm, so that a new session
+    /// is ready in seconds.
+    #[serde(default)]
+    pub warm: bool,
+}
+
+/// The sizes a deployment offers: `GET /v1/sizes`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
+pub struct SessionSizes {
+    /// The size of a session created without one.
+    #[serde(default, rename = "default")]
+    pub default_size: String,
+    #[serde(default, deserialize_with = "null_as_empty")]
+    pub sizes: Vec<SessionSize>,
 }
 
 /// A `run_js` call.

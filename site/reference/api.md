@@ -68,8 +68,7 @@ from the disk: a snapshot is not restored at another size, so `stateSaved`
 goes when a sleeping session is resized. `{"size": "large", "action":
 "stop"}` resizes and stops in one request. A `409` with `"code":
 "no_capacity"` carries `Retry-After`; nothing was created or started, and
-the same request can be sent again later. The SDK and the Terraform
-provider do not send `size` yet.
+the same request can be sent again later.
 
 ## Screen and files (the app's API only)
 

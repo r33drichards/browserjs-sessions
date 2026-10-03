@@ -108,9 +108,9 @@ func main() {
 
 | | Calls | Scope |
 | --- | --- | --- |
-| Client | `me`, `access_token`, `base_url` | any |
+| Client | `me`, `sizes`, `access_token`, `base_url` | any |
 | Sessions | `list_sessions`, `get_session`, `session(id)` (a handle, no request), `create_session` | `sessions:read`, `sessions:write` |
-| A session | `refresh`, `rename`, `stop`, `resume`, `sleep`, `wake`, `delete`, `wait_until`, `wait_until_running`, `last_info`, `mcp_url` | `sessions:read`, `sessions:write` |
+| A session | `refresh`, `rename`, `resize`, `stop`, `resume`, `sleep`, `wake`, `delete`, `wait_until`, `wait_until_running`, `last_info`, `mcp_url` | `sessions:read`, `sessions:write` |
 | Its policy | `policy`, `put_policy`, `reset_policy`, `set_policy_management` | `policies:read`, `policies:write` |
 | Policies | `policy_presets`, `validate_policy`, `evaluate_policy` | any |
 | Its MCP endpoint | `run_js`, `run_js_with`, `call_tool`, `list_tools` | `sessions:connect` |
