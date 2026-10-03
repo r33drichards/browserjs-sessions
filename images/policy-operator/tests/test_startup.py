@@ -34,7 +34,9 @@ async def test_list_fails_loudly_when_the_api_refuses(aiohttp_server):
 
 
 @pytest.fixture
-def environment(cfg, monkeypatch):
+def environment(cfg, monkeypatch, tmp_path):
+    monkeypatch.setenv("WEBHOOK_REDIS_URL", cfg.webhook_redis_url)
+    monkeypatch.setenv("WEBHOOK_REDIS_PREFIX", cfg.webhook_redis_prefix)
     monkeypatch.setenv("OPA_BIN", cfg.opa_bin)
     monkeypatch.setenv("POLICY_CONTRACT_DIR", str(CONTRACTS))
     monkeypatch.setenv("HTTP_PORT", str(free_port()))

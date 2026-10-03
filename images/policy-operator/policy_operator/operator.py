@@ -89,9 +89,9 @@ class Publisher:
 
 
 class Operator:
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: Config, offline: bool = False):
         self.cfg = cfg
-        self.webhooks = Webhooks(cfg)
+        self.webhooks = Webhooks(cfg, offline=offline)
         self.sessions: dict[str, Entry] = {}
         self.publisher = Publisher()
         # True once every SessionPolicy that existed at start is in `sessions`
@@ -176,6 +176,7 @@ class Operator:
         if errors:
             raise BundleError(errors)
         self.ready = True
+        self.webhooks.start()
         log.info("first pass complete: %d policies, revision %s", len(self.sessions), self.publisher.revision)
 
     def _tenants(self) -> dict[str, Tenant]:

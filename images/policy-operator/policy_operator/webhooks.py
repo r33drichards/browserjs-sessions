@@ -1,4 +1,4 @@
-"""Session tool-call exports. Bounded, asynchronous, best-effort delivery.
+"""Session tool-call exports with a durable at-least-once outbox.
 
 The same tenant guard and capabilities as enforcement apply to filters. A
 filter uses browserjs.policy.allow_tool_call; its input is the export event.
@@ -13,8 +13,7 @@ import json
 import logging
 import time
 import uuid
-from collections import OrderedDict, deque
-from dataclasses import dataclass
+import redis
 
 import aiohttp
 from aiohttp.resolver import DefaultResolver
@@ -23,11 +22,10 @@ from yarl import URL
 from . import opa
 from .check import check, SESSION_ID
 from .config import Config, EVAL_DEADLINE_SECONDS
+from .outbox import Outbox
 
 log = logging.getLogger("policy_operator.webhooks")
-MAX_QUEUE_BYTES = 16 * 1024 * 1024
 MAX_BATCH_BYTES = 2 * 1024 * 1024
-MAX_ATTEMPTS = 8
 
 
 def configuration(doc: object) -> dict:
@@ -71,24 +69,42 @@ class PublicResolver(DefaultResolver):
         return answers
 
 
-@dataclass
-class Pending:
-    event: dict
-    size: int
-
-
 class Webhooks:
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: Config, offline: bool = False):
         self.cfg = cfg
         self.settings: dict[str, dict] = {}
-        self.queues: dict[str, deque[Pending]] = {}
+        self.blocked: set[str] = set()
+        self.outbox = None if offline else Outbox(cfg.webhook_redis_url, cfg.webhook_redis_prefix, cfg.webhook_redis_password)
         self.tasks: dict[str, asyncio.Task] = {}
         self.wake: dict[str, asyncio.Event] = {}
-        self.seen: OrderedDict[str, float] = OrderedDict()
-        self.bytes = 0
         self.http: aiohttp.ClientSession | None = None
         self.closed = False
         self.evaluations = asyncio.Semaphore(4)
+        self.supervisor: asyncio.Task | None = None
+
+    def start(self) -> None:
+        if self.outbox is None:
+            return
+        if self.supervisor is None and not self.closed:
+            self.supervisor = asyncio.create_task(self._supervise())
+        self._schedule()
+
+    def _schedule(self) -> None:
+        for group in self.outbox.groups():
+            wake = self.wake.setdefault(group, asyncio.Event())
+            _, cfg = self.outbox.configuration(group)
+            if self.outbox.count(group) >= cfg["batch_size"]:
+                wake.set()
+            if group not in self.tasks:
+                self.tasks[group] = asyncio.create_task(self._worker(group))
+
+    async def _supervise(self) -> None:
+        while not self.closed:
+            await asyncio.sleep(1)
+            try:
+                self._schedule()
+            except redis.RedisError:
+                log.exception("webhook outbox unavailable; accepted events retained")
 
     async def validate(self, doc: object) -> tuple[dict, dict]:
         cleaned = configuration(doc)
@@ -105,66 +121,58 @@ class Webhooks:
         try:
             cleaned = configuration(doc)
         except ValueError as e:
-            await self.remove(sid)
+            self.blocked.add(sid)
             log.warning("invalid webhook configuration", extra={"session": sid, "reason": str(e)})
             return
         if self.settings.get(sid) == cleaned:
+            self.blocked.discard(sid)
             return
-        # Direct CRD writers must pass the same validation as API clients.
-        await self.remove(sid)
+        # Capture must not see a transient absent configuration while its
+        # replacement is being checked. Refuse new calls during validation.
+        self.blocked.add(sid)
         cleaned, validation = await self.validate(cleaned)
         if not validation["ok"]:
             log.warning("invalid webhook filter", extra={"session": sid})
             return
         self.settings[sid] = cleaned
+        self.blocked.discard(sid)
 
     async def remove(self, sid: str) -> None:
-        # Stop admission before awaiting cancellation; ingestion can run while
-        # the old worker is shutting down.
+        # Disable new capture. Previously accepted events retain their original
+        # destination and signing secret and continue until acknowledged.
         self.settings.pop(sid, None)
-        task = self.tasks.pop(sid, None)
-        if task:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-        for item in self.queues.pop(sid, ()):
-            self.bytes -= item.size
-        self.wake.pop(sid, None)
+        self.blocked.discard(sid)
 
     def ingest(self, events: list[dict]) -> bool:
-        """Atomic enqueue. False asks OPA to retry; no partial acceptance."""
         if self.closed:
             return False
-        now = time.monotonic()
-        while self.seen and (next(iter(self.seen.values())) < now - 3600 or len(self.seen) > 50000):
-            self.seen.popitem(last=False)
         pending = []
-        ids = set()
         for event in events:
-            sid = event.get("session_id")
-            eid = event.get("id")
-            if not isinstance(sid, str) or not SESSION_ID.fullmatch(sid) or sid not in self.settings:
+            sid, eid = event.get("session_id"), event.get("id")
+            if not isinstance(sid, str) or not SESSION_ID.fullmatch(sid):
+                return False
+            if not isinstance(eid, str) or not eid:
+                return False
+            if sid in self.blocked:
+                return False
+            if sid not in self.settings:
                 continue
-            if not isinstance(eid, str) or eid in self.seen or eid in ids:
-                continue
-            size = len(json.dumps(event, separators=(",", ":")).encode())
-            if size > MAX_BATCH_BYTES - 1024:
-                # An individual event must fit one delivery.
-                log.warning("webhook event exceeds batch byte limit", extra={"session": sid})
-                continue
-            pending.append((sid, eid, Pending(event, size)))
-            ids.add(eid)
-        if self.bytes + sum(p.size for _, _, p in pending) > MAX_QUEUE_BYTES:
+            # Keep the call itself, even when its arguments exceed the delivery
+            # limit. This is an explicit event field, never a silent drop.
+            if len(json.dumps(event, separators=(",", ":")).encode()) > MAX_BATCH_BYTES - 1024:
+                event = {k: v for k, v in event.items() if k != "arguments"}
+                event["arguments_truncated"] = True
+                if len(json.dumps(event).encode()) > MAX_BATCH_BYTES - 1024:
+                    return False
+            pending.append((event, self.settings[sid]))
+        try:
+            accepted = self.outbox.ingest(pending)
+            if accepted:
+                self.start()
+            return accepted
+        except redis.RedisError:
+            log.exception("webhook outbox write failed; ingestion not acknowledged")
             return False
-        for sid, eid, item in pending:
-            self.seen[eid] = now
-            self.queues.setdefault(sid, deque()).append(item)
-            self.bytes += item.size
-            wake = self.wake.setdefault(sid, asyncio.Event())
-            if len(self.queues[sid]) >= self.settings[sid]["batch_size"]:
-                wake.set()
-            if sid not in self.tasks:
-                self.tasks[sid] = asyncio.create_task(self._worker(sid))
-        return True
 
     async def _send(self, cfg: dict, body: bytes, batch_id: str) -> bool:
         if self.http is None:
@@ -183,61 +191,65 @@ class Webhooks:
         except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
             return False
 
-    async def _worker(self, sid: str) -> None:
-        cfg = self.settings[sid]
+    async def _worker(self, group: str) -> None:
+        sid, cfg = self.outbox.configuration(group)
         try:
-            while self.queues.get(sid):
-                queue = self.queues[sid]
-                wake = self.wake[sid]
-                if len(queue) < cfg["batch_size"]:
-                    try:
-                        await asyncio.wait_for(wake.wait(), cfg["flush_interval_seconds"])
-                    except asyncio.TimeoutError:
-                        pass
-                wake.clear()
-                batch = []
-                size = 0
-                # Leave in the queue until delivered, so in-flight bytes stay bounded.
-                for item in queue:
-                    if len(batch) >= cfg["batch_size"] or size + item.size > MAX_BATCH_BYTES - 1024:
-                        break
-                    batch.append(item)
-                    size += item.size
-                events = [item.event for item in batch]
-                if cfg["filter"]:
-                    try:
-                        async with self.evaluations:
-                            mask = await asyncio.to_thread(opa.eval_many, self.cfg.opa_bin, self.cfg.capabilities,
-                                                           cfg["filter"], events, EVAL_DEADLINE_SECONDS)
-                    except opa.OpaTimeout:
-                        mask = None
-                    if mask is None:
-                        log.warning("webhook filter evaluation failed; batch omitted", extra={"session": sid})
-                        events = []
-                    else:
-                        events = [event for event, keep in zip(events, mask) if keep]
-                if events:
-                    bid = str(uuid.uuid4())
-                    body = json.dumps({"version": 1, "batch_id": bid, "session_id": sid, "events": events},
-                                      separators=(",", ":")).encode()
-                    for attempt in range(MAX_ATTEMPTS):
-                        if await self._send(cfg, body, bid):
-                            break
-                        if attempt == MAX_ATTEMPTS - 1:
-                            log.warning("webhook delivery exhausted retries", extra={"session": sid, "batch_id": bid})
-                        else:
-                            await asyncio.sleep(min(2 ** attempt, 60))
-                for _ in batch:
-                    self.bytes -= queue.popleft().size
+            while group in self.outbox.groups() and not self.closed:
+                batch = self.outbox.batch(group)
+                if batch is None:
+                    wake = self.wake[group]
+                    if self.outbox.count(group) < cfg["batch_size"]:
+                        try:
+                            await asyncio.wait_for(wake.wait(), cfg["flush_interval_seconds"])
+                        except asyncio.TimeoutError:
+                            pass
+                    wake.clear()
+                    rows = self.outbox.events(group, cfg["batch_size"], MAX_BATCH_BYTES - 1024)
+                    events = [event for _, event in rows]
+                    mask = [True] * len(events)
+                    if cfg["filter"]:
+                        try:
+                            async with self.evaluations:
+                                mask = await asyncio.to_thread(opa.eval_many, self.cfg.opa_bin, self.cfg.capabilities,
+                                                               cfg["filter"], events, EVAL_DEADLINE_SECONDS)
+                        except opa.OpaTimeout:
+                            mask = None
+                        if mask is None:
+                            log.warning("webhook filter evaluation failed; events retained for retry", extra={"session": sid})
+                            await asyncio.sleep(5)
+                            continue
+                    self.outbox.prepare(group, rows, mask)
+                    batch = self.outbox.batch(group)
+                    if batch is None:
+                        continue
+                bid, body, attempts, next_attempt = batch
+                delay = next_attempt - time.time()
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                self.outbox.confirm()
+                if await self._send(cfg, body, bid):
+                    # A crash before this commit replays the identical batch.
+                    self.outbox.acknowledge(bid)
+                else:
+                    attempts += 1
+                    self.outbox.retry(bid, attempts, time.time() + min(2 ** min(attempts - 1, 9), 300))
+                    log.warning("webhook delivery failed; retry scheduled", extra={"session": sid, "batch_id": bid, "attempts": attempts})
+        except redis.RedisError:
+            log.exception("webhook outbox unavailable; supervisor will retry")
         finally:
-            self.tasks.pop(sid, None)
+            self.tasks.pop(group, None)
 
     async def close(self) -> None:
         self.closed = True
-        for sid in list(self.settings):
-            await self.remove(sid)
+        if self.supervisor:
+            self.supervisor.cancel()
+        tasks = list(self.tasks.values())
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, *([self.supervisor] if self.supervisor else []), return_exceptions=True)
         if self.http:
             await self.http.close()
+        self.outbox.close() if self.outbox else None
 
 
 def decision_event(doc: object) -> dict | None:

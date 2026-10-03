@@ -4,6 +4,10 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import uuid
+from datetime import datetime, timezone
+
+import aiohttp
 
 from aiohttp import web
 
@@ -146,6 +150,20 @@ async def tool_events(request: web.Request) -> web.Response:
         doc = await request.json()
     except (ValueError, TypeError):
         return _error("the body is not JSON")
+    if not decisions and isinstance(doc, dict):
+        from .webhooks import configuration
+        try:
+            expected = configuration(doc.get("webhook"))
+        except ValueError:
+            return _error("invalid capture configuration")
+        items = doc.get("events")
+        if not isinstance(items, list):
+            return _error("events must be an array")
+        # Wait for reconciliation rather than acknowledging an event under a
+        # stale or absent webhook configuration.
+        if any(not isinstance(item, dict) or op.webhooks.settings.get(item.get("session_id")) != expected for item in items):
+            return _error("webhook configuration is still applying", 503)
+        doc = items
     if not isinstance(doc, list) or len(doc) > 10000:
         return _error("expected an array of at most 10000 events")
     if decisions:
@@ -158,10 +176,75 @@ async def tool_events(request: web.Request) -> web.Response:
     return web.Response(status=204)
 
 
+async def decision(request: web.Request) -> web.Response:
+    """The session-facing OPA endpoint: never allow before durable capture.
+
+    The opa Service routes here; only the operator can reach opa-engine.
+    This keeps existing session URLs while removing the lossy log buffer.
+    """
+    from .check import SESSION_ID
+    op = request.app[OPERATOR]
+    sid = request.match_info["sid"]
+    if not SESSION_ID.fullmatch(sid):
+        return web.Response(status=404)
+    if request.query:
+        return web.Response(status=403)
+    if not op.ready:
+        return web.Response(status=503)
+    try:
+        raw = await request.read()
+        if len(raw) > MAX_INPUT_BYTES + 1024:
+            return web.Response(status=413)
+        doc = json.loads(raw)
+        args = doc.get("input") if isinstance(doc, dict) else None
+        if not isinstance(args, dict) or args.get("operation") != "mcp_call_tool":
+            return _error("input must describe an mcp_call_tool")
+    except (ValueError, TypeError):
+        return _error("the body is not JSON")
+    event = {"id": str(uuid.uuid4()), "session_id": sid,
+             "timestamp": datetime.now(timezone.utc).isoformat(), "type": "tool_call",
+             "stage": "authorization", "server": args.get("server"),
+             "tool": args.get("tool"), "arguments": args.get("arguments"), "allowed": False}
+    target = op.cfg.opa_decision_url or f"http://{op.cfg.opa_service}.{op.cfg.namespace}.svc:{op.cfg.opa_port}"
+    status, answer = 503, None
+    try:
+        client = await op._session()
+        async with client.post(target.rstrip("/") + f"/v1/data/browserjs/decision/{sid}/mcp_tools",
+                               json={"input": args}, allow_redirects=False) as response:
+            status = response.status
+            body = bytearray()
+            async for chunk in response.content.iter_chunked(8192):
+                body.extend(chunk)
+                if len(body) > 65536:
+                    raise ValueError("policy response is too large")
+            if status == 200:
+                answer = json.loads(body)
+                result = answer.get("result") if isinstance(answer, dict) else None
+                # During rollout, an old engine may still upload asynchronous
+                # logs. Use its ID so both capture paths deduplicate durably.
+                if isinstance(answer, dict) and isinstance(answer.get("decision_id"), str) and answer["decision_id"]:
+                    event["id"] = answer["decision_id"]
+                event["allowed"] = isinstance(result, dict) and result.get("allow") is True
+            else:
+                status = 503
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+        status = 503
+    if status != 200:
+        event["decision_error"] = "policy engine unavailable"
+    # Redis AOF fsync finishes before a successful decision reaches mcp-js.
+    if not op.webhooks.ingest([event]):
+        return _error("tool event could not be durably recorded", 503)
+    if status != 200 or not isinstance(answer, dict):
+        return _error("policy engine unavailable", 503)
+    return web.json_response(answer)
+
+
 def make_app(op: Operator) -> web.Application:
     # aiohttp refuses larger bodies itself, with 413.
     app = web.Application(client_max_size=16 * 1024 * 1024)
     app[OPERATOR] = op
+    app.router.add_post("/v1/data/browserjs/decision/{sid}/mcp_tools", decision)
+    app.router.add_get("/health", readyz)
     app.router.add_get("/healthz", healthz)
     app.router.add_get("/readyz", readyz)
     app.router.add_get("/bundles/browserjs.tar.gz", bundle)

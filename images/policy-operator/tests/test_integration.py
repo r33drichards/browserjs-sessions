@@ -125,6 +125,7 @@ async def stack(cfg, tmp_path, monkeypatch):
             env={**os.environ, "BUNDLE_TOKEN": cfg.bundle_token, "OPERATOR_TOKEN": cfg.opa_token},
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
         addresses.append(f"127.0.0.1:{opa_port}")
+    op.cfg = dataclasses.replace(op.cfg, opa_decision_url="http://" + addresses[0])
     try:
         yield op, addresses
     finally:
@@ -211,8 +212,8 @@ async def test_real_opa_replicas_follow_the_operator(stack):
     assert await asyncio.to_thread(decide, urls[0], "s-aaaaa", CALL) == {"result": {"allow": True}}
 
 
-async def test_real_opa_batches_tool_decisions_into_session_webhook(stack):
-    """The deployed OPA config uploads actual gzip logs, including denials."""
+async def test_real_opa_gateway_records_before_returning_decisions(stack):
+    """A real OPA verdict cannot reach the caller before durable capture."""
     op, addresses = stack
     sent = []
     async def send(settings, body, bid):
@@ -227,8 +228,9 @@ async def test_real_opa_batches_tool_decisions_into_session_webhook(stack):
     assert await until(lambda: http(url + "/health")[0] == 200)
     assert await until(lambda: decide(url, "s-aaaaa", {}) == {"result": {"allow": False}})
     assert await until(lambda: decide(url, "s-bbbbb", {}) == {"result": {"allow": False}})
-    assert await asyncio.to_thread(decide, url, "s-aaaaa", CALL) == {"result": {"allow": True}}
-    assert await asyncio.to_thread(decide, url, "s-bbbbb", CALL) == {"result": {"allow": False}}
+    gateway = f"http://127.0.0.1:{op.cfg.http_port}"
+    assert await asyncio.to_thread(decide, gateway, "s-aaaaa", CALL) == {"result": {"allow": True}}
+    assert await asyncio.to_thread(decide, gateway, "s-bbbbb", CALL) == {"result": {"allow": False}}
     deadline = time.monotonic() + 10
     while len(sent) < 2 and time.monotonic() < deadline:
         await asyncio.sleep(0.05)

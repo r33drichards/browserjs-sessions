@@ -60,15 +60,15 @@ spec:
               - 192.168.0.0/16
               - 100.64.0.0/10
               - 169.254.0.0/16
-    # The one thing in the cluster a session reaches: the shared OPA, which
-    # its mcp-js asks for a decision on every browser call. OPA's API gives a
-    # session nothing but decisions (docs/contracts/policy/system-authz.rego).
+    # The opa Service routes to the durable recorder in the policy operator.
+    # The operator authenticates every administrative route; sessions can
+    # only obtain decisions, never bypass the recorder to reach opa-engine.
     - to:
         - podSelector:
             matchLabels:
-              app: opa
+              app: policy-operator
       ports:
-        - port: 8181
+        - port: 8080
           protocol: TCP
 ---
 # Identity is whatever Pomerium says it is, and the upload and VNC routes
@@ -123,10 +123,7 @@ spec:
   policyTypes: ["Ingress", "Egress"]
   ingress:
     - from:
-        - podSelector:
-            matchLabels:
-              app: browserjs-session
-        # Reading what each replica has loaded.
+        # Decisions and reading what each replica has loaded.
         - podSelector:
             matchLabels:
               app: policy-operator
@@ -164,7 +161,8 @@ spec:
           protocol: TCP
 ---
 # The operator holds every session's policy. Only OPA (the bundle) and the
-# backend (validate, evaluate) reach it; a session pod does not.
+# backend (validate, evaluate) and sessions (recorded decisions) reach it.
+# All administrative routes require a bearer credential.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -182,6 +180,9 @@ spec:
         - podSelector:
             matchLabels:
               app: backend
+        - podSelector:
+            matchLabels:
+              app: browserjs-session
       ports:
         - port: 8080
           protocol: TCP
@@ -213,6 +214,13 @@ spec:
               app: opa
       ports:
         - port: 8181
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app: webhook-redis
+      ports:
+        - port: 6379
           protocol: TCP
     # The API server (443/6443) and public HTTPS webhooks (443). The
     # exporter validates the actual resolved destination and refuses private

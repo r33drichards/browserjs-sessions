@@ -22,6 +22,9 @@ import os
 import sys
 import threading
 import time
+import re
+import urllib.request
+import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BUNDLE = "/tmp/bundle.tar.gz"
@@ -68,7 +71,7 @@ class Operator(Handler):
     def do_GET(self):
         if self.path == "/healthz":
             return self.answer(200, b"ok")
-        if self.path == "/readyz":
+        if self.path in ("/readyz", "/health"):
             return self.answer(200 if state["etag"] else 503)
         if self.path != "/bundles/browserjs.tar.gz":
             return self.answer(404)
@@ -88,6 +91,23 @@ class Operator(Handler):
         if seen == etag:
             return self.answer(304)
         self.answer(200, body, "application/vnd.openpolicyagent.bundles", [("ETag", etag)])
+
+    def do_POST(self):
+        # Mirror the inline gateway's routing only; durability is tested against
+        # the real operator and Redis, never this bundle-server stand-in.
+        if "?" in self.path:
+            return self.answer(403)
+        if not re.fullmatch(r"/v1/data/browserjs/decision/s-[a-z0-9]{5,}/mcp_tools", self.path):
+            return self.answer(404)
+        request = urllib.request.Request("http://opa-engine:8181" + self.path,
+                                         data=self.body(), headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                self.answer(response.status, response.read(), "application/json")
+        except urllib.error.HTTPError as error:
+            self.answer(error.code, error.read(), "application/json")
+        except OSError:
+            self.answer(503)
 
 
 class Browser(Handler):

@@ -1,5 +1,7 @@
 # The shared OPA: every session's mcp-js asks it whether a browser call is
-# allowed (docs/contracts/policy/rego-contract.md). It serves decisions and
+# allowed (docs/contracts/policy/rego-contract.md), through the durable recorder.
+# The opa Service points to that recorder; opa-engine points to these replicas.
+# The engine serves decisions and
 # nothing else: its configuration and its API's own policy are the contract
 # files (ConfigMap opa-config, generated in docs/contracts/policy), and what
 # it decides with is the one bundle it polls from the policy operator.
@@ -147,6 +149,20 @@ apiVersion: v1
 kind: Service
 metadata:
   name: opa
+spec:
+  # Existing session URLs keep using :8181, but every decision passes the
+  # durable recorder before reaching the caller.
+  selector:
+    app: policy-operator
+  ports:
+    - name: http
+      port: 8181
+      targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opa-engine
 spec:
   selector:
     app: opa

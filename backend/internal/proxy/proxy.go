@@ -75,9 +75,8 @@ type Proxy struct {
 	// DefaultMaxFileBytes if unset.
 	MaxFileBytes int64
 
-	// ToolEvents asynchronously exports outer MCP calls; OPA supplies nested calls.
-	ToolEvents func([]map[string]any)
-	eventSlots chan struct{}
+	// ToolEvents must durably accept outer calls before they are forwarded.
+	ToolEvents func(context.Context, []map[string]any) error
 
 	now func() time.Time // time.Now if unset
 
@@ -102,7 +101,6 @@ func podTransport(responseHeaderTimeout time.Duration) *http.Transport {
 
 func (p *Proxy) init() {
 	p.setup.Do(func() {
-		p.eventSlots = make(chan struct{}, 8)
 		if p.Target == nil {
 			p.Target = func(s sessions.Session, port int) string { return net.JoinHostPort(s.PodIP, strconv.Itoa(port)) }
 		}
@@ -454,6 +452,9 @@ func (p *Proxy) mcp(w http.ResponseWriter, r *http.Request) {
 		p.mcpStream(w, r, id, path)
 		return
 	}
+	if !p.recordToolCalls(w, r, id) {
+		return
+	}
 	// The call holds the session awake until it is over, however long the
 	// pod takes: a tool call may outlast the idle period. It is in flight:
 	// a drain waits for it. Both are said on the session before the session
@@ -465,8 +466,6 @@ func (p *Proxy) mcp(w http.ResponseWriter, r *http.Request) {
 		lookupFailed(w, r, id, err)
 		return
 	}
-	finishEvents := p.observeToolCalls(r, id)
-	defer finishEvents()
 	p.forward(w, r, s, mcpPort, path, p.patient)
 }
 

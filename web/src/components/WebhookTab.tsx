@@ -45,13 +45,13 @@ export function WebhookTab({ sessionId }: { sessionId: string }) {
       if (remove) { setUrl(""); setFilter(""); setHasSecret(false) }
       else if (secret) setHasSecret(true)
       setSecret("")
-      setMessage(remove ? "Webhook disabled." : "Webhook saved. Delivery begins when the session configuration is applied.")
+      setMessage(remove ? "New exports disabled. Accepted events will continue retrying until delivered." : "Webhook saved. Delivery begins when the session configuration is applied.")
     } catch (e) { setError(e instanceof Error ? e.message : String(e)) }
     finally { setBusy(false) }
   }
   if (loading) return <>Loading the webhook</>
   return <SpaceBetween size="m">
-    <p key="description">Send tool-call events in batches, including browser and shell authorization attempts. Delivery retries failures and may send duplicates. Queues are held in memory; restarts or exhausted retries can lose events.</p>
+    <p key="description">Send tool-call events with durable at-least-once delivery, including browser and shell authorization attempts. Failed deliveries retry until acknowledged. Receivers must deduplicate event IDs. Calls are refused if their event cannot be durably recorded.</p>
     {error && <Alert key="error" type="error">{error}</Alert>}
     {message && <Alert key="message" type="success">{message}</Alert>}
     <FormField key="url" label="Webhook URL" description="A public HTTPS endpoint on port 443."><Input value={url} onChange={e => setUrl(e.detail.value)} /></FormField>
@@ -59,6 +59,6 @@ export function WebhookTab({ sessionId }: { sessionId: string }) {
     <FormField key="interval" label="Flush interval (seconds)" description="1 to 60 seconds for a partial batch."><Input type="number" value={interval} onChange={e => setInterval(e.detail.value)} /></FormField>
     <FormField key="secret" label="Signing secret" description={hasSecret ? "A secret is configured. Leave blank to keep it, or enter a replacement." : "Optional, 16 to 256 bytes. Signs each delivery with HMAC-SHA256."}><Input type="password" value={secret} onChange={e => setSecret(e.detail.value)} /></FormField>
     <FormField key="filter" label="Rego filter (optional)" description="Leave empty to send every event. Define package browserjs.policy and allow_tool_call; input is the event, and only true includes it."><Textarea rows={12} value={filter} onChange={e => setFilter(e.detail.value)} placeholder={'package browserjs.policy\nimport rego.v1\n\nallow_tool_call if input.tool == "exec"'} /></FormField>
-    <SpaceBetween key="actions" direction="horizontal" size="s"><Button key="save" variant="primary" loading={busy} disabled={!url} onClick={() => void save()}>Save webhook</Button><Button key="disable" disabled={busy || !url} onClick={() => void save(true)}>Disable webhook</Button></SpaceBetween>
+    <SpaceBetween key="actions" direction="horizontal" size="s"><Button key="save" variant="primary" loading={busy} disabled={!url} onClick={() => void save()}>Save webhook</Button><Button key="disable" disabled={busy || !url} onClick={() => void save(true)}>Disable new exports</Button></SpaceBetween>
   </SpaceBetween>
 }

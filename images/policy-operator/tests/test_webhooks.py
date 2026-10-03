@@ -1,4 +1,5 @@
 import asyncio
+import dataclasses
 import gzip
 import hashlib
 import hmac
@@ -9,7 +10,8 @@ import pytest
 
 from policy_operator.operator import Operator
 from policy_operator.server import make_app
-from policy_operator.webhooks import Webhooks, configuration, decision_event, PublicResolver
+from policy_operator.webhooks import Webhooks, configuration, PublicResolver
+from policy_operator.outbox import Outbox
 from conftest import ALLOW_ALL, H, resource
 
 SID = "s-aaaaa"
@@ -18,6 +20,13 @@ DEST = {"url": "https://example.com/hook", "batch_size": 2, "flush_interval_seco
 
 def event(i, tool="exec"):
     return {"id": str(i), "session_id": SID, "type": "tool_call", "stage": "request", "tool": tool}
+
+
+async def drained(hooks, seconds=3):
+    async def wait():
+        while hooks.outbox.groups():
+            await asyncio.sleep(0.01)
+    await asyncio.wait_for(wait(), seconds)
 
 
 @pytest.mark.parametrize("doc", [
@@ -54,47 +63,34 @@ async def test_filter_validation_and_isolation(cfg):
 async def test_batch_filter_duplicates_and_session_isolation(cfg):
     hooks = Webhooks(cfg)
     await hooks.configure(SID, {**DEST, "filter": H + 'allow_tool_call if input.tool == "exec"'})
-    sent = []
-    async def send(settings, body, bid):
-        sent.append(json.loads(body))
-        return True
-    hooks._send = send
+    hooks._send = AsyncMock(return_value=True)
     assert hooks.ingest([event(1), event(1), event(2, "browser_execute"), {**event(3), "session_id": "s-bbbbb"}])
-    task = hooks.tasks[SID]
-    await asyncio.wait_for(task, 3)
-    assert len(sent) == 1
-    assert [e["id"] for e in sent[0]["events"]] == ["1"]
-    assert hooks.bytes == 0
-    assert hooks.ingest([event(1)]) and not hooks.tasks
+    await drained(hooks)
+    sent = json.loads(hooks._send.await_args.args[1])
+    assert [e["id"] for e in sent["events"]] == ["1"]
+    assert hooks.ingest([event(1)]) and not hooks.outbox.groups()
     await hooks.close()
 
 
-async def test_partial_batch_and_retries_keep_identical_body(cfg, monkeypatch):
+async def test_partial_batch_and_retries_keep_identical_body(cfg):
     hooks = Webhooks(cfg)
     await hooks.configure(SID, DEST)
-    sent = []
-    async def send(settings, body, bid):
-        sent.append((body, bid))
-        return len(sent) == 2
-    hooks._send = send
+    hooks._send = AsyncMock(side_effect=[False, True])
     assert hooks.ingest([event(1)])
-    await asyncio.wait_for(hooks.tasks[SID], 4)
-    assert sent[0] == sent[1]
-    assert hooks.bytes == 0
+    await drained(hooks, 4)
+    first, second = hooks._send.await_args_list
+    assert first.args[1:] == second.args[1:]
     await hooks.close()
 
 
-async def test_queue_pressure_is_atomic_and_config_change_discards(cfg, monkeypatch):
-    import policy_operator.webhooks as module
+async def test_queue_pressure_is_atomic(cfg, monkeypatch):
+    import policy_operator.outbox as module
     hooks = Webhooks(cfg)
     await hooks.configure(SID, DEST)
-    monkeypatch.setattr(module, "MAX_QUEUE_BYTES", 1)
+    monkeypatch.setattr(module, "MAX_PENDING_BYTES", 1)
     assert not hooks.ingest([event(1), event(2)])
-    assert not hooks.seen and hooks.bytes == 0
-    monkeypatch.setattr(module, "MAX_QUEUE_BYTES", 10000)
-    assert hooks.ingest([event(1)])
-    await hooks.configure(SID, {**DEST, "url": "https://other.example.com"})
-    assert hooks.bytes == 0 and not hooks.tasks and not hooks.queues
+    assert not hooks.outbox.groups()
+    assert not hooks.outbox.db.hlen(hooks.outbox.key("receipts"))
     await hooks.close()
 
 
@@ -120,8 +116,8 @@ async def test_opa_gzip_ingestion_auth_and_denied_decision(cfg, aiohttp_client):
     assert (await client.post("/logs", data=body, headers=headers)).status == 401
     assert (await client.post("/logs", data=body, headers={**headers, "Authorization": "Bearer api-secret"})).status == 401
     assert (await client.post("/logs", data=body, headers={**headers, "Authorization": "Bearer bundle-secret"})).status == 204
-    assert op.webhooks.queues[SID][0].event["allowed"] is False
-    assert len(op.webhooks.queues[SID]) == 1
+    group = op.webhooks.outbox.groups()[0]
+    assert op.webhooks.outbox.events(group, 10, 100000)[0][1]["allowed"] is False
     await op.close()
 
 
@@ -143,27 +139,7 @@ async def test_signature_and_redirect_refusal(cfg):
     headers = captured["headers"]
     digest = hmac.new(settings["signing_secret"].encode(), headers["X-Computer-Use-Timestamp"].encode() + b"." + captured["data"], hashlib.sha256).hexdigest()
     assert headers["X-Computer-Use-Signature"] == "sha256=" + digest
-
-
-async def test_unchanged_settings_keep_queued_events(cfg):
-    hooks = Webhooks(cfg)
-    await hooks.configure(SID, DEST)
-    assert hooks.ingest([event(1)])
-    task = hooks.tasks[SID]
-    await hooks.configure(SID, DEST)  # omitted defaults normalize identically
-    assert hooks.tasks[SID] is task and hooks.bytes > 0
-    await hooks.close()
-
-
-async def test_filter_runtime_failure_omits_events(cfg):
-    hooks = Webhooks(cfg)
-    await hooks.configure(SID, {**DEST, "batch_size": 1,
-                                "filter": H + 'allow_tool_call := {"not": "a boolean"}'})
-    hooks._send = AsyncMock(return_value=True)
-    assert hooks.ingest([event(1)])
-    await hooks.tasks[SID]
-    hooks._send.assert_not_called()
-    assert hooks.bytes == 0
+    hooks.http = None
     await hooks.close()
 
 
@@ -172,10 +148,165 @@ async def test_full_batch_wakes_partial_batch_timer(cfg):
     await hooks.configure(SID, {**DEST, "flush_interval_seconds": 60})
     hooks._send = AsyncMock(return_value=True)
     assert hooks.ingest([event(1)])
-    task = hooks.tasks[SID]
-    await asyncio.sleep(0.01)  # the worker is waiting for a partial-batch timeout
+    await asyncio.sleep(0.01)
     assert hooks.ingest([event(2)])
-    await asyncio.wait_for(task, 1)
+    await drained(hooks, 1)
     hooks._send.assert_awaited_once()
-    assert hooks.bytes == 0
+    await hooks.close()
+
+
+async def test_recovery_without_current_configuration_and_durable_duplicates(cfg, tmp_path):
+    hooks = Webhooks(cfg)
+    await hooks.configure(SID, {**DEST, "batch_size": 1})
+    # Crash after persistence, before the worker runs.
+    assert hooks.ingest([event(1)])
+    await hooks.close()
+    recovered = Webhooks(cfg)
+    recovered._send = AsyncMock(return_value=True)
+    recovered.start()
+    await drained(recovered)
+    assert json.loads(recovered._send.await_args.args[1])["events"][0]["id"] == "1"
+    await recovered.configure(SID, {**DEST, "batch_size": 1})
+    assert recovered.ingest([event(1)]) and not recovered.outbox.groups()
+    await recovered.close()
+
+
+async def test_crash_after_receiver_accepts_replays_same_batch(cfg, tmp_path):
+    hooks = Webhooks(cfg)
+    await hooks.configure(SID, {**DEST, "batch_size": 1})
+    observed = asyncio.Event()
+    payloads = []
+    async def lost_ack(settings, body, bid):
+        payloads.append((body, bid))
+        observed.set()
+        await asyncio.Future()  # process dies before observing acknowledgement
+    hooks._send = lost_ack
+    assert hooks.ingest([event(1)])
+    await asyncio.wait_for(observed.wait(), 1)
+    await hooks.close()
+    recovered = Webhooks(cfg)
+    recovered._send = AsyncMock(return_value=True)
+    recovered.start()
+    await drained(recovered)
+    assert recovered._send.await_args.args[1:] == payloads[0]
+    await recovered.close()
+
+
+async def test_configuration_change_and_disable_preserve_original_destination(cfg):
+    hooks = Webhooks(cfg)
+    await hooks.configure(SID, {**DEST, "batch_size": 1})
+    assert hooks.ingest([event(1)])
+    await hooks.configure(SID, {**DEST, "url": "https://new.example.com", "batch_size": 1})
+    assert hooks.ingest([event(2)])
+    await hooks.remove(SID)
+    hooks._send = AsyncMock(return_value=True)
+    await drained(hooks)
+    assert {args.args[0]["url"] for args in hooks._send.await_args_list} == {DEST["url"], "https://new.example.com"}
+    await hooks.close()
+
+
+async def test_filter_error_retains_events_for_retry(cfg, monkeypatch):
+    hooks = Webhooks(cfg)
+    await hooks.configure(SID, {**DEST, "batch_size": 1, "filter": H + "allow_tool_call := true"})
+    import policy_operator.webhooks as module
+    monkeypatch.setattr(module.opa, "eval_many", lambda *args: None)
+    hooks._send = AsyncMock(return_value=True)
+    assert hooks.ingest([event(1)])
+    await asyncio.sleep(0.05)
+    assert hooks.outbox.groups()
+    hooks._send.assert_not_called()
+    await hooks.close()
+
+
+def test_outbox_retries_survive_redis_crash(cfg, redis_server):
+    box = Outbox(cfg.webhook_redis_url, cfg.webhook_redis_prefix)
+    assert box.ingest([(event(1), configuration(DEST))])
+    group = box.groups()[0]
+    box.prepare(group, box.events(group, 2, 10000), [True])
+    bid, payload, _, _ = box.batch(group)
+    box.retry(bid, 100000, 123)
+    box.close()
+    redis_server.crash()
+    redis_server.start()
+    recovered = Outbox(cfg.webhook_redis_url, cfg.webhook_redis_prefix)
+    assert recovered.batch(group) == (bid, payload, 100000, 123)
+    recovered.acknowledge(bid)
+    assert not recovered.groups()
+    recovered.close()
+
+
+def test_nondurable_redis_is_rejected(cfg):
+    import redis
+    client = redis.Redis.from_url(cfg.webhook_redis_url)
+    client.config_set('appendfsync', 'everysec')
+    try:
+        with pytest.raises(RuntimeError, match='appendfsync always'):
+            Outbox(cfg.webhook_redis_url, cfg.webhook_redis_prefix)
+    finally:
+        client.config_set('appendfsync', 'always')
+
+
+async def test_config_version_mismatch_is_not_acknowledged(cfg, aiohttp_client):
+    op = Operator(cfg)
+    op.ready = True
+    await op.webhooks.configure(SID, DEST)
+    client = await aiohttp_client(make_app(op))
+    body = {"events": [event(1)], "webhook": {**DEST, "url": "https://new.example.com"}}
+    response = await client.post("/v1/tool-events", json=body, headers={"Authorization": "Bearer api-secret"})
+    assert response.status == 503
+    assert not op.webhooks.outbox.groups()
+    body["webhook"] = DEST
+    response = await client.post("/v1/tool-events", json=body, headers={"Authorization": "Bearer api-secret"})
+    assert response.status == 204
+    assert op.webhooks.outbox.groups()
+    await op.close()
+
+
+async def test_gateway_never_allows_when_durable_commit_fails(cfg, aiohttp_client, aiohttp_server, monkeypatch):
+    import redis
+    from aiohttp import web
+    engine = web.Application()
+    async def allow(request):
+        return web.json_response({"result": {"allow": True}})
+    engine.router.add_post(f"/v1/data/browserjs/decision/{SID}/mcp_tools", allow)
+    engine_server = await aiohttp_server(engine)
+    op = Operator(dataclasses.replace(cfg, opa_decision_url=str(engine_server.make_url("/"))))
+    op.ready = True
+    await op.webhooks.configure(SID, DEST)
+    def fail(events): raise redis.RedisError("Redis unavailable")
+    monkeypatch.setattr(op.webhooks.outbox, "ingest", fail)
+    client = await aiohttp_client(make_app(op))
+    response = await client.post(f"/v1/data/browserjs/decision/{SID}/mcp_tools", json={"input": {"operation": "mcp_call_tool", "server": "exec", "tool": "exec", "arguments": {}}})
+    assert response.status == 503
+    assert "allow" not in await response.text()
+    await op.close()
+
+
+async def test_reconciliation_never_leaves_an_unrecorded_execution_window(cfg, monkeypatch):
+    hooks = Webhooks(cfg)
+    await hooks.configure(SID, DEST)
+    entered, resume = asyncio.Event(), asyncio.Event()
+    original = hooks.validate
+    async def validate(doc):
+        entered.set()
+        await resume.wait()
+        return await original(doc)
+    monkeypatch.setattr(hooks, "validate", validate)
+    update = asyncio.create_task(hooks.configure(SID, {**DEST, "url": "https://new.example.com"}))
+    await entered.wait()
+    assert not hooks.ingest([event(1)])
+    assert not hooks.outbox.groups()
+    resume.set()
+    await update
+    assert hooks.ingest([event(1)])
+    await hooks.close()
+
+
+async def test_invalid_direct_configuration_refuses_new_calls(cfg):
+    hooks = Webhooks(cfg)
+    await hooks.configure(SID, DEST)
+    await hooks.configure(SID, {**DEST, "filter": "package INVALID"})
+    assert not hooks.ingest([event(1)])
+    await hooks.configure(SID, DEST)
+    assert hooks.ingest([event(1)])
     await hooks.close()

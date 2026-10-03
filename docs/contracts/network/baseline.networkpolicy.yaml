@@ -27,12 +27,12 @@ spec:
         - port: 8081 # the session's files
           protocol: TCP
   egress:
-    # The shared OPA (docs/contracts/policy/deploy.md). Until tool-call
+    # The durable decision gateway behind the opa Service. Until tool-call
     # policies are deployed this rule is absent and the list is empty.
     - to:
         - podSelector:
             matchLabels:
-              app: opa
+              app: policy-operator
       ports:
-        - port: 8181
+        - port: 8080
           protocol: TCP

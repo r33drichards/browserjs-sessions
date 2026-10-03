@@ -3,12 +3,13 @@ package policy
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/r33drichards/computer-use/backend/internal/auth"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
@@ -116,14 +117,36 @@ func (h *Handlers) DeleteWebhook(w http.ResponseWriter, r *http.Request, id stri
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// RecordToolEvents is called by a proxy's bounded background uploader.
-func (h *Handlers) RecordToolEvents(events []map[string]any) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+// RecordToolEvents returns only after durable acceptance, or refuses execution.
+func (h *Handlers) RecordToolEvents(ctx context.Context, events []map[string]any) error {
+	if len(events) == 0 {
+		return nil
+	}
+	sid, _ := events[0]["session_id"].(string)
+	obj, err := h.policies.Get(ctx, sid, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	// Unconfigured sessions do not depend on the export store.
+	webhook, found, _ := unstructured.NestedMap(obj.Object, "spec", "webhook")
+	if !found {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	body, _ := json.Marshal(events)
+	body, err := json.Marshal(map[string]any{"events": events, "webhook": webhook})
+	if err != nil {
+		return err
+	}
 	a, err := h.operator.do(ctx, http.MethodPost, "/v1/tool-events", body)
-	if err != nil || a.status != http.StatusNoContent {
-		slog.Warn("tool event ingestion failed; request events omitted", "status", a.status)
-		return
-	} // best effort, independent of execution
+	if err != nil {
+		return err
+	}
+	if a.status != http.StatusNoContent {
+		return fmt.Errorf("durable tool event ingestion returned %d", a.status)
+	}
+	return nil
 }

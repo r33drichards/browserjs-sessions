@@ -16,9 +16,10 @@ Everything is in the namespace `browserjs-sessions`, from `deploy/base`.
 | Object | File | Notes |
 |---|---|---|
 | CRDs `sessionpolicies.browserjs.dev`, `apitokens.browserjs.dev` | `crd-*.yaml` | now listed in the kustomization |
-| OPA: ServiceAccount (no token), Deployment (2 replicas; 1 in `deploy/local`), Service `opa:8181`, PodDisruptionBudget `minAvailable: 1` | `opa.yaml` | `openpolicyagent/opa:1.9.0-static`, pinned by its multi-platform digest |
+| OPA: ServiceAccount (no token), Deployment (2 replicas; 1 in `deploy/local`), Service `opa-engine:8181`, decision gateway Service `opa:8181`, PodDisruptionBudget `minAvailable: 1` | `opa.yaml` | `openpolicyagent/opa:1.9.0-static`, pinned by its multi-platform digest |
 | ConfigMap `opa-config` | `docs/contracts/policy/kustomization.yaml` | the two contract files themselves (see "Deviations") |
 | Policy operator: ServiceAccount, Role, RoleBinding, ClusterRole and binding `browserjs-policy-operator`, Deployment (1 replica, `Recreate`), Service `policy-operator:8080` | `policy-operator.yaml` | image `browserjs/policy-operator`, built from `images/policy-operator` (track A) |
+| Redis webhook queue: Service, singleton StatefulSet, retained 10 GiB PVC, NetworkPolicy | `webhook-redis.yaml` | AOF `appendfsync always`, `noeviction`; [delivery contract](contracts/webhooks.md) |
 | Backend: Role rules for `sessionpolicies`, `apitokens`, `apitokens/status`; env `POLICY_OPERATOR_URL`, `OPERATOR_API_TOKEN` | `backend.yaml` | no rule names `configmaps` or `secrets` |
 | NetworkPolicy: one more egress rule on `session-pods`; new `opa` and `policy-operator` | `networkpolicy.yaml` | table below |
 | Secret `policy-tokens` (`bundle-token`, `opa-token`, `operator-api-token`) | not in the repository | made once by the deploy workflow and by `hack/local-up.sh`, as Pomerium's are; placeholders in `secrets.example.yaml` |
@@ -35,9 +36,10 @@ one node the two OPA replicas share it: the spread constraint is
 
 | Pods | Ingress | Egress |
 |---|---|---|
-| session pods | unchanged (the backend) | unchanged, plus pods `app: opa` on 8181 |
-| `app: opa` | 8181 from session pods and from the operator | the operator on 8080; DNS |
-| `app: policy-operator` | 8080 from OPA and from the backend | OPA on 8181; DNS; TCP 443 and 6443 to any address |
+| session pods | unchanged (the backend) | unchanged, plus pods `app: policy-operator` on 8080 |
+| `app: opa` | 8181 from the operator | the operator on 8080; DNS |
+| `app: policy-operator` | 8080 from OPA, session pods, and the backend | OPA on 8181; Redis on 6379; DNS; TCP 443 and 6443 to any address |
+| `app: webhook-redis` | 6379 from the operator | none |
 
 The last rule is for the API server, which a NetworkPolicy cannot name: it
 is an address outside the pod network (private on GKE, the node's on kind).
