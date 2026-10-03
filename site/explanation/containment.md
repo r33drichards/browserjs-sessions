@@ -44,20 +44,20 @@ session what you would not trust the operator with.
 ## 4. The code's own limits
 
 A `run_js` program can do four things: call the desktop's capabilities
-(browser, desktop, and running programs), read and write `/data/memory/`,
+(browser, desktop, and running programs), read and write `/data/`,
 handle artifacts, and print. It has a time
 limit and a memory limit. It cannot create, stop or delete sessions.
 
 ## 5. Policy
 
-::: warning Coming, not yet enabled
-Policies are built and switched off. Until they are on, every connected
-agent has all of the abilities above.
-:::
+Policies are live for new sessions. The default policy is unrestricted;
+choose a narrower one to limit the agent. Sessions created before enforcement
+remain unrestricted, including after sleep and wake, and cannot be given a
+policy. Create a replacement session to use one.
 
-Every call from a program to the desktop passes one checkpoint. A session's
-policy is asked there, with the tool's name and the full arguments, and
-answers yes or no. No answer means no.
+In a session with enforcement, every call from a program to the desktop
+passes one checkpoint. A session's policy is asked there, with the tool's
+name and the full arguments, and answers yes or no. No answer means no.
 
 That makes it possible to say, per session: only these operations; only
 these sites; no script in pages; look but do not touch. The policy is
@@ -100,5 +100,5 @@ difference.
 - Watch the screen when it matters, and take over for the step you want to
   do yourself.
 - Use **Stop** when no agent call should start the session.
-- When policies are on, start from a narrow one and widen it.
+- Start from a narrow policy and widen it.
 - Delete sessions you no longer need. Their logins go with them.

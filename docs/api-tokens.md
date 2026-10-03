@@ -57,8 +57,8 @@ Settings of the backend, empty by default:
 | `API_URL` | `ALLOWED_EMAILS` | |
 |---|---|---|
 | empty | any | Off. No token endpoints, no API host. Today's behaviour. |
-| set | empty | The host of `API_URL` is the API's alone, and refuses every credential. No token endpoints. This is `deploy/gke`. |
-| set | set | On. This is `deploy/local`. |
+| set | empty | The host of `API_URL` is the API's alone, and refuses every credential. No token endpoints. |
+| set | set | On. This is `deploy/gke` and `deploy/local`. |
 
 `API_URL` is the API host's base URL with no path (`https://api.computeruse.site`);
 it must be the `from` of the `api` routes in the overlay's
@@ -90,8 +90,10 @@ It also needs, from track B of the plan: `crd-apitoken.yaml` in
 `deploy/base/kustomization.yaml`, and the backend's Role on `apitokens`
 (get, list, create, delete) and `apitokens/status` (patch).
 
-To turn it on in production: add `ALLOWED_EMAILS` to
-`deploy/gke/patch-backend.yaml`, make the Secret, and deploy.
+Production API tokens are enabled: `deploy/gke/patch-backend.yaml` sets
+both `API_URL` and `ALLOWED_EMAILS`, and the deploy workflow creates the
+signing Secret. For a new deployment, set those variables, create the
+Secret, and deploy.
 
 ## A token
 

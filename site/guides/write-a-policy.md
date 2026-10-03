@@ -1,12 +1,13 @@
 # Write a policy
 
-::: warning Coming, not yet enabled
-Policies are built and switched off. This page describes how they work when
-they are on. See [Live, coming and planned](/reference/status).
-:::
-
 A policy decides which of the agent's calls a session accepts. It does not
-restrict you at the screen.
+restrict you at the screen. Policies are live for new sessions; a new session
+starts unrestricted unless you choose another policy.
+
+Sessions created before enforcement remain unrestricted, including after
+sleep and wake. They show an unsupported policy and cannot be given one.
+To use a policy, create a replacement session and move the work you need
+before deleting the old one.
 
 ## Choose a starting point
 
@@ -46,7 +47,10 @@ allow_tool_call if {
 ```
 
 3. Try calls against it in the editor before saving.
-4. Choose **Save policy**. It applies to the next call.
+4. Choose **Save policy**. Wait for **Policy saved and in force** before
+   relying on the new rules. If the app says **Policy saved; loading**, the
+   previous policy stays in force until the new one is loaded. If it cannot
+   compile, the previous policy stays in force and the app shows the errors.
 
 Programs are decided the same way. A call to run one arrives as the program
 and its arguments, already separate, so a rule can name them. This policy

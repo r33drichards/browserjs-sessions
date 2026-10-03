@@ -1,8 +1,8 @@
 # SDK: Rust, Python, JavaScript, Go
 
 ::: warning Coming, not yet published
-The SDK is built and tested against a fake of the API. It needs API tokens,
-which are switched off, and it is in no package registry yet. Until it is,
+The SDK is built and tested against a fake of the API. It works with the
+live API using API tokens, but is in no package registry yet. Until it is,
 build it from `sdk/` in the repository.
 :::
 

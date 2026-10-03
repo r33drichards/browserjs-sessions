@@ -5,9 +5,19 @@ stages, and what has and has not been checked on a cluster. Design:
 [plans/2026-10-02-session-policies-design.md](plans/2026-10-02-session-policies-design.md).
 Contract: [contracts/policy/deploy.md](contracts/policy/deploy.md).
 
-**On `main` session policies are off**, in `deploy/gke` and in `deploy/local`.
-Deploying `main` installs everything and runs nothing; sessions behave
-exactly as before.
+**On `main`, `deploy/gke` is enforcing and `deploy/local` is off.** New
+production sessions receive a policy and ask OPA on every browser, desktop
+and shell tool call. Sessions created before enforcement keep their stored
+template and remain unrestricted; see "serving to enforcing" below.
+
+The successful [production deploy of `b5a267c`](https://github.com/r33drichards/computer-use/actions/runs/37088963148)
+(started October 2, 2026 at 7:12 p.m. America/Los_Angeles) checked the enforcing
+stage and successfully rolled out the policy operator and OPA. This records
+rollout evidence, not a fresh audit of all running sessions or the functional
+GKE checks below. API tokens are enabled as well.
+
+The stages below remain the procedure for a new deployment or rollback;
+they do not describe an outstanding production rollout.
 
 ## What is deployed
 
@@ -56,9 +66,9 @@ first and refuses files that disagree with each other.
 
 | Stage | OPA, operator | Backend | New session pods | What is enforced |
 |---|---|---|---|---|
-| `off` (now) | 0 replicas | no `POLICY_OPERATOR_URL`: policies are off in the API and the UI | as before | nothing; mcp-js's own file policy, as before |
+| `off` | 0 replicas | no `POLICY_OPERATOR_URL`: policies are off in the API and the UI | as before | nothing; mcp-js's own file policy, as before |
 | `serving` | running, with an empty bundle | the same as `off` | as before | nothing. Nothing a user or a session can notice has changed |
-| `enforcing` | running | keeps a `SessionPolicy` for every session it creates | mcp-js asks OPA on every browser call | each new session's own policy; **a session with no `SessionPolicy` is denied every browser call** |
+| `enforcing` | running | keeps a `SessionPolicy` for every session it creates | mcp-js asks OPA on every browser, desktop and shell tool call | each new session's own policy; **a session with no `SessionPolicy` is denied every browser, desktop and shell tool call** |
 
 What the script changes:
 
@@ -112,7 +122,8 @@ hack/policy-stage.sh gke enforcing
 
 Needs first: **the pinned backend is one with the policy API** (track C,
 on `main` since #48). An older backend ignores `POLICY_OPERATOR_URL` and
-would make sessions with no policy, which are denied every browser call.
+would make sessions with no policy, which are denied every browser, desktop
+and shell tool call.
 
 What the deploy does:
 
@@ -126,8 +137,9 @@ What the deploy does:
 - **Sessions created from now on** (cold, or adopted from the new warm
   pods) get a `SessionPolicy` (the unrestricted one unless another was
   asked for) and ask OPA at `browserjs/decision/<session id>/mcp_tools` on
-  every browser call. A session shows `starting` until its policy is loaded
-  (measured below: about 0.2 s from the object to `Ready`).
+  every browser, desktop and shell tool call. A session shows `starting`
+  until its policy is loaded (measured below: about 0.2 s from the object
+  to `Ready`).
 - **A warm pod nobody has adopted** has no `SessionPolicy`, so it is denied
   everything. Nothing can call it either.
 - **Sessions that existed before this deploy never become enforcing.**
@@ -137,8 +149,8 @@ What the deploy does:
   `policy: {"state": "unsupported"}`, and cannot be given a policy. To put
   a policy on one, delete it and create it again.
 
-From this stage on, OPA is in the path of every browser call of the new
-sessions: see "Checked on kind" for what its absence looks like.
+From this stage on, OPA is in the path of every browser, desktop and shell
+tool call of the new sessions: see "Checked on kind" for what its absence looks like.
 
 ### Going back
 
@@ -148,8 +160,8 @@ sessions: see "Checked on kind" for what its absence looks like.
   keep the policy they have (the operator still serves it); it can no
   longer be edited, the API being off.
 - To `off`: only when no session that asks OPA is left. With OPA at 0
-  replicas every browser call of such a session is denied, after 5 seconds
-  each. `hack/gke-status.sh` (the deploy summary and the "cluster info"
+  replicas every browser, desktop and shell tool call of such a session is
+  denied, after 5 seconds each. `hack/gke-status.sh` (the deploy summary and the "cluster info"
   workflow) lists which Sandboxes ask OPA (`asks-opa=yes`). The script
   cannot know this; it is the operator's check to make.
 
@@ -211,19 +223,18 @@ Rollback, each a pull request and a `deploy`:
   uses the pods, so revert at leisure. At step 2 the pod templates are
   already applied: revert to `serving` and deploy at once.
 
-Not checked anywhere but on kind, so look for it at step 1: that the
-operator becomes ready on GKE (its NetworkPolicy rule for the API server),
-and at step 2: that a gVisor session pod reaches OPA under Dataplane V2
-(the first browser call of a new session answers quickly, and is not a
-5 s denial).
+The recorded production deploy confirms that the operator and OPA roll out
+successfully on GKE. Record separate functional evidence that a gVisor
+session pod reaches OPA under Dataplane V2 (an allowed tool call answers
+quickly, rather than a 5 s denial); rollout success alone does not prove it.
 
 ## API tokens
 
 Separate from the stages above, and independent of them except that a
-token's `policies` scopes are useful only when enforcing. Installed by this
-change: the `APIToken` CRD, the backend's Role rules, and the Secret
+token's `policies` scopes are useful only when enforcing. The deployment
+includes the `APIToken` CRD, the backend's Role rules, and the Secret
 `api-tokens` (`signing-key`), which the deploy workflow makes once. They are
-turned on by adding to `deploy/gke/patch-backend.yaml` (docs/api-tokens.md):
+enabled in `deploy/gke/patch-backend.yaml` (docs/api-tokens.md):
 
 ```yaml
             - name: ALLOWED_EMAILS
@@ -341,13 +352,15 @@ Three things this found:
   a replica is replaced; [`spec/opa-replacement`](../spec/opa-replacement/README.md)
   has the model, what was seen on kind, and what the two rest on.
 
-## Not yet checked: GKE
+## GKE verification
 
-Step 5 of the track needs the production cluster (there is no separate
-staging cluster) and was not run: this track does not deploy. Items 1 and
-2 need only the `serving` stage.
+The production deploy linked above confirms the enforcing stage and
+successful rollouts of the operator and OPA. The checks below describe
+additional evidence to collect; this document has no recorded results for
+session-to-OPA reachability, allowed and denied calls, or snapshot restore
+under an edited policy. Do not infer those results from a successful deploy.
 
-After a deploy in the `serving` stage:
+Items 1 and 2 can be run in either the `serving` or `enforcing` stage:
 
 1. "cluster info" workflow, section "Session policies": `opa` 2/2 and
    `policy-operator` 1/1 ready, the `opa` EndpointSlice with two ready
@@ -357,8 +370,8 @@ After a deploy in the `serving` stage:
 2. gVisor and Dataplane V2, from a running session's pod. The new egress
    rule applies to every session pod, old ones included, so any session
    will do. The browser container has bash as `/bin/sh` and little else
-   (Node is not on its `PATH`), so the request is made by hand. Written
-   for this document and not yet run:
+   (Node is not on its `PATH`), so the request is made by hand. Example
+   command (no recorded result in this document):
 
    ```
    kubectl -n browserjs-sessions exec s-… -c browser -- /bin/sh -c '
@@ -403,11 +416,12 @@ without a call failing.
    cannot generate it from `docs/contracts/policy`. Added:
    `docs/contracts/policy/kustomization.yaml`, which generates the ConfigMap
    there and is a resource of `deploy/base`. No contract file changed.
-3. **The pod template change is not in the files on `main`.** It is the
-   `enforcing` stage, applied by `hack/policy-stage.sh`, for the reason at
-   the top. `deploy_test.go` needed no change to accept the variable (it
-   already renders the blueprint with the ID `$(SESSION_ID)`); it gained a
-   test of the variable itself.
+3. **The pod template change follows the overlay's stage.** On `main` it
+   is present in GKE's templates and absent locally. `hack/policy-stage.sh`
+   applies it in the `enforcing` stage, for the reason at the top.
+   `deploy_test.go` needed no change to accept the variable (it already
+   renders the blueprint with the ID `$(SESSION_ID)`); it gained a test of
+   the variable itself.
 4. **Operator**: a read-only root filesystem with an `emptyDir` at `/tmp`
    (the contract says no volumes; the operator needs `/tmp`), uid 65532,
    and `USER` in its environment (above). The ClusterRole of the contract

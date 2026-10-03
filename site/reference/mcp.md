@@ -15,7 +15,7 @@ https://sessions.computeruse.site/<session id>/mcp
 | Sign-in | OAuth in a browser, with the account that owns the session |
 | Who may call | The session's owner |
 | Sleeping session | A call (`POST`) wakes it and waits. The event stream (`GET`) does not wake it and answers `405` until the session runs |
-| With an API token | `https://api.computeruse.site/<session id>/mcp`. Coming, not yet enabled |
+| With an API token | `https://api.computeruse.site/<session id>/mcp`, with `Authorization: Bearer <token>` and the `sessions:connect` scope |
 
 ## `run_js`
 
@@ -38,7 +38,7 @@ No state carries from one call to the next. The desktop and the disk do.
 | | |
 | --- | --- |
 | `mcp.callTool(server, tool, arguments)` | Calls a capability of the desktop. See [Capabilities](/reference/capabilities). |
-| `fs` | Node-style file functions, for `/data/memory/` only. |
+| `fs` | Node-style file functions, for `/data/` and its subdirectories. |
 | `artifact(key, mime, bytes)` | Attaches an image or file to the result. Up to 16 MiB each. |
 | `artifact.get(key)`, `artifact.list()` | Reads stored artifacts and uploaded files. |
 | top-level `await` | Supported. |

@@ -2,6 +2,34 @@ run javascript or typescript code in v8
 
 Executes code and returns the console output directly. Each call runs in a fresh V8 isolate — no state is carried between calls.
 
+`fs` can read and write all of `/data/`, the session's persistent disk. Save
+working, reusable JavaScript under `/data/scripts/` so later calls and agents
+can reuse it without repeating its source in the conversation. Check
+`/data/scripts/INDEX.md` for existing scripts before rebuilding a helper, and
+update the index with each script's purpose, inputs, and expected output.
+
+For saved MCP orchestration scripts, use a short inline loader (saved scripts
+in this example must be JavaScript, not TypeScript or ES modules):
+
+```js
+const source = await fs.readFile("/data/scripts/mcp/collect.js", "utf8");
+await eval("(async () => {\n" + source + "\n})()");
+```
+
+For saved browser DOM scripts, read the source and pass it to `evaluate`:
+
+```js
+const script = await fs.readFile("/data/scripts/browser/extract.js", "utf8");
+const result = await mcp.callTool("browser", "browser_execute", {
+  operations: [{ type: "evaluate", params: { script } }],
+});
+console.log(result.content[0].text);
+```
+
+Keep scripts focused and print only the result needed for the task. Saved
+scripts persist; JavaScript variables still do not carry between calls.
+The `file` parameter is not enabled in this deployment; use the loaders above.
+
 TypeScript support is type removal only — types are stripped before execution, not checked. Invalid types will be silently removed, not reported as errors.
 
 params:
@@ -95,10 +123,13 @@ Each execution starts with a fresh V8 isolate — no state is carried between ca
 
 ### Persistent memory — `/data/memory/`
 
-`fs` is enabled for exactly one directory: **`/data/memory/`**, on a persistent
-volume. Anything written there survives across calls, sessions, agents, and
-server restarts. Everything outside it is denied. Use it as your long-term
-memory: notes, state, task progress, learned facts, per-site selectors, drafts.
+`fs` can access **`/data/`** and all its subdirectories on the session’s
+persistent volume. Files survive calls, sleep, stop and resume, and are
+available to the next agent in that session. Paths outside `/data/` are denied.
+Use `/data/memory/` for notes, state, task progress, learned facts, per-site
+selectors, and drafts. Use `/data/scripts/` for reusable scripts, with an
+`INDEX.md` describing their purpose and arguments. Read browser scripts with
+`fs.readFile` and pass their contents to `browser_execute`’s `evaluate` operation.
 
 Start every session by reading the index, and keep it current:
 

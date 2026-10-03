@@ -1,16 +1,16 @@
 # Live, coming and planned
 
-**Live** works today. **Coming** is built and switched off. **Planned** is
-being worked on and is not in the product. Nothing here is a promise of a
-date.
+**Live** works today. **Coming** is built but not yet enabled or published.
+**Planned** is being worked on and is not in the product. Nothing here is a
+promise of a date.
 
 | Pillar | Capability | Status |
 | --- | --- | --- |
 | Simple | Sessions: create, rename, sleep, wake, stop, start, delete; suggested names | Live |
 | Simple | One MCP URL per session, `https://sessions.computeruse.site/<id>/mcp` | Live |
-| Simple | Create and manage sessions with one API call, using API tokens on `api.computeruse.site` | Coming |
-| Simple | Terraform provider | Coming |
-| Simple | SDK for Rust, Python, JavaScript and Go | Coming |
+| Simple | Create and manage sessions with one API call, using API tokens on `api.computeruse.site` | Live |
+| Simple | Terraform provider (build from source; not published in a registry) | Coming |
+| Simple | SDK for Rust, Python, JavaScript and Go (build from source; not published in registries) | Coming |
 | Stateful | Persistent disk per session | Live |
 | Stateful | Sleep to a snapshot; wake with the screen and processes as they were | Live |
 | Stateful | **Sleep** and **Wake** buttons, and `POST /sessions/{id}/sleep` and `/wake` | Live |
@@ -25,4 +25,8 @@ date.
 | Admin interface | List, create, watch and take over, sleep, wake, stop, delete | Live |
 | Admin interface | Full screen; the desktop follows the viewer's size | Live |
 | Admin interface | Clipboard box; files in and out; paste or drop files anywhere on the page | Live |
-| Policy | Per-session policies in Rego, covering browser, desktop and shell calls, in the editor or as code | Coming |
+| Policy | Per-session policies in Rego, covering browser, desktop and shell calls, in the editor or as code | Live for new sessions |
+
+Sessions created before policy enforcement remain unrestricted and report
+`unsupported`, including after sleep and wake. Create a replacement session
+to use a policy. See [Write a policy](/guides/write-a-policy).

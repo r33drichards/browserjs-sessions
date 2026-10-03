@@ -49,7 +49,7 @@ That is one tool call, not one per click. See [Why code mode](/explanation/code-
 | --- | --- | --- |
 | Browser: pages, by selector and script | `browser_execute` | Live |
 | Desktop: mouse, keyboard, screen, clipboard | `desktop_execute` | Live |
-| Shell: run commands | `exec` | Planned |
+| Shell: run commands | `exec` | Live |
 
 ## A light admin interface
 
@@ -61,11 +61,12 @@ the agent works on, so you can do a step yourself and hand back.
 
 Each session can carry a policy that decides which of the agent's calls are
 allowed: which operations, which sites, with which arguments. Write it as
-JSON or as Rego, in the app's editor or as code. The policy binds the agent,
+Rego, in the app's editor or as code. The policy binds the agent,
 not you at the screen.
 
-Policies are built and not switched on yet. See
-[Live, coming and planned](/reference/status).
+Policies are live for new sessions, which start unrestricted unless you
+choose another policy. Older sessions can remain unrestricted; see
+[Write a policy](/guides/write-a-policy) for how to use one.
 
 ## What a desktop contains today
 

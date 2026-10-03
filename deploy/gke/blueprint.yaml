@@ -144,11 +144,7 @@ podTemplate:
             drop: ["ALL"]
         volumeMounts:
           - name: data
-            mountPath: /data/memory
-            subPath: memory
-          - name: data
-            mountPath: /data/mcp
-            subPath: mcp
+            mountPath: /data
     volumes:
       - name: shm
         emptyDir:
