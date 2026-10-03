@@ -59,6 +59,8 @@ type API struct {
 
 	// Who may ask for a canary session (see SetCanary). Empty: nobody.
 	canary map[string]bool
+	// Evaluated with the verified caller's identity, never request JSON.
+	skillsImage func(context.Context, string) string
 
 	onCreated func(id string) // nil: nothing (see OnCreated)
 }
@@ -74,6 +76,12 @@ func (a *API) SetCanary(emails []string) {
 	for _, email := range emails {
 		a.canary[email] = true
 	}
+}
+
+// SetSkillsImage selects a digest for new sessions; empty leaves the blueprint
+// and warm pool unchanged. An explicitly authorized canary takes precedence.
+func (a *API) SetSkillsImage(selectImage func(context.Context, string) string) {
+	a.skillsImage = selectImage
 }
 
 // OnCreated has f called with the ID of each session this API creates or
@@ -329,6 +337,16 @@ func (a *API) create(w http.ResponseWriter, r *http.Request, u auth.User) {
 			return
 		}
 		ctx = sessions.WithImageDigests(ctx, body.Canary)
+	} else if a.skillsImage != nil {
+		if digest := a.skillsImage(ctx, u.Subject); digest != "" {
+			digests := map[string]string{"mcp-js": digest}
+			if err := sessions.CheckImageDigests(digests); err != nil {
+				slog.Error("skills image flag returned an invalid digest", "err", err)
+				writeError(w, http.StatusServiceUnavailable, "skills image is not configured correctly")
+				return
+			}
+			ctx = sessions.WithImageDigests(ctx, digests)
+		}
 	}
 	// Checked before anything is created: an invalid policy creates nothing.
 	asked, ok := a.policyFor(w, r, u, body.Policy)

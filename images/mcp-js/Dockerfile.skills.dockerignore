@@ -1,0 +1,10 @@
+**
+!images/
+!images/mcp-js/
+!images/mcp-js/**
+!docs/
+!docs/**
+!site/
+!site/reference/
+!site/reference/**
+!README.md

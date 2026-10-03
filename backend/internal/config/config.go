@@ -67,6 +67,11 @@ type Config struct {
 	WarmPool     string
 	WarmPoolWait time.Duration
 
+	// A digest of the skills-enabled mcp-js image, selected only for these
+	// authenticated users by the OpenFeature mcp-skills flag. Empty is off.
+	SkillsImageDigest string
+	SkillsEmails      []string
+
 	// APIURL is the base URL of the API host, where API tokens are the
 	// credential (https://api.<domain>; the API is under /v1). "" for none:
 	// there are then no API tokens at all.
@@ -131,6 +136,17 @@ func FromEnv(get func(string) string) (Config, error) {
 		WarmPool:        get("WARM_POOL"),
 	}
 	c.SizesPath = or("SIZES_PATH", filepath.Join(filepath.Dir(c.BlueprintPath), "sizes.yaml"))
+	c.SkillsImageDigest = strings.TrimSpace(get("MCP_SKILLS_IMAGE_DIGEST"))
+	if c.SkillsImageDigest != "" {
+		if err := sessions.CheckImageDigests(map[string]string{"mcp-js": c.SkillsImageDigest}); err != nil {
+			return Config{}, fmt.Errorf("MCP_SKILLS_IMAGE_DIGEST: %w", err)
+		}
+	}
+	for _, email := range strings.Split(get("MCP_SKILLS_EMAILS"), ",") {
+		if email = strings.ToLower(strings.TrimSpace(email)); email != "" {
+			c.SkillsEmails = append(c.SkillsEmails, email)
+		}
+	}
 	template := get("SESSION_URL_TEMPLATE")
 	for _, req := range []struct{ name, value string }{
 		{"PUBLIC_URL", c.PublicURL}, {"SESSION_URL_TEMPLATE", template}, {"POMERIUM_JWKS_URL", c.PomeriumJWKSURL},
