@@ -30,11 +30,6 @@ agent its own browser tab with the `tab` parameter of `browser_execute`.
 
 ## Without a person: API tokens
 
-::: warning Coming, not yet enabled
-API tokens are built and switched off. This section describes how they work
-when they are on.
-:::
-
 A script, a CI job or a service cannot use a sign-in page. It uses a token.
 
 1. Create a token on the **API tokens** page of the app. Choose its scopes.
@@ -136,8 +131,9 @@ to run code. See the [SDK reference](/reference/sdk) for every call.
 
 ## As infrastructure: Terraform
 
-::: warning Coming, not yet enabled
-The provider is built, needs API tokens, and is in no registry yet.
+::: warning Coming, not yet published
+The provider works with the live API but is in no registry yet. Until it is,
+build it from `terraform-provider-browserjs/` in the repository.
 :::
 
 ```hcl
@@ -146,13 +142,34 @@ resource "browserjs_session" "research" {
 }
 
 resource "browserjs_session_policy" "research" {
-  session_id = browserjs_session.research.id
-  json = jsonencode({
-    version = 1
-    allow   = { operations = ["*"] }
-    deny    = { operations = ["evaluate", "setContent"] }
-  })
+  session_id  = browserjs_session.research.id
+  managed_url = "https://github.com/example/infra/tree/main/desktops"
+  rego        = file("${path.module}/no-scripting.rego")
 }
 ```
+
+Keep `no-scripting.rego` beside the Terraform configuration. For example:
+
+```txt
+package browserjs.policy
+
+import rego.v1
+
+allow_tool_call if {
+    input.server == "browser"
+    input.tool == "browser_execute"
+    is_array(input.arguments.operations)
+    every op in input.arguments.operations {
+        op.type in {"navigate", "click", "type", "press", "select", "wait",
+                    "screenshot", "setViewport", "url"}
+    }
+}
+```
+
+This allows browser operations except scripting and replacing page content,
+and refuses desktop control and the shell. The token needs `sessions:read`
+and `sessions:write` for the session resource, and `policies:read` and
+`policies:write` for its policy. Apply waits for the policy to be in force by
+default. The app shows it read-only with a link to `managed_url`.
 
 The provider and its resources keep the product's earlier name.

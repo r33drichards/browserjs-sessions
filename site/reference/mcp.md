@@ -15,7 +15,7 @@ https://sessions.computeruse.site/<session id>/mcp
 | Sign-in | OAuth in a browser, with the account that owns the session |
 | Who may call | The session's owner |
 | Sleeping session | A call (`POST`) wakes it and waits. The event stream (`GET`) does not wake it and answers `405` until the session runs |
-| With an API token | `https://api.computeruse.site/<session id>/mcp`. Coming, not yet enabled |
+| With an API token | `https://api.computeruse.site/<session id>/mcp`, with `Authorization: Bearer <token>` and the `sessions:connect` scope |
 
 ## `run_js`
 

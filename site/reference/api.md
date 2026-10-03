@@ -5,7 +5,7 @@ There are two APIs with the same session object.
 | | Host | Signs in with | Status |
 | --- | --- | --- | --- |
 | The app's API | `https://app.computeruse.site/api` | The app's sign-in cookie | Live. For the app, not for scripts; it may change |
-| The API for code | `https://api.computeruse.site/v1` | An API token | Coming, not yet enabled |
+| The API for code | `https://api.computeruse.site/v1` | An API token | Live |
 
 Requests and answers are JSON. An error is `{"error": "<message>"}`.
 
@@ -19,7 +19,13 @@ Requests and answers are JSON. An error is `{"error": "<message>"}`.
   "state": "running",
   "created": "2026-10-01T12:00:00Z",
   "size": "small",
-  "mcp_url": "https://sessions.computeruse.site/s-abcde/mcp"
+  "mcp_url": "https://sessions.computeruse.site/s-abcde/mcp",
+  "policy": {
+    "kind": "rego",
+    "version": 1,
+    "state": "ready",
+    "management": {"mode": "editor"}
+  }
 }
 ```
 
@@ -32,6 +38,13 @@ from its disk. `size` is `small`, `medium` or `large`
 change of size waits for the session's next start. An ID
 is `s-` and five or ten lower-case characters.
 
+`policy` summarizes the session's policy: its kind, version, state, management
+and, when available, the hash of the policy in force. The state is `ready`,
+`loading`, `invalid` or `unsupported`. A new session stays `starting` until
+its first policy is in force. Sessions created before enforcement have
+`policy: {"state": "unsupported"}` and remain unrestricted, including after
+sleep and wake; create a replacement session to use a policy.
+
 ## Sessions
 
 Paths are under `/api` on the app's host and under `/v1` on the API host.
@@ -41,7 +54,7 @@ Paths are under `/api` on the app's host and under `/v1` on the API host.
 | `GET /me` | Who is calling | `200` |
 | `GET /sessions` | Lists your sessions | `200` array |
 | `GET /sizes` | Lists the sizes a session can have, and what each gives the desktop | `200` `{default, sizes: [{name, cpuMillis, memoryMiB, warm}]}` |
-| `POST /sessions` | Creates one. Body `{"name": "...", "size": "small" \| "medium" \| "large"}`, both optional; the size defaults to `small` | `201` session. `409` at the limit, or when there is no room for the size (`"code": "no_capacity"`). `400` for a bad name or size |
+| `POST /sessions` | Creates one. Body `{"name": "...", "size": "small" \| "medium" \| "large"}`, all fields optional; the size defaults to `small`. Also accepts `policy: {kind: "rego", source: "...", management?}` | `201` session. `409` at the limit, or when there is no room for the size (`"code": "no_capacity"`). `400` for a bad name or size |
 | `GET /sessions/{id}` | Reads one | `200` session |
 | `PATCH /sessions/{id}` | Renames, resizes, stops or resumes. Body `{"name": "...", "size": "...", "action": "stop" \| "resume"}`, all optional | `200` session. `400` for a bad name, size or action, and then nothing of the request is done. `409` (`no_capacity`) when a resume finds no room |
 | `POST /sessions/{id}/sleep` | Puts a running session to sleep: takes a snapshot, then removes the desktop. Answers when the snapshot is done, which takes seconds. No body | `200` session. `409` if it is starting, stopping, stopped or failed |
@@ -81,16 +94,50 @@ the same request can be sent again later.
 | `DELETE /api/sessions/{id}/files/{name}` | Deletes a file | `2xx` |
 | `POST /api/sessions/{id}/clipboard` | Puts files on the desktop's clipboard. Body `{"files": ["name"]}` | `2xx` |
 
-## Policies and tokens
+## Policies
 
-Coming, not yet enabled. On the API host, with the scopes in
-[Use it from code](/guides/use-from-code):
+Live. Paths are under `/api` on the app's host and `/v1` on the API host.
+On the API host, reading a session's policy needs `policies:read`; changing
+it or its management needs `policies:write`.
 
-| Method and path | Does |
-| --- | --- |
-| `GET /v1/sessions/{id}/policy` | Reads a session's policy |
-| `PUT /v1/sessions/{id}/policy` | Replaces it |
-| `DELETE /v1/sessions/{id}/policy` | Returns it to unrestricted |
-| `POST /v1/policies/validate` | Checks a policy without saving it |
-| `POST /v1/policies/evaluate` | Asks a policy about a sample call |
-| `POST /oauth/token` | Exchanges an API token for an access token (client credentials) |
+| Method and path | Does | Answers |
+| --- | --- | --- |
+| `GET /sessions/{id}/policy` | Reads the policy, including its source | `200` policy, with `ETag: "<version>"` |
+| `PUT /sessions/{id}/policy` | Saves `{kind: "rego", source: "...", management?}` | `200` ready or unchanged; `202` saved but not yet in force |
+| `DELETE /sessions/{id}/policy` | Resets to unrestricted, editable in the app | The same readiness answers as PUT |
+| `PUT /sessions/{id}/policy/management` | Sets `{mode: "editor"}` or `{mode: "iac", managed_url: "https://..."}` | `200` policy; source unchanged |
+| `GET /policy-presets` | Lists ready-made Rego policies | `200` presets |
+| `POST /policies/validate` | Checks `{kind: "rego", source: "..."}` without saving | `200` verdict, including `ok`, errors and warnings; invalid source has `ok: false` |
+| `POST /policies/evaluate` | Checks `{kind: "rego", source: "...", input: {...}}` against a sample call | `200` with `ok`, `allow` and errors |
+
+`kind` can be omitted; Rego is the only policy format. Source must be nonempty
+and at most 65536 bytes. A session created without a policy starts with the
+unrestricted one. An explicit policy is validated before creating the
+session; invalid source is `422`, and an unavailable validator is `503`.
+
+An unchanged write returns `200` without raising the version. Otherwise, a
+write waits up to 10 seconds for the policy to be loaded. A `202` with
+`state: "loading"` means wait for `ready` before relying on the new rules.
+The previous policy stays in force while an edit loads, or if it becomes
+`invalid`. A `202` can carry `state: "invalid"` and errors if reconciliation
+rejects a saved policy. A validation failure before saving is `422` and
+changes nothing. `If-Match: "<version>"` on PUT refuses a stale edit with
+`412`.
+
+In `editor` mode, an API token's save must set `management.mode` to `iac`
+and give an https `managed_url`. In `iac` mode the app shows the policy
+read-only; an app save is refused with `409`. Change management back to
+`editor` to edit it in the app. Resetting through DELETE also returns it to
+`editor`. All session policy routes return `409` for an `unsupported`
+session. Validation and evaluation return `503` if the operator is
+unavailable. Any API token can use presets, validation and evaluation,
+regardless of its scopes.
+
+See [Policy format](/reference/policy) for tool inputs and warnings.
+
+## API tokens
+
+Tokens are live. Create and revoke them on the app's **API tokens** page.
+On the API host, `POST /oauth/token` exchanges an API token for an access
+token using the client-credentials grant. See
+[Use it from code](/guides/use-from-code) for scopes and examples.
