@@ -1,9 +1,8 @@
 # Policy format
 
-::: warning Coming, not yet enabled
-Policies are built and switched off. See
-[Live, coming and planned](/reference/status).
-:::
+Policies are live for new sessions. Sessions created before enforcement
+report `unsupported` and remain unrestricted, even after sleep and wake.
+Create a replacement session to use a policy on that work.
 
 A session has one policy. It is asked about every `mcp.callTool` that code
 in `run_js` makes. A call it does not allow is refused, and the code gets an
@@ -88,4 +87,7 @@ the common mistakes, not every one.
 | In the app | In the editor on the session's **Policy** tab |
 | As code | Through the API or the Terraform provider. The app shows it read-only |
 
-A new session with no policy given gets the unrestricted one.
+A new session with no policy given gets the unrestricted one. It stays
+`starting` until its first policy is in force. Saving an edit can return
+while it is still loading; the previous policy remains in force until the
+new one is loaded. An invalid edit also leaves the previous policy in force.
