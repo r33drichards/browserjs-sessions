@@ -180,11 +180,7 @@ $(hack/policy-stage.sh --env warm | sed 's/^/        /')
         periodSeconds: 1
       volumeMounts:
         - name: data
-          mountPath: /data/memory
-          subPath: memory
-        - name: data
-          mountPath: /data/mcp
-          subPath: mcp
+          mountPath: /data
   volumes:
     - name: stub
       configMap:

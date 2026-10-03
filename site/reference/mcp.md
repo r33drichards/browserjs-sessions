@@ -38,7 +38,7 @@ No state carries from one call to the next. The desktop and the disk do.
 | | |
 | --- | --- |
 | `mcp.callTool(server, tool, arguments)` | Calls a capability of the desktop. See [Capabilities](/reference/capabilities). |
-| `fs` | Node-style file functions, for `/data/memory/` only. |
+| `fs` | Node-style file functions, for `/data/` and its subdirectories. |
 | `artifact(key, mime, bytes)` | Attaches an image or file to the result. Up to 16 MiB each. |
 | `artifact.get(key)`, `artifact.list()` | Reads stored artifacts and uploaded files. |
 | top-level `await` | Supported. |
