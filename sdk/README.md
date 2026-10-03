@@ -210,7 +210,13 @@ nix develop ..#sdk -c scripts/live.sh            # all four
 nix develop ..#sdk -c scripts/live.sh rust go    # some
 ```
 
-It needs an API token with every scope. It takes it from
+In CI it is `.github/workflows/sdk-live.yml`, run by hand from main: it
+makes a token for the run in the cluster with `hack/mint-token.sh` (an hour,
+every session and policy scope, only its hash stored), runs the four
+languages against `https://api.computeruse.site`, and deletes the token
+whatever happened. No token is kept anywhere.
+
+By hand, it needs an API token with every scope. It takes it from
 `COMPUTERUSE_API_TOKEN`, or on macOS from the Keychain item
 `computeruse-api-token`
 (`security add-generic-password -s computeruse-api-token -a computeruse -w`),

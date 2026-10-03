@@ -1,0 +1,134 @@
+name: sdk live
+
+# The SDK's live tests (sdk/scripts/live.sh) against the real service, in
+# Rust, Python, JavaScript and Go: each creates a session, drives it, puts a
+# policy on it, sleeps and wakes it, and deletes it.
+#
+# Started by hand, from main only. No token is stored anywhere: the job
+# makes one in the cluster for this run (hack/mint-token.sh), an API token
+# of the first address in the backend's ALLOWED_EMAILS with every session
+# and policy scope, valid for an hour, and deletes it at the end whatever
+# happened. Only its hash is ever in the cluster; the token itself is masked
+# in the log and lives in one step's environment.
+#
+# Needs the deployer's access to the cluster (environment production, as
+# deploy.yml) and create and delete on apitokens.browserjs.dev.
+
+on:
+  workflow_dispatch:
+    inputs:
+      languages:
+        description: "Which languages, space-separated (rust python javascript go)"
+        required: false
+        default: "rust python javascript go"
+
+permissions:
+  contents: read
+  id-token: write # the deployer's Google identity
+
+concurrency:
+  group: sdk-live
+  cancel-in-progress: false
+
+env:
+  CLUSTER: browserjs
+  CLUSTER_LOCATION: us-west1-a
+  KUBECTL_VERSION: v1.36.5
+  BASE_URL: https://api.computeruse.site
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+
+jobs:
+  live:
+    name: live tests
+    runs-on: ubuntu-24.04
+    # Shorter than the hour the cluster credentials and the token last.
+    timeout-minutes: 55
+    environment: production
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Refuse unless on main
+        env:
+          REF: ${{ github.ref }}
+          LANGUAGES: ${{ inputs.languages }}
+        run: |
+          [ "$REF" = refs/heads/main ] || { echo "::error::run this from main, not $REF"; exit 1; }
+          for language in $LANGUAGES; do
+            case "$language" in rust | python | javascript | go) ;; *) echo "::error::unknown language $language"; exit 1 ;; esac
+          done
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            sdk/target
+          key: sdk-live-${{ hashFiles('sdk/Cargo.lock', 'flake.lock') }}
+          restore-keys: |
+            sdk-live-
+
+      # Everything compiled before a token exists, so the hour is the tests'.
+      - name: Build
+        working-directory: sdk
+        env:
+          LANGUAGES: ${{ inputs.languages }}
+        run: nix develop ..#sdk -c scripts/live.sh --build $LANGUAGES
+
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOY_SA }}
+
+      - uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
+        with:
+          version: ${{ env.KUBECTL_VERSION }}
+
+      - uses: google-github-actions/get-gke-credentials@3da1e46a907576cefaa90c484278bb5b259dd395 # v3.0.0
+        with:
+          cluster_name: ${{ env.CLUSTER }}
+          location: ${{ env.CLUSTER_LOCATION }}
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          use_dns_based_endpoint: "true"
+
+      # The token is made, used and forgotten in this one step. Its id (not
+      # a secret) goes to the next step, which deletes it.
+      - name: Make a token and run the live tests
+        env:
+          LANGUAGES: ${{ inputs.languages }}
+        run: |
+          set -euo pipefail
+          allowed="$(kubectl -n browserjs-sessions get deployment backend \
+            -o jsonpath='{.spec.template.spec.containers[?(@.name=="backend")].env[?(@.name=="ALLOWED_EMAILS")].value}')"
+          owner="${allowed%%,*}"
+          [ -n "$owner" ] || { echo "::error::the backend has no ALLOWED_EMAILS: API tokens are off"; exit 1; }
+          echo "::add-mask::$owner"
+
+          minted="$(hack/mint-token.sh create --owner "$owner" --ttl 60 --name "sdk live tests (CI run $GITHUB_RUN_ID)" \
+            --scopes "sessions:read sessions:write sessions:connect policies:read policies:write")"
+          token_id="$(sed -n 's/^id=//p' <<< "$minted")"
+          echo "TOKEN_ID=$token_id" >> "$GITHUB_ENV"
+          COMPUTERUSE_API_TOKEN="$(sed -n 's/^token=//p' <<< "$minted")"
+          unset minted
+          # Masked before anything could print it.
+          echo "::add-mask::$COMPUTERUSE_API_TOKEN"
+          [ -n "$token_id" ] && [ -n "$COMPUTERUSE_API_TOKEN" ] || { echo "::error::no token was made"; exit 1; }
+          export COMPUTERUSE_API_TOKEN COMPUTERUSE_BASE_URL="$BASE_URL"
+
+          cd sdk
+          nix develop ..#sdk -c scripts/live.sh $LANGUAGES
+
+      - name: Delete the token
+        if: always()
+        run: |
+          if [ -n "${TOKEN_ID:-}" ]; then
+            hack/mint-token.sh delete "$TOKEN_ID"
+          fi
