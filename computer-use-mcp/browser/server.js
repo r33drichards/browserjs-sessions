@@ -13,12 +13,14 @@
  *
  * Reachable only on the Railway private network; mcp-js (JWT auth + OPA
  * policy) is the public entry point.
+ * Standalone clients may select stdio with --stdio.
  */
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import puppeteer from 'puppeteer-core';
@@ -36,6 +38,7 @@ if (process.argv[2] === 'download-dir') {
 
 const CDP_URL = process.env.CDP_URL || 'http://127.0.0.1:9222';
 const PORT = Number(process.env.BROWSER_MCP_PORT || 8081);
+const STDIO = process.argv.includes('--stdio');
 
 const DEFAULT_WIDTH = 1280;
 const DEFAULT_HEIGHT = 800;
@@ -63,7 +66,7 @@ const LAUNCH_TIMEOUT_MS = 60000;
 function launchBrowser({ hidden = false } = {}) {
   return new Promise((resolve, reject) => {
     const env = hidden ? { ...process.env, BROWSER_START_HIDDEN: '1' } : process.env;
-    const child = spawn(LAUNCHER, [], { stdio: ['ignore', 'inherit', 'inherit'], env });
+    const child = spawn(LAUNCHER, [], { stdio: ['ignore', STDIO ? 2 : 'inherit', 'inherit'], env });
     const timer = setTimeout(() => {
       child.kill();
       reject(new Error('Chromium did not start within 60 s'));
@@ -449,6 +452,15 @@ async function readBody(req) {
   return raw ? JSON.parse(raw) : undefined;
 }
 
+// Stdio is the standalone transport; keep HTTP for hosted sessions.
+if (STDIO) {
+  const server = buildServer();
+  const transport = new StdioServerTransport();
+  server.onclose = () => { desktop.stop(); process.exit(0); };
+  process.once('SIGTERM', () => { desktop.stop(); process.exit(0); });
+  process.once('SIGINT', () => { desktop.stop(); process.exit(0); });
+  await server.connect(transport);
+} else {
 // Stateless Streamable HTTP: a fresh server+transport per request.
 http
   .createServer(async (req, res) => {
@@ -505,3 +517,5 @@ http
     }
   })
   .listen(PORT, process.env.BROWSER_MCP_HOST || '::', () => console.log(`browser MCP listening on :${PORT}/mcp (CDP ${CDP_URL})`));
+
+}

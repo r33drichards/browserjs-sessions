@@ -405,7 +405,10 @@ export function displaySize() {
 }
 
 const WORKER = fileURLToPath(new URL('./desktop-worker.js', import.meta.url));
-const startWorker = () => fork(WORKER, [], { stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
+// Native addon diagnostics must not enter the stdio MCP protocol stream.
+const startWorker = () => fork(WORKER, [], {
+  stdio: ['ignore', process.argv.includes('--stdio') ? 2 : 'inherit', 'inherit', 'ipc'],
+});
 
 // The tool, as server.js calls it: `await desktop(args)` returns an MCP tool
 // result. One call at a time (there is one mouse and one keyboard). The

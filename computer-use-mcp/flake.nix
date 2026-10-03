@@ -9,8 +9,13 @@
     flake = false;
   };
 
+  inputs.mcp-js = {
+    url = "github:r33drichards/mcp-js/3efb9355794581f5ac5827d712b89819f4a3179c";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
+
   outputs =
-    { self, nixpkgs, mcp-exec }:
+    { self, nixpkgs, mcp-exec, mcp-js }:
     let
       linuxSystems = [
         "x86_64-linux"
@@ -19,7 +24,7 @@
       forLinux = f: nixpkgs.lib.genAttrs linuxSystems (system: f nixpkgs.legacyPackages.${system});
     in
     {
-      packages = forLinux (
+      packages = nixpkgs.lib.recursiveUpdate (forLinux (
         pkgs:
         let
           browser-mcp = pkgs.buildNpmPackage {
@@ -356,6 +361,23 @@
           default = runtime;
         }
         // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isx86_64 { inherit desktop-smoke; }
-      );
+      )) (nixpkgs.lib.genAttrs [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ] (system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+          standalone = import ./nix/standalone.nix {
+            inherit pkgs;
+            gateway = mcp-js.packages.${system}.default;
+            execServer = pkgs.callPackage "${mcp-exec}/nix/package.nix" {};
+          };
+        in { computer-use-mcp = standalone; default = standalone; }
+      ));
+      devShells = nixpkgs.lib.genAttrs [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ] (system: {
+        default = nixpkgs.legacyPackages.${system}.mkShell {
+          packages = [ nixpkgs.legacyPackages.${system}.nodejs_22 ];
+        };
+      });
+      apps = nixpkgs.lib.genAttrs [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ] (system: {
+        default = { type = "app"; program = "${self.packages.${system}.computer-use-mcp}/bin/computer-use-mcp"; };
+      });
     };
 }

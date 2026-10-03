@@ -7,10 +7,24 @@ not need the parent repository's backend, database, OAuth, or Kubernetes.
 
 ## Run locally
 
-Install Node.js 22 or newer and mcp-v8 v0.21.0-rc.4 or newer (the hosted
-image pins v0.21.0-rc.4). Older mcp-v8 builds that only support stdio/SSE
-upstreams cannot read this project's HTTP server configuration.
-From this directory:
+For a pinned runtime with Node, mcp-v8, mcp-exec, native addons, and policies
+supplied by Nix, run from this directory:
+
+```sh
+nix run .
+# Or build the command and its complete dependency closure:
+nix build .#computer-use-mcp
+./result/bin/computer-use-mcp
+```
+
+This is a Nix package with dependencies in the store, not yet a portable
+single executable. Nix is required on the destination. Builds are defined
+for Linux on x86_64/ARM64 and macOS on Apple Silicon; native desktop support
+still has the limitations below. The pinned Nixpkgs no longer supports Intel
+macOS. Intel macOS and Windows are not build targets yet.
+
+For development without Nix, install Node.js 22 or newer and mcp-v8
+v0.21.0-rc.4 or newer. From this directory:
 
 ```sh
 npm run setup
@@ -36,9 +50,23 @@ MCP client to launch this project directly (use absolute paths):
 }
 ```
 
-The launcher starts the browser MCP on an available loopback port, waits
-for it, then starts mcp-v8 over stdio. It stops both children on shutdown or
-failure. Stdout is reserved for MCP. Tabs and gateway session data live in
+For the Nix build, configure the client with the built wrapper instead:
+
+```json
+{
+  "mcpServers": {
+    "computer-use": {
+      "command": "/absolute/path/to/computer-use-mcp/result/bin/computer-use-mcp"
+    }
+  }
+}
+```
+
+The launcher starts mcp-v8 over stdio, which starts the browser/desktop
+server and optional exec server through private stdio pipes. No local HTTP
+ports are opened. The launcher stops the gateway on shutdown; the gateway
+owns the upstream processes. Stdout is reserved for MCP. Tabs and gateway
+session data live in
 `~/.computer-use-mcp/`; each JavaScript execution starts fresh.
 
 ```js
@@ -54,9 +82,12 @@ console.log(result);
 | `CDP_URL` | `http://127.0.0.1:9222` | Existing Chrome/Chromium debugging endpoint |
 | `MCP_V8_BIN` | `mcp-v8` on PATH | Gateway executable |
 | `COMPUTER_USE_STATE_DIR` | `~/.computer-use-mcp` | Persistent tabs and sessions |
-| `COMPUTER_USE_EXEC_URL` | unset | Optional already-running mcp-exec HTTP endpoint |
+| `MCP_EXEC_BIN` | unset; pinned by Nix | Start mcp-exec over stdio |
+| `COMPUTER_USE_EXEC_URL` | unset | Optional remote mcp-exec HTTP endpoint; overrides the local exec server |
 
-The local launcher does not start Chromium or mcp-exec. It grants browser
+The local launcher does not start Chromium. The Nix package includes and
+starts mcp-exec; development runs can enable it with `MCP_EXEC_BIN`. It grants
+browser
 and desktop tool access, and exec tool access when configured. Direct host
 filesystem and network access from JavaScript remain disabled; the tools
 can act on the connected computer. Connect only trusted MCP clients.
@@ -76,7 +107,8 @@ project does not change those limitations.
 - `bin/start.mjs`: local stdio supervisor.
 - `code-mode/`: hosted mcp-v8 image, policies, and hosted tool instructions.
 - `desktop/`: Linux desktop configuration.
-- `flake.nix`, `Dockerfile`: self-contained Linux desktop image build.
+- `flake.nix`, `nix/standalone.nix`: pinned local runtime package and hosted Linux desktop build.
+- `Dockerfile`: hosted Linux desktop image.
 - `test/`: unit and integration checks, including real desktop image smoke tests.
 
 The parent service consumes these same sources. Build the hosted images
@@ -95,6 +127,8 @@ instructions and does not enable those hosted workflows.
 
 ```sh
 npm test
+# Test the complete Nix-built stdio chain without a display or browser:
+nix develop -c node test/package-smoke.mjs "$PWD/result/bin/computer-use-mcp"
 # Linux with Docker: exercises the actual packaged desktop
 ./test/desktop-image-smoke.sh browserjs/browser:dev
 # Chrome integration (set the installed executable)

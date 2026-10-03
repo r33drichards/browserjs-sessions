@@ -12,21 +12,19 @@ test('local launcher serves MCP, reserves stdout, and cleans up after gateway ex
   const gateway = join(dir, 'gateway.mjs');
   await writeFile(gateway, `#!${process.execPath}
 import { readFile, writeFile } from 'node:fs/promises';
-import http from 'node:http';
+import { Client } from '${new URL('../browser/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js', import.meta.url).href}';
+import { StdioClientTransport } from '${new URL('../browser/node_modules/@modelcontextprotocol/sdk/dist/esm/client/stdio.js', import.meta.url).href}';
 const path = process.env.MCP_V8_MCP_CONFIG;
 const [server] = JSON.parse(await readFile(path, 'utf8'));
-const response = await new Promise((resolve, reject) => {
- const request = http.request(server.url, {method: 'POST', headers: {
- 'content-type': 'application/json', accept: 'application/json, text/event-stream'
- }}, response => {
- let text = '';
- response.on('data', chunk => text += chunk);
- response.on('end', () => resolve({status: response.statusCode, text}));
- });
- request.on('error', reject);
- request.end(JSON.stringify({jsonrpc: '2.0', id: 1, method: 'tools/list', params: {}}));
-});
-if (response.status !== 200 || !response.text.includes('browser_execute') || !response.text.includes('desktop_execute')) process.exit(2);
+if (server.transport !== 'stdio' || server.args.at(-1) !== '--stdio') process.exit(2);
+const client = new Client({name: 'launcher-test', version: '1'});
+await client.connect(new StdioClientTransport({command: server.command, args: server.args,
+ env: {...process.env, ...server.env}}));
+const response = await client.listTools();
+if (!response.tools.some(t => t.name === 'browser_execute') || !response.tools.some(t => t.name === 'desktop_execute')) process.exit(2);
+const result = await client.callTool({name: 'browser_execute', arguments: {operations: [{type: 'invalid'}]}});
+if (!result.isError) process.exit(3);
+await client.close();
 await writeFile(process.env.TEST_CONFIG_PATH, path);
 console.log('gateway-stdio');
 `, { mode: 0o700 });

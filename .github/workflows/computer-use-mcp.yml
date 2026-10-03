@@ -1,0 +1,33 @@
+name: Standalone computer-use MCP
+on:
+  pull_request:
+    paths:
+      - 'computer-use-mcp/**'
+      - '.github/workflows/computer-use-mcp.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'computer-use-mcp/**'
+      - '.github/workflows/computer-use-mcp.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, macos-14]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+      - name: Build pinned runtime
+        run: nix build ./computer-use-mcp#computer-use-mcp --print-build-logs
+      - name: Test browser and stdio launcher
+        run: |
+          nix develop ./computer-use-mcp -c npm run setup --prefix computer-use-mcp
+          nix develop ./computer-use-mcp -c npm test --prefix computer-use-mcp
+      - name: Exercise packaged stdio servers
+        run: nix develop ./computer-use-mcp -c node computer-use-mcp/test/package-smoke.mjs "$PWD/result/bin/computer-use-mcp"
