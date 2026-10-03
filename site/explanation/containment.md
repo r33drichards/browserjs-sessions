@@ -44,7 +44,7 @@ session what you would not trust the operator with.
 ## 4. The code's own limits
 
 A `run_js` program can do four things: call the desktop's capabilities
-(browser, desktop, and running programs), read and write `/data/memory/`,
+(browser, desktop, and running programs), read and write `/data/`,
 handle artifacts, and print. It has a time
 limit and a memory limit. It cannot create, stop or delete sessions.
 
