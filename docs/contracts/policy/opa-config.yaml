@@ -21,3 +21,10 @@ bundles:
 persistence_directory: /var/opa
 decision_logs:
   console: false
+  service: operator
+  resource: /logs
+  reporting:
+    min_delay_seconds: 1
+    max_delay_seconds: 2
+    upload_size_limit_bytes: 32768
+    buffer_size_limit_bytes: 8388608

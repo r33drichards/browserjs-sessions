@@ -121,13 +121,53 @@ async def evaluate_(request: web.Request) -> web.Response:
     return web.json_response(out)
 
 
+async def validate_webhook(request: web.Request) -> web.Response:
+    op = request.app[OPERATOR]
+    if not _authorized(request, op.cfg.api_token):
+        return _unauthorized()
+    try:
+        doc = await request.json()
+        _, verdict = await op.webhooks.validate(doc)
+    except (ValueError, TypeError):
+        return _error("invalid webhook configuration")
+    return web.json_response(verdict)
+
+
+async def tool_events(request: web.Request) -> web.Response:
+    op = request.app[OPERATOR]
+    decisions = request.path == "/logs"
+    if not _authorized(request, op.cfg.bundle_token if decisions else op.cfg.api_token):
+        return _unauthorized()
+    if not op.ready:
+        return web.Response(status=503)
+    try:
+        # aiohttp decompresses Content-Encoding: gzip and enforces the
+        # application body limit on the decompressed OPA upload.
+        doc = await request.json()
+    except (ValueError, TypeError):
+        return _error("the body is not JSON")
+    if not isinstance(doc, list) or len(doc) > 10000:
+        return _error("expected an array of at most 10000 events")
+    if decisions:
+        from .webhooks import decision_event
+        events = [event for item in doc if (event := decision_event(item)) is not None]
+    else:
+        events = [item for item in doc if isinstance(item, dict)]
+    if not op.webhooks.ingest(events):
+        return web.Response(status=503)
+    return web.Response(status=204)
+
+
 def make_app(op: Operator) -> web.Application:
     # aiohttp refuses larger bodies itself, with 413.
-    app = web.Application(client_max_size=MAX_EVALUATE_BODY)
+    app = web.Application(client_max_size=16 * 1024 * 1024)
     app[OPERATOR] = op
     app.router.add_get("/healthz", healthz)
     app.router.add_get("/readyz", readyz)
     app.router.add_get("/bundles/browserjs.tar.gz", bundle)
+    app.router.add_post("/logs", tool_events)
+    app.router.add_post("/v1/tool-events", tool_events)
+    app.router.add_post("/v1/webhooks/validate", validate_webhook)
     app.router.add_post("/v1/validate", validate)
     app.router.add_post("/v1/evaluate", evaluate_)
     return app

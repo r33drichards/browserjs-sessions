@@ -209,3 +209,30 @@ async def test_real_opa_replicas_follow_the_operator(stack):
     await handlers.delete(name="s-bbbbb")
     assert await until(lambda: all(decide(u, "s-bbbbb", CALL) == {} for u in urls))
     assert await asyncio.to_thread(decide, urls[0], "s-aaaaa", CALL) == {"result": {"allow": True}}
+
+
+async def test_real_opa_batches_tool_decisions_into_session_webhook(stack):
+    """The deployed OPA config uploads actual gzip logs, including denials."""
+    op, addresses = stack
+    sent = []
+    async def send(settings, body, bid):
+        sent.append(json.loads(body))
+        return True
+    op.webhooks._send = send
+    resources = [resource("s-aaaaa", "rego", ALLOW_ALL), resource("s-bbbbb", "rego", DENY_ALL)]
+    for body in resources:
+        body["spec"]["webhook"] = {"url": "https://example.com/hook", "batch_size": 1, "flush_interval_seconds": 1}
+    await op.first_pass(resources)
+    url = "http://" + addresses[0]
+    assert await until(lambda: http(url + "/health")[0] == 200)
+    assert await until(lambda: decide(url, "s-aaaaa", {}) == {"result": {"allow": False}})
+    assert await until(lambda: decide(url, "s-bbbbb", {}) == {"result": {"allow": False}})
+    assert await asyncio.to_thread(decide, url, "s-aaaaa", CALL) == {"result": {"allow": True}}
+    assert await asyncio.to_thread(decide, url, "s-bbbbb", CALL) == {"result": {"allow": False}}
+    deadline = time.monotonic() + 10
+    while len(sent) < 2 and time.monotonic() < deadline:
+        await asyncio.sleep(0.05)
+    exported = {batch["session_id"]: batch["events"][0] for batch in sent}
+    assert exported["s-aaaaa"]["allowed"] is True
+    assert exported["s-bbbbb"]["allowed"] is False
+    assert all(event["tool"] == "browser_execute" and event["id"] for event in exported.values())

@@ -214,9 +214,9 @@ spec:
       ports:
         - port: 8181
           protocol: TCP
-    # The API server. A NetworkPolicy cannot name it: it is an address
-    # outside the pod network, private on GKE and the node's own on kind, on
-    # 443 or 6443. So this is those two ports, anywhere.
+    # The API server (443/6443) and public HTTPS webhooks (443). The
+    # exporter validates the actual resolved destination and refuses private
+    # addresses and redirects; API-server traffic is a separate trusted client.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0

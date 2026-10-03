@@ -75,6 +75,31 @@ spec:
                   type: string
                   minLength: 1
                   maxLength: 65536
+                webhook:
+                  description: Optional batched tool-call export (docs/contracts/webhooks.md).
+                  type: object
+                  required: ["url"]
+                  properties:
+                    url:
+                      type: string
+                      maxLength: 2048
+                      pattern: '^https://'
+                    filter:
+                      type: string
+                      maxLength: 65536
+                    batch_size:
+                      type: integer
+                      minimum: 1
+                      maximum: 500
+                      default: 100
+                    flush_interval_seconds:
+                      type: integer
+                      minimum: 1
+                      maximum: 60
+                      default: 5
+                    signing_secret:
+                      type: string
+                      maxLength: 256
                 management:
                   description: Who may edit this policy. Enforced by the backend; recorded here.
                   type: object

@@ -127,6 +127,9 @@ export function createApi(fetchImpl: Fetch = fetch) {
   }
 
   return {
+    getWebhook: async <T,>(id: string) => call<T>("GET", await sessionPath(id, "/webhook")),
+    putWebhook: async (id: string, settings: unknown) => call<void>("PUT", await sessionPath(id, "/webhook"), settings),
+    deleteWebhook: async (id: string) => call<void>("DELETE", await sessionPath(id, "/webhook")),
     me: () => call<Me>("GET", "/api/me"),
     listSessions: (all = false) => call<Session[]>("GET", all ? "/api/sessions?all=1" : "/api/sessions"),
     getSession: async (id: string) => call<Session>("GET", await sessionPath(id)),

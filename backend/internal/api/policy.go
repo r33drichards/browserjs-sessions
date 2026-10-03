@@ -23,6 +23,9 @@ func (a *API) registerPolicies(mux *http.ServeMux) {
 		return
 	}
 	p := a.policies
+	mux.HandleFunc("GET /api/sessions/{id}/webhook", a.session(p.GetWebhook))
+	mux.HandleFunc("PUT /api/sessions/{id}/webhook", a.session(p.PutWebhook))
+	mux.HandleFunc("DELETE /api/sessions/{id}/webhook", a.session(p.DeleteWebhook))
 	mux.HandleFunc("GET /api/sessions/{id}/policy", a.session(p.Get))
 	mux.HandleFunc("PUT /api/sessions/{id}/policy", a.session(p.Put))
 	mux.HandleFunc("DELETE /api/sessions/{id}/policy", a.session(p.Delete))
