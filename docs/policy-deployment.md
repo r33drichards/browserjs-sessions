@@ -331,9 +331,13 @@ Three things this found:
   5 seconds of mcp-js's timeout**, also when the Service simply has no
   address (kind's kube-proxy does not reject the connection). An agent in
   an enforcing session sees every call hang for 5 s and then throw.
-- The `preStop` sleep on OPA (5 s, the kubelet's own, since the image has no
+- The `preStop` sleep on OPA (10 s, the kubelet's own, since the image has no
   shell) is not in the contract. It keeps a terminating pod answering until
-  the Service has stopped sending to it.
+  the Service has stopped sending to it. Nor is the 5 s before a new
+  replica's first readiness probe, which keeps it out of the Service until
+  session pods can reach it. Both are there so that no call is denied while
+  a replica is replaced; [`spec/opa-replacement`](../spec/opa-replacement/README.md)
+  has the model, what was seen on kind, and what the two rest on.
 
 ## Not yet checked: GKE
 

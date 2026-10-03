@@ -1,0 +1,43 @@
+Error: Invariant NoSpuriousDeny is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ tries = 0
+/\ conn = None
+/\ deletes = 0
+/\ reachable = (p1 :> TRUE @@ p2 :> TRUE @@ p3 :> FALSE @@ p4 :> FALSE)
+/\ call = "idle"
+/\ phase = (p1 :> "serving" @@ p2 :> "serving" @@ p3 :> "none" @@ p4 :> "none")
+/\ endpoint = (p1 :> TRUE @@ p2 :> TRUE @@ p3 :> FALSE @@ p4 :> FALSE)
+State 2: <Delete line 54, col 5 to line 63, col 59 of module OpaReplacement>
+/\ tries = 0
+/\ conn = None
+/\ deletes = 1
+/\ reachable = (p1 :> TRUE @@ p2 :> TRUE @@ p3 :> FALSE @@ p4 :> FALSE)
+/\ call = "idle"
+/\ phase = (p1 :> "draining" @@ p2 :> "serving" @@ p3 :> "starting" @@ p4 :> "none")
+/\ endpoint = (p1 :> TRUE @@ p2 :> TRUE @@ p3 :> FALSE @@ p4 :> FALSE)
+State 3: <PreStopOver line 74, col 5 to line 77, col 68 of module OpaReplacement>
+/\ tries = 0
+/\ conn = None
+/\ deletes = 1
+/\ reachable = (p1 :> TRUE @@ p2 :> TRUE @@ p3 :> FALSE @@ p4 :> FALSE)
+/\ call = "idle"
+/\ phase = (p1 :> "stopping" @@ p2 :> "serving" @@ p3 :> "starting" @@ p4 :> "none")
+/\ endpoint = (p1 :> TRUE @@ p2 :> TRUE @@ p3 :> FALSE @@ p4 :> FALSE)
+State 4: <Connect line 118, col 5 to line 137, col 56 of module OpaReplacement>
+/\ tries = 1
+/\ conn = None
+/\ deletes = 1
+/\ reachable = (p1 :> TRUE @@ p2 :> TRUE @@ p3 :> FALSE @@ p4 :> FALSE)
+/\ call = "idle"
+/\ phase = (p1 :> "stopping" @@ p2 :> "serving" @@ p3 :> "starting" @@ p4 :> "none")
+/\ endpoint = (p1 :> TRUE @@ p2 :> TRUE @@ p3 :> FALSE @@ p4 :> FALSE)
+State 5: <Connect line 118, col 5 to line 137, col 56 of module OpaReplacement>
+/\ tries = 1
+/\ conn = None
+/\ deletes = 1
+/\ reachable = (p1 :> TRUE @@ p2 :> TRUE @@ p3 :> FALSE @@ p4 :> FALSE)
+/\ call = "denied"
+/\ phase = (p1 :> "stopping" @@ p2 :> "serving" @@ p3 :> "starting" @@ p4 :> "none")
+/\ endpoint = (p1 :> TRUE @@ p2 :> TRUE @@ p3 :> FALSE @@ p4 :> FALSE)
+201 states generated, 133 distinct states found, 94 states left on queue.

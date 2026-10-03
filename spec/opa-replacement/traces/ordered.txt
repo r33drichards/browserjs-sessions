@@ -1,0 +1,3 @@
+Model checking completed. No error has been found.
+  because two distinct states had the same fingerprint:
+10519 states generated, 3093 distinct states found, 0 states left on queue.
