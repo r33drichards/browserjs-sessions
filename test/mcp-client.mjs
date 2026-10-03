@@ -16,7 +16,7 @@ import { createRequire } from "node:module"
 import { dirname, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
-const modules = ROOT + "/images/browser/browser/node_modules/"
+const modules = ROOT + "/computer-use-mcp/browser/node_modules/"
 const sdk = name => import(pathToFileURL(modules + "@modelcontextprotocol/sdk/dist/esm/" + name).href)
 const { Client } = await sdk("client/index.js")
 const { StreamableHTTPClientTransport } = await sdk("client/streamableHttp.js")

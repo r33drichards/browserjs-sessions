@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://computeruse.site/contracts/policy/tools/exec.schema.json",
   "title": "exec arguments (server \"exec\", tool \"exec\")",
-  "description": "The arguments of mcp-exec's exec tool (ExecRequest in src/service.rs of github.com/r33drichards/mcp-exec, at the commit images/browser/flake.lock pins), which is input.arguments of the mcp_tools policy input when input.server is \"exec\" and input.tool is \"exec\". The server refuses anything that does not match (unknown fields included), but a policy is asked BEFORE the server parses anything: in a policy every field can be missing or of any type, and other fields can be present. images/browser/test/exec-smoke.mjs checks these properties against the packaged server.",
+  "description": "The arguments of mcp-exec's exec tool (ExecRequest in src/service.rs of github.com/r33drichards/mcp-exec, at the commit computer-use-mcp/flake.lock pins), which is input.arguments of the mcp_tools policy input when input.server is \"exec\" and input.tool is \"exec\". The server refuses anything that does not match (unknown fields included), but a policy is asked BEFORE the server parses anything: in a policy every field can be missing or of any type, and other fields can be present. computer-use-mcp/test/exec-smoke.mjs checks these properties against the packaged server.",
   "type": "object",
   "additionalProperties": false,
   "required": ["bin", "timeout"],

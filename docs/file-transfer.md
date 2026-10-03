@@ -23,7 +23,7 @@ session, shown under the Clipboard box on the session page:
 | --- | --- |
 | Folder | `/data/chrome/Downloads` in the `browser` container (`FILES_DIR`). On the session disk, inside the profile's mount, so it survives sleep and needs no new volume mount. |
 | Chromium | `browser-mcp download-dir` (run by the entrypoint before each start of Chromium) writes `download.default_directory`, `savefile.default_directory` and `selectfile.last_directory` into the profile's Preferences. |
-| Pod | The browser container's Node server (port 8081) serves `GET /files`, and `GET`, `PUT`, `DELETE /files/<name>` (`images/browser/browser/files.js`). Bodies are streamed to and from disk. An upload never replaces a file: a taken name becomes `name (1).ext`. |
+| Pod | The browser container's Node server (port 8081) serves `GET /files`, and `GET`, `PUT`, `DELETE /files/<name>` (`computer-use-mcp/browser/files.js`). Bodies are streamed to and from disk. An upload never replaces a file: a taken name becomes `name (1).ext`. |
 | NetworkPolicy | The backend may reach session pods on 8081 as well as 6080 and 8080. |
 | Backend | `GET /api/sessions/{id}/files`, and `GET`, `PUT`, `DELETE /api/sessions/{id}/files/{name}` on the app's host, behind the same sign-in and owner check as the VNC ticket (`backend/internal/proxy/files.go`). |
 
@@ -33,7 +33,7 @@ session, shown under the Clipboard box on the session page:
 sign-in and owner check as the file routes; JSON only) becomes `POST /clipboard`
 on the pod's port 8081. The browser container starts one `xclip` per copy,
 which owns the X11 CLIPBOARD selection and offers a single target,
-`text/uri-list`: the `file://` URIs of the files (`images/browser/browser/clipboard.js`).
+`text/uri-list`: the `file://` URIs of the files (`computer-use-mcp/browser/clipboard.js`).
 
 - Chromium reads pasted files from exactly that target
   (`ClipboardOzone::ReadFilenames`, `ui/base/clipboard/clipboard_ozone.cc`), and
@@ -89,6 +89,6 @@ What keeps it safe:
 
 ```bash
 nix develop -c bash -c 'cd backend && go test ./internal/proxy/ -run File'
-nix develop -c node --test images/browser/test/files.test.mjs images/browser/test/clipboard.test.mjs
+nix develop -c node --test computer-use-mcp/test/files.test.mjs computer-use-mcp/test/clipboard.test.mjs
 nix develop -c bash -c 'cd web && npx vitest run src/files.test.ts'
 ```

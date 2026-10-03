@@ -1,4 +1,4 @@
-// Usage: node --test images/browser/test/desktop.test.mjs  (needs only node)
+// Usage: node --test computer-use-mcp/test/desktop.test.mjs  (needs only node)
 //
 // nut.js is replaced by a stand-in that records what it was asked to do, and
 // the worker process by a fake one: no display is needed. What these cannot
@@ -97,7 +97,7 @@ test('what is wrong with a call is named, with the operation it is in', () => {
 test('the Key and Button names are nut.js\'s own', (t) => {
   let shared;
   try {
-    // Installed only after `npm ci` in images/browser/browser.
+    // Installed only after `npm ci` in computer-use-mcp/browser.
     shared = createRequire(new URL('../browser/package.json', import.meta.url))('@nut-tree-fork/shared');
   } catch {
     t.skip('@nut-tree-fork/shared is not installed');

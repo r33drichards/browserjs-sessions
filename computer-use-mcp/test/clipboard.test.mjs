@@ -1,4 +1,4 @@
-// Usage: node --test images/browser/test/clipboard.test.mjs  (needs only node; X is mocked)
+// Usage: node --test computer-use-mcp/test/clipboard.test.mjs  (needs only node; X is mocked)
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';

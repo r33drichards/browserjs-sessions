@@ -170,7 +170,13 @@ export function createFiles({ dir, maxBytes = DEFAULT_MAX_BYTES, clipboard = nul
       });
     } catch (err) {
       req.removeAllListeners('data').on('error', () => {}).resume(); // the rest is discarded
-      out.destroy();
+      // Wait for a pending open/close before removing the temporary file.
+      // Otherwise the stream can create it after cleanup has already run.
+      await new Promise(resolve => {
+        if (out.closed) return resolve();
+        out.once('close', resolve);
+        out.destroy();
+      });
       fs.rmSync(tmp, { force: true });
       if (err instanceof HungUp) return res.destroy();
       if (err instanceof TooLarge) return refuse(413, 'file too large');

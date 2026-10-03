@@ -1,7 +1,7 @@
 // The UI through Pomerium and Dex, in a headless Chrome, as the test user
 // alice@example.com on the local cluster (hack/local-up.sh):
 //
-//   (cd images/browser/browser && npm ci)    # once, for puppeteer-core
+//   (cd computer-use-mcp/browser && npm ci)    # once, for puppeteer-core
 //   node test/browser-e2e.mjs
 //
 // Signs in, creates a session, checks the live screen, loses the Pomerium
@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url"
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const OUT = process.env.OUT_DIR ?? ROOT + "/.local"
 const CHROME = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-const require = createRequire(ROOT + "/images/browser/browser/")
+const require = createRequire(ROOT + "/computer-use-mcp/browser/")
 const puppeteer = require("puppeteer-core")
 const APP = "https://app.localtest.me"
 const results = []

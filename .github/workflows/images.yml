@@ -24,6 +24,7 @@ on:
       - "backend/**"
       - "web/**"
       - "images/**"
+      - "computer-use-mcp/**"
       - "site/**"
       # The policy operator's image carries contract files.
       - "docs/contracts/policy/**"
@@ -37,6 +38,7 @@ on:
       - "backend/**"
       - "web/**"
       - "images/**"
+      - "computer-use-mcp/**"
       - "site/**"
       # The policy operator's image carries contract files.
       - "docs/contracts/policy/**"
@@ -108,8 +110,8 @@ jobs:
           # images/policy-operator/Dockerfile.dockerignore.
           table='[
             {"name":"backend","context":".",             "timeout":30, "cache":true, "free_disk":false},
-            {"name":"mcp-js", "context":"images/mcp-js", "timeout":15, "cache":true, "free_disk":false},
-            {"name":"browser","context":"images/browser","timeout":120,"cache":false,"free_disk":true},
+            {"name":"mcp-js", "context":"computer-use-mcp/code-mode", "timeout":15, "cache":true, "free_disk":false},
+            {"name":"browser","context":"computer-use-mcp","timeout":120,"cache":false,"free_disk":true},
             {"name":"site",   "context":"site",          "timeout":15, "cache":true, "free_disk":false},
             {"name":"policy-operator","context":".","file":"images/policy-operator/Dockerfile","timeout":15,"cache":true,"free_disk":false},
             {"name":"billing-operator","context":".","file":"images/billing-operator/Dockerfile","timeout":15,"cache":true,"free_disk":false}
@@ -150,8 +152,8 @@ jobs:
               wanted=(backend mcp-js browser site policy-operator billing-operator)
             else
               if touches '^(Dockerfile$|\.dockerignore$|backend/|web/)'; then wanted+=(backend); fi
-              if touches '^images/mcp-js/'; then wanted+=(mcp-js); fi
-              if touches '^images/browser/'; then wanted+=(browser); fi
+              if touches '^computer-use-mcp/code-mode/'; then wanted+=(mcp-js); fi
+              if touches '^computer-use-mcp/'; then wanted+=(browser); fi
               if touches '^site/'; then wanted+=(site); fi
               if touches '^(images/policy-operator/|docs/contracts/policy/)'; then wanted+=(policy-operator); fi
               if touches '^images/billing-operator/'; then wanted+=(billing-operator); fi
@@ -236,7 +238,7 @@ jobs:
         shell: bash
         run: |
           docker image ls browser:ci
-          images/browser/test/desktop-image-smoke.sh browser:ci desktop-smoke-out
+          computer-use-mcp/test/desktop-image-smoke.sh browser:ci desktop-smoke-out
 
       - name: Screenshots and logs of the smoke test
         if: matrix.name == 'browser' && !cancelled()

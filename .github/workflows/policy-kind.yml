@@ -13,7 +13,7 @@ on:
       - "docs/contracts/policy/**"
       - "hack/policy-stage.sh"
       - "hack/pin-images.sh"
-      - "images/mcp-js/**"
+      - "computer-use-mcp/code-mode/**"
       - "images/policy-operator/**"
       - "test/policy/**"
       - "backend/internal/sessions/deploy_test.go"
@@ -93,7 +93,7 @@ jobs:
           python3 docs/contracts/policy/spike/run-cases.py "$RUNNER_TEMP/opa" docs/contracts/policy
 
       - name: mcp-js image
-        run: docker build -t browserjs/mcp-js:dev images/mcp-js
+        run: docker build -t browserjs/mcp-js:dev computer-use-mcp/code-mode
 
       # As images.yml builds it: the repository root is the context.
       - name: Policy operator image

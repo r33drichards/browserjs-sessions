@@ -1,0 +1,14 @@
+{
+  "name": "computer-use-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone code-mode MCP gateway for browser and desktop control",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "setup": "npm ci --prefix browser",
+    "start": "node bin/start.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "bin": { "computer-use-mcp": "bin/start.mjs" }
+}

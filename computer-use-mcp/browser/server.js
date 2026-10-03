@@ -504,4 +504,4 @@ http
       res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32603, message: String(err.message || err) }, id: null }));
     }
   })
-  .listen(PORT, '::', () => console.log(`browser MCP listening on :${PORT}/mcp (CDP ${CDP_URL})`));
+  .listen(PORT, process.env.BROWSER_MCP_HOST || '::', () => console.log(`browser MCP listening on :${PORT}/mcp (CDP ${CDP_URL})`));
