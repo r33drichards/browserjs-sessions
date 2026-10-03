@@ -63,8 +63,8 @@ const DAY = 86_400_000
 // The awake rate of each size, and the sizes each plan includes.
 const SIZES = [
   { key: "small", awakeMicrosPerHour: 200_000 },
-  { key: "medium", awakeMicrosPerHour: 400_000 },
-  { key: "large", awakeMicrosPerHour: 800_000 },
+  { key: "medium", awakeMicrosPerHour: 600_000 },
+  { key: "large", awakeMicrosPerHour: 1_600_000 },
 ]
 const PLANS = [
   { key: "starter", name: "Starter", lookupKey: "cu_starter_monthly_v1", amount: 500, creditMicros: 10 * USD, maxSessions: 3, maxAwake: 2, sizes: ["small", "medium"] },

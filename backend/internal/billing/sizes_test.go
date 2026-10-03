@@ -12,7 +12,7 @@ import (
 	"github.com/r33drichards/computer-use/backend/internal/billing/billingtest"
 )
 
-// The contract's catalogue: a rate for each size, twice and four times a
+// The contract's catalogue: a rate for each size, three and eight times a
 // small session's, and the sizes each plan includes.
 func TestTheCatalogueOfSizes(t *testing.T) {
 	data, err := os.ReadFile("../../../docs/contracts/billing/catalogue.yaml")
@@ -23,7 +23,7 @@ func TestTheCatalogueOfSizes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for size, want := range map[string]int64{"": 200000, "small": 200000, "medium": 400000, "large": 800000, "unheard-of": 200000} {
+	for size, want := range map[string]int64{"": 200000, "small": 200000, "medium": 600000, "large": 1600000, "unheard-of": 200000} {
 		if got := c.AwakeRate(size); got != want {
 			t.Errorf("%q: %d micro-dollars an hour, want %d", size, got, want)
 		}
@@ -40,14 +40,14 @@ func TestTheCatalogueOfSizes(t *testing.T) {
 		}
 	}
 	public := c.Public()
-	if !reflect.DeepEqual(public.Sizes, []billing.PublicSize{{"small", 200000}, {"medium", 400000}, {"large", 800000}}) {
+	if !reflect.DeepEqual(public.Sizes, []billing.PublicSize{{"small", 200000}, {"medium", 600000}, {"large", 1600000}}) {
 		t.Errorf("public sizes %+v", public.Sizes)
 	}
 	if !reflect.DeepEqual(public.Payg.Sizes, []string{"small", "medium"}) {
 		t.Errorf("public payg sizes %v", public.Payg.Sizes)
 	}
 	raw, _ := json.Marshal(public)
-	for _, want := range []string{`"sizes":[{"key":"small","awakeMicrosPerHour":200000},{"key":"medium","awakeMicrosPerHour":400000},{"key":"large","awakeMicrosPerHour":800000}]`,
+	for _, want := range []string{`"sizes":[{"key":"small","awakeMicrosPerHour":200000},{"key":"medium","awakeMicrosPerHour":600000},{"key":"large","awakeMicrosPerHour":1600000}]`,
 		`"key":"pro"`, `"sizes":["small","medium","large"]`} {
 		if !strings.Contains(string(raw), want) {
 			t.Errorf("the public catalogue lacks %s:\n%s", want, raw)
@@ -76,7 +76,7 @@ func TestTheCatalogueOfSizes(t *testing.T) {
 // An hour awake costs the rate of the session's size; the disk is the same.
 func TestUsageBySize(t *testing.T) {
 	sized := rates
-	sized.Sizes = map[string]billing.SizeRate{"medium": {AwakeMicrosPerHour: 400000}, "large": {AwakeMicrosPerHour: 800000}}
+	sized.Sizes = map[string]billing.SizeRate{"medium": {AwakeMicrosPerHour: 600000}, "large": {AwakeMicrosPerHour: 1600000}}
 	b := &books{clock: billingtest.NewClock(t0)}
 	b.accounts = billingtest.NewAccounts(b.clock)
 	b.sessions = billingtest.NewSessions(b.clock)
@@ -97,8 +97,8 @@ func TestUsageBySize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Two sessions for an hour: $0.20 and $0.80, and two 5 GB disks.
-	if used.AwakeSeconds != 7200 || used.AwakeMicros != 1_000_000 || used.DiskMicros != 3840 {
+	// Two sessions for an hour: $0.20 and $1.60, and two 5 GB disks.
+	if used.AwakeSeconds != 7200 || used.AwakeMicros != 1_800_000 || used.DiskMicros != 3840 {
 		t.Fatalf("%+v", used)
 	}
 	by := map[string]int64{}
@@ -108,14 +108,14 @@ func TestUsageBySize(t *testing.T) {
 			t.Errorf("%s: %d awake seconds", s.ID, s.AwakeSeconds)
 		}
 	}
-	if by[small.ID] != 200000 || by[large.ID] != 800000 {
+	if by[small.ID] != 200000 || by[large.ID] != 1600000 {
 		t.Errorf("by session %v", by)
 	}
-	if len(used.Days) != 1 || used.Days[0].AwakeMicros != 1_000_000 {
+	if len(used.Days) != 1 || used.Days[0].AwakeMicros != 1_800_000 {
 		t.Errorf("by day %+v", used.Days)
 	}
 	// What Metronome drew is what the usage says.
-	if bal, _ := b.ledger.Balance(ctx, u.Name); bal.NetMicros != 5_000_000-1_000_000-3840 {
+	if bal, _ := b.ledger.Balance(ctx, u.Name); bal.NetMicros != 5_000_000-1_800_000-3840 {
 		t.Errorf("balance %d", bal.NetMicros)
 	}
 }

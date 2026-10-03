@@ -43,7 +43,7 @@ type billed struct {
 // catalogue is enough of one for the gate.
 var catalogue = billing.Catalogue{
 	Rates: billing.Rates{AwakeMicrosPerHour: 200000, DiskMicrosPerGBHour: 384}, SessionDiskGB: 5,
-	Sizes: map[string]billing.SizeRate{"medium": {AwakeMicrosPerHour: 400000}, "large": {AwakeMicrosPerHour: 800000}},
+	Sizes: map[string]billing.SizeRate{"medium": {AwakeMicrosPerHour: 600000}, "large": {AwakeMicrosPerHour: 1600000}},
 	Payg:  billing.Tier{Name: "Pay as you go", MaxSessions: 3, MaxAwake: 2, Sizes: []string{"medium"}},
 }
 

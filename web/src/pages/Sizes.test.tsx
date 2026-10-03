@@ -105,14 +105,14 @@ describe("the size with billing on", () => {
   it("shows each size's hourly rate, and the cost of the one chosen", async () => {
     await form("active")
     expect(about(/^Small/)).toContain("$0.20 an hour while awake.")
-    expect(about(/^Medium/)).toContain("$0.40 an hour while awake.")
-    expect(about(/^Large/)).toContain("$0.80 an hour while awake.")
+    expect(about(/^Medium/)).toContain("$0.60 an hour while awake.")
+    expect(about(/^Large/)).toContain("$1.60 an hour while awake.")
     expect(screen.getByTestId("create-cost").textContent).toBe(
       "This session will use $0.20 an hour while awake and $1.40 a month while it exists.",
     )
     fireEvent.click(radio(/^Medium/))
     expect(screen.getByTestId("create-cost").textContent).toBe(
-      "This session will use $0.40 an hour while awake and $1.40 a month while it exists.",
+      "This session will use $0.60 an hour while awake and $1.40 a month while it exists.",
     )
   })
 

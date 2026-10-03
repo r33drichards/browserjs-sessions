@@ -142,7 +142,7 @@ export function useCreateGate(size?: string) {
         This session will use {words.awake} an hour while awake and {words.kept} a month while it exists.
       </p>
     ) : null,
-    // What an awake hour of a session of a size costs ("$0.40"), and whether
+    // What an awake hour of a session of a size costs ("$0.60"), and whether
     // the plan includes that size. Null and true where billing is off.
     hourly: (of: string) => (billing ? dollars(awakeRate(billing, of)) : null),
     includes: (of: string) => !billing || billing.mode !== "enforce" || billing.state === "exempt" || planIncludes(billing, of),
