@@ -20,19 +20,36 @@ def verify(mcp):
     canary.expect("io.modelcontextprotocol/skills" in result.get("capabilities", {}).get("extensions", {}),
                   "server did not advertise skills")
     mcp.post({"jsonrpc": "2.0", "method": "notifications/initialized"}, 30)
-    skills = mcp.rpc("skills/list", {})["skills"]
-    skill = next(s for s in skills if s["frontmatter"]["name"] == "project-documentation")
-    manifest = mcp.rpc("skills/get", {"uri": skill["uri"]})["skill"]
-    for path in ("SKILL.md", "INDEX.md", "references/docs/mcp-skills.md"):
-        uri = "skill://project-documentation/" + path
-        entry = next(r for r in manifest["resources"] if r["uri"] == uri)
-        contents = mcp.rpc("resources/read", {"uri": uri})["contents"]
-        canary.expect(len(contents) == 1 and contents[0]["uri"] == uri, "unexpected resource contents")
-        content = contents[0]
-        data = content["text"].encode() if "text" in content else base64.b64decode(content["blob"], validate=True)
-        canary.expect(len(data) == entry["size"] and "sha256:" + hashlib.sha256(data).hexdigest() == entry["digest"],
-                      "resource hash or size mismatch")
-    print("Verified native skills discovery, manifest, entrypoint, index and documentation hashes.")
+    skills = []
+    cursor = None
+    while True:
+        page = mcp.rpc("skills/list", {"cursor": cursor} if cursor else {})
+        skills.extend(page["skills"])
+        cursor = page.get("nextCursor")
+        if not cursor:
+            break
+    by_name = {skill["frontmatter"]["name"]: skill for skill in skills}
+    canary.expect(len(skills) > 1 and "project-documentation" not in by_name,
+                  "expected independent page skills instead of an umbrella skill")
+    for name in ("docs-mcp-skills", "docs-policy-ui", "reference-mcp"):
+        skill = by_name[name]
+        manifest = mcp.rpc("skills/get", {"uri": skill["uri"]})["skill"]
+        prefix = "skill://" + name + "/"
+        canary.expect(all(r["uri"].startswith(prefix) for r in manifest["resources"]),
+                      "page skill manifest includes another skill's resources")
+        entries = [next(r for r in manifest["resources"] if r["uri"] == skill["uri"])]
+        assets = [r for r in manifest["resources"] if r["uri"] != skill["uri"]]
+        if assets:
+            entries.append(assets[0])
+        for entry in entries:
+            uri = entry["uri"]
+            contents = mcp.rpc("resources/read", {"uri": uri})["contents"]
+            canary.expect(len(contents) == 1 and contents[0]["uri"] == uri, "unexpected resource contents")
+            content = contents[0]
+            data = content["text"].encode() if "text" in content else base64.b64decode(content["blob"], validate=True)
+            canary.expect(len(data) == entry["size"] and "sha256:" + hashlib.sha256(data).hexdigest() == entry["digest"],
+                          "resource hash or size mismatch")
+    print(f"Verified {len(skills)} page skills, separate manifests and page/asset hashes.")
 
 
 def main():
