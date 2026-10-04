@@ -31,7 +31,9 @@ def verify(mcp):
     by_name = {skill["frontmatter"]["name"]: skill for skill in skills}
     canary.expect(len(skills) > 1 and "project-documentation" not in by_name,
                   "expected independent page skills instead of an umbrella skill")
-    for name in ("docs-mcp-skills", "docs-policy-ui", "reference-mcp"):
+    canary.expect(all(name.startswith(("tutorials-", "guides-", "reference-", "explanation-")) for name in by_name),
+                  "catalog includes non-customer documentation")
+    for name in ("tutorials-first-program", "guides-use-from-code", "reference-mcp"):
         skill = by_name[name]
         manifest = mcp.rpc("skills/get", {"uri": skill["uri"]})["skill"]
         prefix = "skill://" + name + "/"

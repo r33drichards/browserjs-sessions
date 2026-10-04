@@ -9,6 +9,8 @@ import shutil
 import sys
 from urllib.parse import quote, unquote, urlsplit
 
+PUBLIC_SECTIONS = ('tutorials', 'guides', 'reference', 'explanation')
+
 LINK = re.compile(r'(?P<prefix>!?\[[^\]\n]*\]\(\s*)(?P<target><[^>\n]+>|[^\s)]+)')
 REFERENCE = re.compile(r'(?m)^(?P<prefix> {0,3}\[(?!\^)[^\]\n]+\]:\s*)(?P<target><[^>\n]+>|\S+)')
 FENCE = re.compile(r'^ {0,3}(`{3,}|~{3,})')
@@ -16,10 +18,8 @@ FENCE = re.compile(r'^ {0,3}(`{3,}|~{3,})')
 
 def page_name(path):
     parts = path.with_suffix('').parts
-    if parts[:2] == ('site', 'reference'):
-        parts = ('reference', *parts[2:])
-    elif path == Path('README.md'):
-        parts = ('project', 'readme')
+    if parts[:1] == ('site',):
+        parts = parts[1:]
     slug = re.sub(r'[^a-z0-9]+', '-', '-'.join(parts).lower()).strip('-')
     return slug
 
@@ -67,8 +67,10 @@ def prepare(source, output):
     output = output.resolve()
     if output.exists() and any(output.iterdir()):
         raise ValueError('output directory must be empty')
-    pages = sorted([*(source / 'docs').rglob('*.md'),
-                    *(source / 'site/reference').rglob('*.md'), source / 'README.md'])
+    pages = sorted(page for section in PUBLIC_SECTIONS
+                   for page in (source / 'site' / section).rglob('*.md'))
+    if not pages:
+        raise ValueError('no customer-facing documentation pages found')
     paths = [page.relative_to(source) for page in pages]
     slugs = {path: page_name(path) for path in paths}
     counts = Counter(slugs.values())
@@ -92,30 +94,33 @@ def prepare(source, output):
         heading = re.search(r'(?m)^#\s+(.+)$', text)
         title = heading[1].strip() if heading else path.stem.replace('-', ' ')
         description = f'Use for {title} ({path.as_posix()}).'
-        if path.parts[:2] == ('docs', 'plans'):
-            description += ' Historical design plan; check current runbooks before applying it.'
 
         def resolve(target):
             url = urlsplit(target)
-            if url.scheme or url.netloc or not url.path or url.path.startswith('/'):
+            if url.scheme or url.netloc or not url.path:
                 return target
-            destination = (page.parent / unquote(url.path)).resolve()
+            linked = (source / 'site' / unquote(url.path).lstrip('/')) if url.path.startswith('/') else (page.parent / unquote(url.path))
+            destination = linked.resolve()
+            if not destination.suffix:
+                destination = destination.with_suffix('.md')
             if not destination.is_relative_to(source):
                 return target
             relative = destination.relative_to(source)
             suffix = ('?' + url.query if url.query else '') + ('#' + url.fragment if url.fragment else '')
             if relative in names:
                 return f'skill://{names[relative]}/SKILL.md' + suffix
-            bundled = relative.parts[:1] == ('docs',) or relative.parts[:2] == ('site', 'reference')
+            bundled = len(relative.parts) > 2 and relative.parts[0] == 'site' and relative.parts[1] in PUBLIC_SECTIONS
             if bundled and destination.is_file():
-                if (page.parent / unquote(url.path)).is_symlink():
+                if linked.is_symlink():
                     raise ValueError(f'symlink attachment: {relative}')
                 asset = Path('assets') / relative
                 copied = directory / asset
                 copied.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(destination, copied)
                 return quote(asset.as_posix()) + suffix
-            # Repository files outside the documentation build context stay links.
+            if url.path.startswith('/'):
+                return 'https://computeruse.site' + target
+            # Files outside public documentation are never bundled.
             return 'https://github.com/r33drichards/computer-use/blob/main/' + quote(relative.as_posix()) + suffix
 
         body = rewrite_links(text, resolve)
