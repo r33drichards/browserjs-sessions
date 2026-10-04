@@ -177,6 +177,20 @@ try:
         assert len(replayed) >= 2 and all(a['body'] == recorded['body'] for a in replayed)
         assert not any(e['arguments']['bin'] == 'must-not-execute' for e in state()['effects'])
 
+    with subtest('authenticated backend proxy captures outer and native nested tool calls'):
+        headers = {'Host': 'api.example.test', 'Authorization': 'Bearer ' + token}
+        result = json.loads(cluster.succeed('SERVER=exec MCP_HEADERS='
+            + shlex.quote(json.dumps(headers)) + ' python /etc/webhook-call.py http://'
+            + backend + '/' + sid + ' backend-proxy'))
+        assert result['outcome'] == 'ran', result
+        effects(8)
+        drained()
+        delivered = state()['effects'][-2:]
+        assert {e['stage'] for e in delivered} == {'request', 'attempt'}, delivered
+        assert all(e['session_id'] == sid for e in delivered)
+        assert any(e['server'] == 'mcp-js' for e in delivered)
+        assert any(e['server'] == 'exec' and e['arguments']['bin'] == 'backend-proxy' for e in delivered)
+
     with subtest('removing subscription preserves accepted Redis backlog'):
         mode('fail')
         call('before-disable', 'ran')
@@ -187,7 +201,7 @@ try:
         restart('policy-operator')
         call('after-disable', 'ran')
         mode('accept')
-        effects(7)
+        effects(9)
         drained()
         assert not any(e['arguments']['bin'] == 'after-disable' for e in state()['effects'])
 finally:

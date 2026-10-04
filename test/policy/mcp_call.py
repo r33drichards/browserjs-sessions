@@ -44,6 +44,7 @@ session, ids = None, 0
 def post(message, timeout=60):
     global session
     headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+    headers.update(json.loads(os.environ.get("MCP_HEADERS", "{}")))
     if session:
         headers["Mcp-Session-Id"] = session
     request = urllib.request.Request(base + "/mcp", json.dumps(message).encode(), headers)
