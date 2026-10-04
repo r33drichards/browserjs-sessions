@@ -28,7 +28,7 @@ jobs:
   skills:
     runs-on: ubuntu-24.04
     environment: production
-    timeout-minutes: 25
+    timeout-minutes: 58
     env:
       NS: browserjs-sessions
     steps:
@@ -63,7 +63,26 @@ jobs:
           location: us-west1-a
           project_id: ${{ vars.GCP_PROJECT_ID }}
           use_dns_based_endpoint: 'true'
+      - name: Check live verification credentials
+        id: verification
+        env:
+          CANARY_API_TOKEN: ${{ secrets.CANARY_API_TOKEN }}
+        run: |
+          if [ -n "$CANARY_API_TOKEN" ]; then
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+            echo '::warning::No CANARY_API_TOKEN: rollout health is checked, but live user session verification is skipped.'
+            echo 'Live skills session verification skipped: CANARY_API_TOKEN is not configured.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Verify canary identity before changing the flag
+        if: inputs.action == 'on' && steps.verification.outputs.enabled == 'true'
+        env:
+          CANARY_API_TOKEN: ${{ secrets.CANARY_API_TOKEN }}
+          EXPECTED_EMAIL: ${{ inputs.email }}
+        run: python3 test/skills-canary.py --identity-only
       - name: Configure flag and verify backend rollout
+        id: configure
         env:
           ACTION: ${{ inputs.action }}
           DIGEST: ${{ inputs.image_digest }}
@@ -74,3 +93,15 @@ jobs:
           hack/skills-stage.sh "$ACTION" "$DIGEST" "$EMAIL"
           hack/release.sh rollout-status backend 1200
           printf 'Skills flag: %s. Applies to newly created sessions.\n' "$ACTION" >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify skills for the targeted user
+        if: inputs.action == 'on' && steps.verification.outputs.enabled == 'true'
+        env:
+          CANARY_API_TOKEN: ${{ secrets.CANARY_API_TOKEN }}
+          EXPECTED_EMAIL: ${{ inputs.email }}
+        run: python3 test/skills-canary.py
+      - name: Disable feature after a failed activation
+        if: failure() && inputs.action == 'on' && steps.configure.outcome != 'skipped' && steps.configure.outcome != ''
+        run: |
+          hack/skills-stage.sh off
+          hack/release.sh rollout-status backend 1200
+          echo 'Activation failed; disabled skills for future sessions.' >> "$GITHUB_STEP_SUMMARY"

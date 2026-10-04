@@ -78,3 +78,9 @@ GitHub Actions workflow on `main` after the backend release has deployed. Select
 and set `confirm` to `deploy`. It uses the existing production workload identity
 and waits for the backend rollout. Select `off` to disable future skills sessions.
 The workflow shares the deployment concurrency group so cluster changes serialize.
+When `CANARY_API_TOKEN` is configured, the activation workflow verifies that it
+belongs to the selected user before changing the flag. After rollout it creates
+and deletes a temporary ordinary session and verifies skills discovery and
+documentation resource hashes. Without the token, it reports that live session
+verification was skipped; backend rollout health is still checked. If activation
+or verification fails, it disables skills for future sessions.
