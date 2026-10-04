@@ -44,7 +44,7 @@ jobs:
           extra_nix_config: |
             auto-allocate-uids = true
             extra-system-features = nixos-test uid-range
-            extra-experimental-features = auto-allocate-uids cgroups
+            extra-experimental-features = nix-command flakes auto-allocate-uids cgroups
       - name: Enable unprivileged namespaces for nspawn test containers
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Run container integration test
