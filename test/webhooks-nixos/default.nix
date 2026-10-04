@@ -62,6 +62,9 @@ in pkgs.testers.runNixOSTest {
     system.stateVersion = "26.05";
     networking.firewall.enable = false;
     networking.extraHosts = "93.184.216.34 webhook.example.test";
+    documentation.enable = false;
+    documentation.man.enable = false;
+    documentation.nixos.enable = false;
     environment.systemPackages = [ python pkgs.curl pkgs.jq pkgs.redis ];
     systemd.services.webhook-tls = {
       wantedBy = [ "multi-user.target" ];
