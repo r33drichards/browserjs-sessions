@@ -71,3 +71,10 @@ Pi asks for consent, verifies `SKILL.md`, and reads `INDEX.md` or individual
 supporting pages only when needed. The snapshot is read-only and tied to
 the image. Edits to the repository require a new image; SEP-2640 itself
 does not supply a write API.
+
+For deployment without local Google Cloud credentials, run the **Skills rollout**
+GitHub Actions workflow on `main` after the backend release has deployed. Select
+`on`, provide the published immutable skills image digest and one verified email,
+and set `confirm` to `deploy`. It uses the existing production workload identity
+and waits for the backend rollout. Select `off` to disable future skills sessions.
+The workflow shares the deployment concurrency group so cluster changes serialize.

@@ -1,0 +1,76 @@
+name: Skills rollout
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Enable for one user or disable for future sessions
+        type: choice
+        default: 'off'
+        options: ['on', 'off']
+      image_digest:
+        description: Published mcp-js skills image digest (required for on)
+        type: string
+      email:
+        description: Verified user email (required for on)
+        type: string
+        default: rwendt1337@gmail.com
+      confirm:
+        description: Type deploy to change production
+        required: true
+        type: string
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+jobs:
+  skills:
+    runs-on: ubuntu-24.04
+    environment: production
+    timeout-minutes: 25
+    env:
+      NS: browserjs-sessions
+    steps:
+      - name: Validate request
+        env:
+          REF: ${{ github.ref }}
+          CONFIRM: ${{ inputs.confirm }}
+          ACTION: ${{ inputs.action }}
+          DIGEST: ${{ inputs.image_digest }}
+          EMAIL: ${{ inputs.email }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$REF" == refs/heads/main && "$CONFIRM" == deploy ]]
+          if [[ "$ACTION" == on ]]; then
+            [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+            [[ "$EMAIL" == *@* && "$EMAIL" != *','* && "$EMAIL" != *[[:space:]]* ]]
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOY_SA }}
+      - uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d
+        with:
+          version: v1.36.5
+      - uses: google-github-actions/get-gke-credentials@3da1e46a907576cefaa90c484278bb5b259dd395
+        with:
+          cluster_name: browserjs
+          location: us-west1-a
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          use_dns_based_endpoint: 'true'
+      - name: Configure flag and verify backend rollout
+        env:
+          ACTION: ${{ inputs.action }}
+          DIGEST: ${{ inputs.image_digest }}
+          EMAIL: ${{ inputs.email }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          hack/skills-stage.sh "$ACTION" "$DIGEST" "$EMAIL"
+          hack/release.sh rollout-status backend 1200
+          printf 'Skills flag: %s. Applies to newly created sessions.\n' "$ACTION" >> "$GITHUB_STEP_SUMMARY"
