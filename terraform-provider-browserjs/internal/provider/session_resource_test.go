@@ -6,7 +6,7 @@ import (
 	"github.com/r33drichards/computer-use/terraform-provider-browserjs/internal/fakeapi"
 )
 
-const sessionRes = "browserjs_session"
+const sessionRes = "session"
 
 func TestSessionCreateWaitsForItsPolicy(t *testing.T) {
 	h := newHarness(t)

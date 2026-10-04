@@ -80,8 +80,8 @@ func (m *sessionPolicyModel) setAll(id string, p *client.Policy, diags *diag.Dia
 	m.setComputed(p)
 }
 
-func (r *sessionPolicyResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
-	resp.TypeName = req.ProviderTypeName + "_session_policy"
+func (r *sessionPolicyResource) Metadata(_ context.Context, _ resource.MetadataRequest, resp *resource.MetadataResponse) {
+	resp.TypeName = "session_policy"
 }
 
 func (r *sessionPolicyResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {

@@ -5,9 +5,9 @@ Provider type `browserjs`, source address `r33drichards/browserjs`.
 
 | | |
 |---|---|
-| `browserjs_session` (resource) | a session: one persistent browser, driven over MCP |
-| `browserjs_session_policy` (resource) | a session's policy, managed as code: a Rego module |
-| `browserjs_session`, `browserjs_sessions` (data sources) | sessions that already exist |
+| `session` (resource) | a session: one persistent browser, driven over MCP |
+| `session_policy` (resource) | a session's policy, managed as code: a Rego module |
+| `session`, `sessions` (data sources) | sessions that already exist |
 
 Reference for every argument: [`docs/`](docs/index.md), generated from the
 schema. A complete configuration: [`examples/session-policies/`](examples/session-policies/main.tf).
@@ -165,3 +165,8 @@ nix shell nixpkgs#opentofu -c nix develop ..#sdk -c make docs      # regenerate 
   the file again rather than editing the copy.
 - CI (`.github/workflows/terraform-provider.yml`) runs all three on pull
   requests that touch this directory, and fails if `docs/` is stale.
+
+Resource types are `session` and `session_policy`; data-source types are `session`
+and `sessions`. Every HCL block must set `provider = browserjs`. Existing prefixed
+state requires removal and re-import using the same session IDs; see the
+[migration guide](https://computeruse.site/reference/terraform#migrate-from-prefixed-types).

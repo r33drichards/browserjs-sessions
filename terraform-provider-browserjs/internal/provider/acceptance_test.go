@@ -67,12 +67,16 @@ func accName(t *testing.T) string {
 
 func accConfig(name, policy string) string {
 	return fmt.Sprintf(`
-resource "browserjs_session" "test" {
+resource "session" "test" {
+  provider = browserjs
+
   name = %q
 }
 
-resource "browserjs_session_policy" "test" {
-  session_id  = browserjs_session.test.id
+resource "session_policy" "test" {
+  provider = browserjs
+
+  session_id  = session.test.id
   managed_url = %q
 %s
 }
@@ -95,7 +99,7 @@ var (
 func TestAccSessionAndPolicy(t *testing.T) {
 	accAPI(t)
 	name := accName(t)
-	const session, policy = "browserjs_session.test", "browserjs_session_policy.test"
+	const session, policy = "session.test", "session_policy.test"
 	var sessionIDs []string
 	recordSession := func(s *terraform.State) error {
 		sessionIDs = append(sessionIDs, s.RootModule().Resources[session].Primary.ID)
@@ -193,28 +197,38 @@ func TestAccDataSources(t *testing.T) {
 	accAPI(t)
 	name := accName(t)
 	config := fmt.Sprintf(`
-resource "browserjs_session" "test" {
+resource "session" "test" {
+  provider = browserjs
+
   name = %q
 }
 
-data "browserjs_session" "by_id" {
-  id = browserjs_session.test.id
+data "session" "by_id" {
+  provider = browserjs
+
+  id = session.test.id
 }
 
-data "browserjs_session" "by_name" {
+data "session" "by_name" {
+  provider = browserjs
+
   name       = %q
-  depends_on = [browserjs_session.test]
+  depends_on = [session.test]
 }
 
 # The policy of a session that is looked up, not managed here.
-resource "browserjs_session_policy" "test" {
-  session_id  = data.browserjs_session.by_name.id
+resource "session_policy" "test" {
+  provider = browserjs
+
+  session_id  = data.session.by_name.id
   managed_url = %q
 %s
 }
 
-data "browserjs_sessions" "all" {
-  depends_on = [browserjs_session.test]
+data "sessions" "all" {
+  provider = browserjs
+
+  depends_on = [session.test]
 }
 `, name, name, managedURL, accNoScripting)
 
@@ -224,11 +238,11 @@ data "browserjs_sessions" "all" {
 			{
 				Config: config,
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("browserjs_session_policy.test", "state", "ready"),
-					resource.TestCheckResourceAttrPair("browserjs_session_policy.test", "id", "browserjs_session.test", "id"),
-					resource.TestCheckResourceAttrPair("data.browserjs_session.by_id", "mcp_url", "browserjs_session.test", "mcp_url"),
-					resource.TestCheckResourceAttrPair("data.browserjs_session.by_name", "id", "browserjs_session.test", "id"),
-					resource.TestMatchResourceAttr("data.browserjs_sessions.all", "sessions.#", regexp.MustCompile(`^[1-9]\d*$`)),
+					resource.TestCheckResourceAttr("session_policy.test", "state", "ready"),
+					resource.TestCheckResourceAttrPair("session_policy.test", "id", "session.test", "id"),
+					resource.TestCheckResourceAttrPair("data.session.by_id", "mcp_url", "session.test", "mcp_url"),
+					resource.TestCheckResourceAttrPair("data.session.by_name", "id", "session.test", "id"),
+					resource.TestMatchResourceAttr("data.sessions.all", "sessions.#", regexp.MustCompile(`^[1-9]\d*$`)),
 				),
 			},
 			{
@@ -247,7 +261,7 @@ func TestAccPolicyDriftAgainstTheFake(t *testing.T) {
 		t.Skip("needs the fake API: a real one has no way to act as the UI")
 	}
 	name := accName(t)
-	const policy = "browserjs_session_policy.test"
+	const policy = "session_policy.test"
 
 	resource.Test(t, resource.TestCase{
 		ProtoV6ProviderFactories: accProviders,
@@ -299,7 +313,9 @@ func TestAccPolicyUnsupportedAgainstTheFake(t *testing.T) {
 		ProtoV6ProviderFactories: accProviders,
 		Steps: []resource.TestStep{{
 			Config: fmt.Sprintf(`
-resource "browserjs_session_policy" "test" {
+resource "session_policy" "test" {
+  provider = browserjs
+
   session_id  = %q
   managed_url = %q
 %s

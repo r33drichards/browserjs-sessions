@@ -137,12 +137,16 @@ build it from `terraform-provider-browserjs/` in the repository.
 :::
 
 ```hcl
-resource "browserjs_session" "research" {
+resource "session" "research" {
+  provider = browserjs
+
   name = "research"
 }
 
-resource "browserjs_session_policy" "research" {
-  session_id  = browserjs_session.research.id
+resource "session_policy" "research" {
+  provider = browserjs
+
+  session_id  = session.research.id
   managed_url = "https://github.com/example/infra/tree/main/desktops"
   rego        = file("${path.module}/no-scripting.rego")
 }

@@ -43,7 +43,7 @@ var sessionAttrTypes = map[string]attr.Type{
 	"size": types.StringType, "pending_size": types.StringType,
 }
 
-// browserjs_session
+// session
 
 var (
 	_ datasource.DataSource                     = (*sessionDataSource)(nil)
@@ -55,8 +55,8 @@ func newSessionDataSource() datasource.DataSource { return &sessionDataSource{} 
 
 type sessionDataSource struct{ data *providerData }
 
-func (d *sessionDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
-	resp.TypeName = req.ProviderTypeName + "_session"
+func (d *sessionDataSource) Metadata(_ context.Context, _ datasource.MetadataRequest, resp *datasource.MetadataResponse) {
+	resp.TypeName = "session"
 }
 
 func (d *sessionDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
@@ -139,7 +139,7 @@ func (d *sessionDataSource) Read(ctx context.Context, req datasource.ReadRequest
 	}
 }
 
-// browserjs_sessions
+// sessions
 
 var (
 	_ datasource.DataSource              = (*sessionsDataSource)(nil)
@@ -154,8 +154,8 @@ type sessionsModel struct {
 	Sessions types.List `tfsdk:"sessions"`
 }
 
-func (d *sessionsDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
-	resp.TypeName = req.ProviderTypeName + "_sessions"
+func (d *sessionsDataSource) Metadata(_ context.Context, _ datasource.MetadataRequest, resp *datasource.MetadataResponse) {
+	resp.TypeName = "sessions"
 }
 
 func (d *sessionsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {

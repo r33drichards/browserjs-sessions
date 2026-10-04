@@ -9,8 +9,8 @@ It speaks only the API of `backend-api.yaml`, on the API host.
 
 ```hcl
 provider "browserjs" {
-  endpoint = "https://api.computeruse.site"   # or BROWSERJS_ENDPOINT
-  token    = var.browserjs_token           # or BROWSERJS_TOKEN; sensitive
+  endpoint = "https://api.computeruse.site" # or BROWSERJS_ENDPOINT
+  token    = var.browserjs_token            # or BROWSERJS_TOKEN; sensitive
 }
 ```
 
@@ -22,7 +22,7 @@ provider "browserjs" {
 Every request sends `Authorization: Bearer <token>` and
 `User-Agent: terraform-provider-browserjs/<version>`.
 
-## `browserjs_session`
+## `session`
 
 | Attribute | Type | | Notes |
 |---|---|---|---|
@@ -41,7 +41,7 @@ Every request sends `Authorization: Bearer <token>` and
   `lifecycle { prevent_destroy = true }`.
 - Requires token scopes `sessions:read`, `sessions:write`.
 
-## `browserjs_session_policy`
+## `session_policy`
 
 The policy of one session, managed as code. Creating the resource puts the
 policy in `iac` mode; destroying it resets the session to the unrestricted
@@ -87,7 +87,7 @@ for the shell), and the provider shows it.
   drift by reading `managed_url` as empty, so the next plan shows an update
   that takes the policy back.
 - Delete: `DELETE /sessions/{id}/policy`.
-- Import: `terraform import browserjs_session_policy.x s-ab2cd`; the first
+- Import: `terraform import session_policy.x s-ab2cd`; the first
   apply puts the policy in `iac` mode if it was not.
 - Requires token scopes `policies:read`, `policies:write`.
 
@@ -95,8 +95,8 @@ for the shell), and the provider shows it.
 
 | Name | Arguments | Attributes |
 |---|---|---|
-| `browserjs_session` | `id` or `name` (exactly one; `name` must match one session) | as the resource |
-| `browserjs_sessions` | none | `sessions`: list of objects as the resource |
+| `session` | `id` or `name` (exactly one; `name` must match one session) | as the resource |
+| `sessions` | none | `sessions`: list of objects as the resource |
 
 There is no data source that builds a policy: a policy is Rego text.
 
@@ -115,3 +115,8 @@ provider_installation {
 ```
 
 With `dev_overrides`, `terraform init` is skipped for this provider.
+
+Resource types are `session` and `session_policy`; data-source types are `session`
+and `sessions`. Every HCL block must set `provider = browserjs`. Existing prefixed
+state requires removal and re-import using the same session IDs; see the
+[migration guide](https://computeruse.site/reference/terraform#migrate-from-prefixed-types).
