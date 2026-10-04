@@ -9,6 +9,9 @@
       checks.x86_64-linux.webhooks-container = import ./test/webhooks-nixos {
         pkgs = nixpkgs.legacyPackages.x86_64-linux;
       };
+      checks.x86_64-linux.webhooks-k3s = import ./test/webhooks-nixos/k3s.nix {
+        pkgs = nixpkgs.legacyPackages.x86_64-linux;
+      };
       devShells = forAll (pkgs: {
         default = pkgs.mkShell {
           packages = with pkgs; [

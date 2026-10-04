@@ -47,10 +47,12 @@ jobs:
             extra-experimental-features = nix-command flakes auto-allocate-uids cgroups
       - name: Enable unprivileged namespaces for nspawn test containers
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Load kernel modules for nested k3s networking
+        run: sudo modprobe overlay br_netfilter ip_tables iptable_nat nf_conntrack
       - name: Run container integration test
         run: |
           set -euo pipefail
-          nix build .#checks.x86_64-linux.webhooks-container --print-build-logs --out-link result-webhooks \
+          nix build .#checks.x86_64-linux.webhooks-k3s --print-build-logs --out-link result-webhooks \
             2>&1 | tee "$RUNNER_TEMP/webhooks-nixos.log"
       - name: Upload test report and service logs
         if: always()
