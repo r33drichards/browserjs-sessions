@@ -5,6 +5,8 @@ on:
     paths:
       - "flake.nix"
       - "flake.lock"
+      - "backend/**"
+      - "deploy/base/**"
       - "images/policy-operator/**"
       - "images/mcp-js/**"
       - "docs/contracts/policy/**"
@@ -16,6 +18,8 @@ on:
     paths:
       - "flake.nix"
       - "flake.lock"
+      - "backend/**"
+      - "deploy/base/**"
       - "images/policy-operator/**"
       - "images/mcp-js/**"
       - "docs/contracts/policy/**"
@@ -48,7 +52,7 @@ jobs:
       - name: Enable unprivileged namespaces for nspawn test containers
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Load kernel modules for nested k3s networking
-        run: sudo modprobe overlay br_netfilter ip_tables iptable_nat nf_conntrack
+        run: sudo modprobe dummy overlay br_netfilter ip_tables iptable_nat nf_conntrack
       - name: Run container integration test
         run: |
           set -euo pipefail
