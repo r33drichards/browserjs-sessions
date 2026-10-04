@@ -14,6 +14,7 @@ const guides = [
   { text: "Watch and take over", link: "/guides/take-over" },
   { text: "Move files and the clipboard", link: "/guides/files-and-clipboard" },
   { text: "Write a policy", link: "/guides/write-a-policy" },
+  { text: "Export tool calls", link: "/guides/tool-call-webhooks" },
   { text: "Use it from code", link: "/guides/use-from-code" },
 ]
 

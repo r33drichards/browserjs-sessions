@@ -13,6 +13,7 @@ resources:
   - crd-apitoken.yaml
   - opa.yaml
   - policy-operator.yaml
+  - webhook-redis.yaml
   # ConfigMap opa-config, from the contract files where they are.
   - ../../docs/contracts/policy
   # Metering and billing (docs/billing-deployment.md). Installed and off:

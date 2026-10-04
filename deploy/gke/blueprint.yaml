@@ -107,11 +107,14 @@ podTemplate:
           # session's own prefix.
           - name: MCP_V8_PUBLIC_URL
             value: "{{ .SessionURL }}"
+          # Native pre hook records attempts; existing policies authorize every call.
           # Session policy: every browser call is also put to the shared OPA, at
           # this session's own path. Written by hack/policy-stage.sh.
           - name: MCP_V8_POLICIES_JSON
             value: >-
-              {"mcp_tools":{"mode":"all","policies":[
+              {"mcp_tools":{"pre":[
+              {"url":"http://policy-operator.browserjs-sessions.svc:8080","policy_path":"browserjs/hooks/{{ .ID }}/mcp_tools/pre"}],
+              "mode":"all","policies":[
               {"url":"file:///etc/mcp/mcp_tools.rego"},
               {"url":"http://opa.browserjs-sessions.svc:8181","policy_path":"browserjs/decision/{{ .ID }}/mcp_tools"}]},
               "filesystem":{"policies":[{"url":"file:///etc/mcp/filesystem.rego"}]}}

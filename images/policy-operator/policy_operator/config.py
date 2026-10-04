@@ -42,6 +42,9 @@ class Config:
     opa_service: str = "opa"
     opa_port: int = 8181
     http_port: int = 8080
+    webhook_redis_url: str = "redis://localhost:6379/0"
+    webhook_redis_prefix: str = "browserjs:{webhooks}:"
+    webhook_redis_password: str = ""
     # deploy.md: the three keys of the Secret policy-tokens.
     bundle_token: str = ""
     opa_token: str = ""
@@ -59,6 +62,9 @@ class Config:
     def from_env(cls) -> "Config":
         env = os.environ
         return cls(
+            webhook_redis_url=env.get("WEBHOOK_REDIS_URL", "redis://webhook-redis:6379/0"),
+            webhook_redis_password=env.get("WEBHOOK_REDIS_PASSWORD", ""),
+            webhook_redis_prefix=env.get("WEBHOOK_REDIS_PREFIX", "browserjs:{webhooks}:"),
             opa_bin=env.get("OPA_BIN", "opa"),
             contract_dir=_contract_dir(),
             namespace=env.get("POLICY_NAMESPACE", "browserjs-sessions"),

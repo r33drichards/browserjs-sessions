@@ -36,8 +36,9 @@
               # nixpkgs' kopf fails one of its own tests against the aiohttp
               # it ships with (a DeprecationWarning turned into an error).
               (kopf.overridePythonAttrs (_: { doCheck = false; }))
-              aiohttp pyyaml pytest pytest-asyncio pytest-aiohttp
+              aiohttp pyyaml redis pytest pytest-asyncio pytest-aiohttp
             ]))
+            pkgs.redis
             pkgs.uv
           ];
         };

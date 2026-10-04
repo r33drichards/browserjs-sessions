@@ -309,6 +309,10 @@ func newHandlerWith(cfg config.Config, verifier auth.Verifier, store *sessions.S
 		MaxFileBytes: cfg.MaxFileBytes,
 	}
 
+	if policies != nil {
+		px.ToolEvents = policies.RecordToolEvents
+	}
+
 	apiMux := http.NewServeMux()
 	sessionAPI := api.New(store, owners, cfg.SessionURLs, cfg.MaxSessionsPerUser)
 	// The release's canary (docs/releases.md): the admins, by address, may

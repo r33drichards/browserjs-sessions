@@ -19,5 +19,5 @@ bundles:
       min_delay_seconds: 1
       max_delay_seconds: 2
 persistence_directory: /var/opa
-decision_logs:
-  console: false
+# Tool attempts are durably recorded by MCPJS native pre hooks.
+# Do not enable asynchronous decision logs as the source of webhook events.

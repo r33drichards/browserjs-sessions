@@ -4,6 +4,8 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import uuid
+from datetime import datetime, timezone
 
 from aiohttp import web
 
@@ -121,13 +123,100 @@ async def evaluate_(request: web.Request) -> web.Response:
     return web.json_response(out)
 
 
+async def validate_webhook(request: web.Request) -> web.Response:
+    op = request.app[OPERATOR]
+    if not _authorized(request, op.cfg.api_token):
+        return _unauthorized()
+    try:
+        doc = await request.json()
+        _, verdict = await op.webhooks.validate(doc)
+    except (ValueError, TypeError):
+        return _error("invalid webhook configuration")
+    return web.json_response(verdict)
+
+
+async def tool_events(request: web.Request) -> web.Response:
+    op = request.app[OPERATOR]
+    decisions = request.path == "/logs"
+    if not _authorized(request, op.cfg.bundle_token if decisions else op.cfg.api_token):
+        return _unauthorized()
+    if not op.ready:
+        return web.Response(status=503)
+    try:
+        # aiohttp decompresses Content-Encoding: gzip and enforces the
+        # application body limit on the decompressed OPA upload.
+        doc = await request.json()
+    except (ValueError, TypeError):
+        return _error("the body is not JSON")
+    if not decisions and isinstance(doc, dict):
+        from .webhooks import configuration
+        try:
+            expected = configuration(doc.get("webhook"))
+        except ValueError:
+            return _error("invalid capture configuration")
+        items = doc.get("events")
+        if not isinstance(items, list):
+            return _error("events must be an array")
+        # Wait for reconciliation rather than acknowledging an event under a
+        # stale or absent webhook configuration.
+        if any(not isinstance(item, dict) or op.webhooks.settings.get(item.get("session_id")) != expected for item in items):
+            return _error("webhook configuration is still applying", 503)
+        doc = items
+    if not isinstance(doc, list) or len(doc) > 10000:
+        return _error("expected an array of at most 10000 events")
+    if decisions:
+        from .webhooks import decision_event
+        events = [event for item in doc if (event := decision_event(item)) is not None]
+    else:
+        events = [item for item in doc if isinstance(item, dict)]
+    if not op.webhooks.ingest(events):
+        return web.Response(status=503)
+    return web.Response(status=204)
+
+
+async def tool_pre_hook(request: web.Request) -> web.Response:
+    """MCPJS native remote pre hook: persist the attempt, then abstain from policy."""
+    from .check import SESSION_ID
+    op = request.app[OPERATOR]
+    sid = request.match_info["sid"]
+    if not SESSION_ID.fullmatch(sid):
+        return web.Response(status=404)
+    if request.query:
+        return web.Response(status=403)
+    if not op.ready:
+        return web.Response(status=503)
+    try:
+        raw = await request.read()
+        if len(raw) > MAX_INPUT_BYTES + 1024:
+            return web.Response(status=413)
+        doc = json.loads(raw)
+        args = doc.get("input") if isinstance(doc, dict) else None
+        if not isinstance(args, dict) or args.get("operation") != "mcp_call_tool":
+            return _error("input must describe an mcp_call_tool")
+    except (ValueError, TypeError):
+        return _error("the body is not JSON")
+    event = {"id": str(uuid.uuid4()), "session_id": sid,
+             "timestamp": datetime.now(timezone.utc).isoformat(), "type": "tool_call",
+             "stage": "attempt", "server": args.get("server"),
+             "tool": args.get("tool"), "arguments": args.get("arguments")}
+    if not op.webhooks.ingest([event]):
+        return _error("tool event could not be durably recorded", 503)
+    # Native hooks unwrap result. true permits the remaining policy chain;
+    # it does not grant authorization or modify the operation's input.
+    return web.json_response({"result": True})
+
+
 def make_app(op: Operator) -> web.Application:
     # aiohttp refuses larger bodies itself, with 413.
-    app = web.Application(client_max_size=MAX_EVALUATE_BODY)
+    app = web.Application(client_max_size=16 * 1024 * 1024)
     app[OPERATOR] = op
+    app.router.add_post("/v1/data/browserjs/hooks/{sid}/mcp_tools/pre", tool_pre_hook)
     app.router.add_get("/healthz", healthz)
     app.router.add_get("/readyz", readyz)
     app.router.add_get("/bundles/browserjs.tar.gz", bundle)
+    app.router.add_post("/logs", tool_events)
+    app.router.add_post("/v1/tool-events", tool_events)
+    app.router.add_post("/v1/webhooks/validate", validate_webhook)
     app.router.add_post("/v1/validate", validate)
     app.router.add_post("/v1/evaluate", evaluate_)
     return app

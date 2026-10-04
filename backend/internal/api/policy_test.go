@@ -3,6 +3,7 @@ package api_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -94,6 +95,19 @@ func (o *operator) serve(w http.ResponseWriter, r *http.Request) {
 		Kind   string          `json:"kind"`
 		Source string          `json:"source"`
 		Input  json.RawMessage `json:"input"`
+	}
+	if r.URL.Path == "/v1/webhooks/validate" {
+		var settings map[string]any
+		if json.Unmarshal(body, &settings) != nil {
+			reply(400, map[string]string{"error": "invalid"})
+			return
+		}
+		if strings.Contains(fmt.Sprint(settings["filter"]), "INVALID") {
+			reply(200, map[string]any{"ok": false, "errors": []any{map[string]any{"code": "rego_parse_error", "message": "invalid filter"}}})
+		} else {
+			reply(200, map[string]any{"ok": true, "errors": []any{}})
+		}
+		return
 	}
 	if r.Method == http.MethodPost {
 		if err := json.Unmarshal(body, &req); err != nil || req.Kind == "" || req.Source == "" || strings.Contains(req.Source, "MALFORMED") {

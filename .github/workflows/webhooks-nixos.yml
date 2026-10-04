@@ -1,0 +1,68 @@
+name: webhook NixOS containers
+
+on:
+  pull_request:
+    paths:
+      - "flake.nix"
+      - "flake.lock"
+      - "backend/**"
+      - "deploy/base/**"
+      - "images/policy-operator/**"
+      - "images/mcp-js/**"
+      - "docs/contracts/policy/**"
+      - "test/policy/mcp_call.py"
+      - "test/webhooks-nixos/**"
+      - ".github/workflows/webhooks-nixos.yml"
+  push:
+    branches: [main]
+    paths:
+      - "flake.nix"
+      - "flake.lock"
+      - "backend/**"
+      - "deploy/base/**"
+      - "images/policy-operator/**"
+      - "images/mcp-js/**"
+      - "docs/contracts/policy/**"
+      - "test/policy/mcp_call.py"
+      - "test/webhooks-nixos/**"
+      - ".github/workflows/webhooks-nixos.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: webhooks-nixos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          extra_nix_config: |
+            auto-allocate-uids = true
+            extra-system-features = nixos-test uid-range
+            extra-experimental-features = nix-command flakes auto-allocate-uids cgroups
+      - name: Enable unprivileged namespaces for nspawn test containers
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Load kernel modules for nested k3s networking
+        run: sudo modprobe dummy overlay br_netfilter ip_tables iptable_nat nf_conntrack
+      - name: Run container integration test
+        run: |
+          set -euo pipefail
+          nix build .#checks.x86_64-linux.webhooks-k3s --print-build-logs --out-link result-webhooks \
+            2>&1 | tee "$RUNNER_TEMP/webhooks-nixos.log"
+      - name: Upload test report and service logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: webhooks-nixos-report
+          path: |
+            result-webhooks/
+            ${{ runner.temp }}/webhooks-nixos.log

@@ -75,6 +75,9 @@ type Proxy struct {
 	// DefaultMaxFileBytes if unset.
 	MaxFileBytes int64
 
+	// ToolEvents must durably accept outer calls before they are forwarded.
+	ToolEvents func(context.Context, []map[string]any) error
+
 	now func() time.Time // time.Now if unset
 
 	setup   sync.Once
@@ -447,6 +450,9 @@ func (p *Proxy) mcp(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodGet || r.Method == http.MethodHead {
 		p.mcpStream(w, r, id, path)
+		return
+	}
+	if !p.recordToolCalls(w, r, id) {
 		return
 	}
 	// The call holds the session awake until it is over, however long the

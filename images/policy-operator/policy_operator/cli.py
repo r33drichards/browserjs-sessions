@@ -33,8 +33,9 @@ def read_resources(directory: Path) -> list[dict]:
 def build_from_directory(cfg: Config, directory: Path) -> tuple[Operator, bytes]:
     """The operator after its first pass over the directory, and its bundle."""
     async def go():
-        op = Operator(cfg)
+        op = Operator(cfg, offline=True)
         await op.first_pass(read_resources(directory))
+        await op.close()
         return op, op.publisher.body
     return asyncio.run(go())
 

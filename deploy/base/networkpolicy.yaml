@@ -60,15 +60,20 @@ spec:
               - 192.168.0.0/16
               - 100.64.0.0/10
               - 169.254.0.0/16
-    # The one thing in the cluster a session reaches: the shared OPA, which
-    # its mcp-js asks for a decision on every browser call. OPA's API gives a
-    # session nothing but decisions (docs/contracts/policy/system-authz.rego).
+    # Shared OPA authorization and native MCPJS pre-hook recording.
     - to:
         - podSelector:
             matchLabels:
               app: opa
       ports:
         - port: 8181
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app: policy-operator
+      ports:
+        - port: 8080
           protocol: TCP
 ---
 # Identity is whatever Pomerium says it is, and the upload and VNC routes
@@ -164,7 +169,8 @@ spec:
           protocol: TCP
 ---
 # The operator holds every session's policy. Only OPA (the bundle) and the
-# backend (validate, evaluate) reach it; a session pod does not.
+# backend (validate, evaluate) and sessions (native pre hooks) reach it.
+# All administrative routes require a bearer credential.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -182,6 +188,9 @@ spec:
         - podSelector:
             matchLabels:
               app: backend
+        - podSelector:
+            matchLabels:
+              app: browserjs-session
       ports:
         - port: 8080
           protocol: TCP
@@ -214,9 +223,16 @@ spec:
       ports:
         - port: 8181
           protocol: TCP
-    # The API server. A NetworkPolicy cannot name it: it is an address
-    # outside the pod network, private on GKE and the node's own on kind, on
-    # 443 or 6443. So this is those two ports, anywhere.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: webhook-redis
+      ports:
+        - port: 6379
+          protocol: TCP
+    # The API server (443/6443) and public HTTPS webhooks (443). The
+    # exporter validates the actual resolved destination and refuses private
+    # addresses and redirects; API-server traffic is a separate trusted client.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0

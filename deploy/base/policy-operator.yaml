@@ -105,6 +105,13 @@ spec:
             - -m
             - policy_operator
           env:
+            - name: WEBHOOK_REDIS_URL
+              value: redis://webhook-redis:6379/0
+            - name: WEBHOOK_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: policy-tokens
+                  key: operator-api-token
             # kopf asks who it runs as, and uid 65532 has no entry in the
             # image's /etc/passwd: without a name here it exits at start
             # (KeyError: getpwuid(): uid not found).

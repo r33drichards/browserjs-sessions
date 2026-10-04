@@ -129,6 +129,7 @@ k create secret generic policy-tokens --dry-run=client -o yaml \
   --from-literal=operator-api-token="$(head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n')" |
   kubectl apply -f - >/dev/null
 kubectl apply -k test/policy >/dev/null || { echo "apply failed"; exit 1; }
+k rollout status statefulset/webhook-redis --timeout=180s
 kubectl wait --for=condition=Established crd/sessionpolicies.browserjs.dev crd/apitokens.browserjs.dev --timeout=60s >/dev/null
 # The stub operator is not ready until it has a bundle to serve: running is enough.
 k wait --for=jsonpath='{.status.phase}'=Running pod -l app=policy-operator --timeout=180s >/dev/null ||
@@ -263,7 +264,7 @@ sleep 10 # several readiness periods
 is "an OPA pod with no bundle is running but not ready" "false false" \
   "$(k get pods -l app=opa -o jsonpath='{range .items[*]}{.status.containerStatuses[0].ready} {end}' | xargs)"
 is "the Service has no ready address" "" \
-  "$(k get endpointslices -l kubernetes.io/service-name=opa -o json | jq -r '[.items[].endpoints[]? | select(.conditions.ready) | .addresses[]] | join(" ")')"
+  "$(k get endpointslices -l kubernetes.io/service-name=opa-engine -o json | jq -r '[.items[].endpoints[]? | select(.conditions.ready) | .addresses[]] | join(" ")')"
 got="$(call $P_WITH url 3)"
 is "a browser call is denied while no OPA is ready" denied "$(outcome "$got")"
 note "" && note "### No OPA replica ready (none has a bundle yet)" && note "" &&
@@ -324,7 +325,7 @@ def ask(method, path, body=None):
     r = urllib.request.Request("http://opa.browserjs-sessions.svc:8181" + path, data=body, method=method)
     try: return urllib.request.urlopen(r, timeout=5).status
     except urllib.error.HTTPError as e: return e.code
-i = json.dumps({"input": {"server": "browser", "tool": "browser_execute", "arguments": {"operations": []}}}).encode()
+i = json.dumps({"input": {"operation": "mcp_call_tool", "server": "browser", "tool": "browser_execute", "arguments": {"operations": []}}}).encode()
 print(ask("POST", "/v1/data/browserjs/decision/s-pol01/mcp_tools", i),
       ask("POST", "/v1/data/browserjs/decision/s-pol01/mcp_tools?explain=full", i),
       ask("GET", "/v1/policies"), ask("GET", "/v1/data/browserjs/loaded"), ask("GET", "/v1/data"),
@@ -341,19 +342,20 @@ operator_ip="$(k get pods -l app=policy-operator -o jsonpath='{.items[0].status.
 backend_ip="$(k get pods -l app=backend -o jsonpath='{.items[0].status.podIP}')"
 other_ip="$(k get pod "$WITHOUT" -o jsonpath='{.status.podIP}')"
 targets=("opa.$NS.svc:8181" "$opa_ip:8181" "policy-operator.$NS.svc:8080" "$operator_ip:8080" "backend.$NS.svc:80" "$backend_ip:8080"
-  "$other_ip:8080" kubernetes.default.svc:443 1.1.1.1:443)
+  "$other_ip:8080" "webhook-redis.$NS.svc:6379" kubernetes.default.svc:443 1.1.1.1:443)
 note "" && note "### Reachability" && note "" && note "| From | To | Result |" && note "|---|---|---|"
 
 out="$(k exec "$WITH" -c browser -- python3 -c "$PROBE" "${targets[@]}" 2>&1)"
 expect "a session pod" "$out" "opa.$NS.svc:8181" open
 expect "a session pod" "$out" "$opa_ip:8181" open
-expect "a session pod" "$out" "policy-operator.$NS.svc:8080" closed
-expect "a session pod" "$out" "$operator_ip:8080" closed
+expect "a session pod" "$out" "policy-operator.$NS.svc:8080" open
+expect "a session pod" "$out" "$operator_ip:8080" open
 expect "a session pod" "$out" "backend.$NS.svc:80" closed
 expect "a session pod" "$out" "$backend_ip:8080" closed
 expect "a session pod" "$out" "$other_ip:8080" closed
 expect "a session pod" "$out" "kubernetes.default.svc:443" closed
 expect "a session pod" "$out" "1.1.1.1:443" open
+expect "a session pod" "$out" "webhook-redis.$NS.svc:6379" closed
 
 # The OPA image has no shell: an ephemeral container in its pod, which shares
 # the pod's network and so its NetworkPolicy.
@@ -374,6 +376,7 @@ expect "OPA" "$out" "1.1.1.1:443" closed
 
 out="$(k exec deploy/policy-operator -- python3 -c "$PROBE" "${targets[@]}" 2>&1)"
 expect "the operator" "$out" "$opa_ip:8181" open
+expect "the operator" "$out" "webhook-redis.$NS.svc:6379" open
 expect "the operator" "$out" "kubernetes.default.svc:443" open
 expect "the operator" "$out" "backend.$NS.svc:80" closed
 expect "the operator" "$out" "$other_ip:8080" closed
@@ -487,7 +490,7 @@ for _ in $(seq 1 50); do
 done
 ok "calls are allowed again when OPA is back" "$recovered"
 
-# OPA there but not answering: its NetworkPolicy without the sessions' rule,
+# OPA there but not answering: its NetworkPolicy without the gateway rule,
 # which drops the packets. Recorded, not asserted on its length: connections
 # mcp-js already holds may outlive the change.
 k patch networkpolicy opa --type=json -p '[{"op":"remove","path":"/spec/ingress/0/from/0"}]' >/dev/null

@@ -18,6 +18,7 @@ from . import bundle
 from .bundle import BundleError, Tenant
 from .check import Validation, check
 from .config import Config
+from .webhooks import Webhooks
 
 log = logging.getLogger("policy_operator")
 
@@ -88,8 +89,9 @@ class Publisher:
 
 
 class Operator:
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: Config, offline: bool = False):
         self.cfg = cfg
+        self.webhooks = Webhooks(cfg, offline=offline)
         self.sessions: dict[str, Entry] = {}
         self.publisher = Publisher()
         # True once every SessionPolicy that existed at start is in `sessions`
@@ -135,6 +137,7 @@ class Operator:
 
     async def reconcile(self, name: str, spec: dict, status: dict) -> Outcome:
         """Check a SessionPolicy's spec and bring the bundle up to date."""
+        await self.webhooks.configure(name, spec.get("webhook"))
         kind, source = str(spec.get("kind", "")), spec.get("source", "")
         previous = self.sessions.get(name)
         entry = await self._entry(name, kind, source if isinstance(source, str) else "", (status or {}).get("rego"))
@@ -153,6 +156,7 @@ class Operator:
         return Outcome(entry.validation, entry.tenant, [], self._revision_of(name, entry.tenant))
 
     async def remove(self, name: str) -> None:
+        await self.webhooks.remove(name)
         if self.sessions.pop(name, None) is not None and self.ready:
             await self.rebuild()
         self._carried.pop(name, None)
@@ -163,6 +167,7 @@ class Operator:
             name = body["metadata"]["name"]
             spec, status = body.get("spec") or {}, body.get("status") or {}
             source = spec.get("source", "")
+            await self.webhooks.configure(name, spec.get("webhook"))
             self.sessions[name] = await self._entry(name, str(spec.get("kind", "")),
                                                     source if isinstance(source, str) else "", status.get("rego"))
 
@@ -171,6 +176,7 @@ class Operator:
         if errors:
             raise BundleError(errors)
         self.ready = True
+        self.webhooks.start()
         log.info("first pass complete: %d policies, revision %s", len(self.sessions), self.publisher.revision)
 
     def _tenants(self) -> dict[str, Tenant]:
@@ -212,6 +218,7 @@ class Operator:
         return self._http
 
     async def close(self) -> None:
+        await self.webhooks.close()
         if self._http is not None:
             await self._http.close()
 

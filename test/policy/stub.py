@@ -89,6 +89,15 @@ class Operator(Handler):
             return self.answer(304)
         self.answer(200, body, "application/vnd.openpolicyagent.bundles", [("ETag", etag)])
 
+    def do_POST(self):
+        # No subscriptions in this stand-in. Mirror native hook acknowledgement
+        # while the real operator/Redis tests verify durable capture.
+        import re
+        if re.fullmatch(r"/v1/data/browserjs/hooks/s-[a-z0-9]{5,}/mcp_tools/pre", self.path):
+            self.body()
+            return self.answer(200, b'{"result":true}', "application/json")
+        self.answer(404)
+
 
 class Browser(Handler):
     server_name = "browser"

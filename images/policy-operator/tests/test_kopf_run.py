@@ -82,6 +82,8 @@ def cluster(cfg, tmp_path, monkeypatch):
     monkeypatch.setenv("OPA_BIN", cfg.opa_bin)
     monkeypatch.setenv("POLICY_CONTRACT_DIR", str(CONTRACTS))
     monkeypatch.setenv("HTTP_PORT", str(operator_port))
+    monkeypatch.setenv("WEBHOOK_REDIS_URL", cfg.webhook_redis_url)
+    monkeypatch.setenv("WEBHOOK_REDIS_PREFIX", cfg.webhook_redis_prefix)
     monkeypatch.setenv("BUNDLE_TOKEN", cfg.bundle_token)
     monkeypatch.setenv("OPA_TOKEN", cfg.opa_token)
     monkeypatch.setenv("OPERATOR_API_TOKEN", cfg.api_token)
