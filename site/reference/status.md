@@ -9,7 +9,7 @@ promise of a date.
 | Simple | Sessions: create, rename, sleep, wake, stop, start, delete; suggested names | Live |
 | Simple | One MCP URL per session, `https://sessions.computeruse.site/<id>/mcp` | Live |
 | Simple | Create and manage sessions with one API call, using API tokens on `api.computeruse.site` | Live |
-| Simple | Terraform provider (build from source; not published in a registry) | Coming |
+| Simple | [Terraform provider](/reference/terraform) (build from source; not published in a registry) | Coming |
 | Simple | SDK for Rust, Python, JavaScript and Go (build from source; not published in registries) | Coming |
 | Stateful | Persistent disk per session | Live |
 | Stateful | Sleep to a snapshot; wake with the screen and processes as they were | Live |
