@@ -1,24 +1,19 @@
 # Repository documentation as MCP skills
 
-The optional skills image serves one SEP-2640 skill per Markdown page in
-`docs/`, `site/reference/`, and the root README. Nested contract and design-plan
-pages are individually discoverable too. For example:
+The optional skills image serves one SEP-2640 skill per customer-facing page
+in the public site's `tutorials/`, `guides/`, `reference/`, and `explanation/`
+sections. These are the documentation sections in the site's navigation.
+Internal `docs/`, repository READMEs, landing pages and blog posts are excluded.
 
-- `docs-api-tokens` — the API tokens page.
-- `docs-contracts-billing-testing` — the billing testing contract.
-- `reference-mcp` — the MCP endpoint and `run_js` reference.
-- `project-readme` — the root README.
+Examples: `tutorials-first-program`, `guides-use-from-code`, `reference-mcp`,
+and `explanation-code-mode`. Each `SKILL.md` contains one page's full text,
+with only its linked public-documentation assets in the manifest. Links to
+other site documentation pages select their separate `skill://` entrypoints,
+including the site's clean URLs. Names retain nested topics in the source path.
 
-Each skill's `SKILL.md` contains that page's full text. Its manifest includes only
-that entrypoint and the local images or attachments linked from the page. Links
-to other documentation pages use their separate `skill://` entrypoints, so the
-agent can load only the pages relevant to its task. Historical plans are labelled
-in their descriptions. There is no top-level `project-documentation` umbrella.
-
-Names derive from source paths, retaining nested topics in the name. The build
-checks name collisions and SEP-2640 file/size limits. Pi's
-`codex/sep-2640-skills-v1.0.1` branch verifies resource hashes and loads skills
-lazily.
+The container build copies only the four public documentation sections and
+checks isolation, name collisions, resource links, and SEP-2640 limits. Pi's
+`codex/sep-2640-skills-v1.0.1` branch verifies hashes and loads skills lazily.
 
 The image compiles `r33drichards/mcp-js` commit
 `df7ff14823861941bfe1d9f245a39c045a243e86` from the
@@ -78,7 +73,7 @@ Point the Pi launcher at the new session's MCP URL. `/mcp` should show a
 connected server. Ask Pi to list remote skills, then load the manifest:
 
 ```text
-/mcp-skill computeruse skill://docs-releases/SKILL.md Explain how sessions deploy
+/mcp-skill computeruse skill://tutorials-first-desktop/SKILL.md Explain how to create a desktop
 ```
 
 Pi asks for consent and verifies that page's `SKILL.md`. Linked page skills
