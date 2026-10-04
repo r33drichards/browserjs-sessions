@@ -1,4 +1,6 @@
-resource "browserjs_session" "research" {
+resource "session" "research" {
+  provider = browserjs
+
   name = "research"
 
   # Destroying a session deletes its disk and the browser's logins.
@@ -8,5 +10,5 @@ resource "browserjs_session" "research" {
 }
 
 output "mcp_url" {
-  value = browserjs_session.research.mcp_url
+  value = session.research.mcp_url
 }

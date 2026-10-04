@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	policyRes  = "browserjs_session_policy"
+	policyRes  = "session_policy"
 	managedURL = "https://github.com/example/infra/tree/main/browserjs"
 
 	// Everything in the browser but script in the page. No desktop, no shell.

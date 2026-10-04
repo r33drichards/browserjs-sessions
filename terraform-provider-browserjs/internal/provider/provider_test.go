@@ -21,7 +21,7 @@ func TestProviderReadsTheEnvironment(t *testing.T) {
 	t.Setenv(envEndpoint, h.url)
 	t.Setenv(envToken, testToken)
 	noErrors(t, "configure", h.configure(cfg{}))
-	if _, diags := h.data("browserjs_sessions", cfg{}); len(errorsOf(diags)) > 0 {
+	if _, diags := h.data("sessions", cfg{}); len(errorsOf(diags)) > 0 {
 		t.Fatal(errorsOf(diags))
 	}
 }
@@ -32,7 +32,7 @@ func TestProviderAttributesWinOverTheEnvironment(t *testing.T) {
 	t.Setenv(envEndpoint, "https://unreachable.invalid")
 	t.Setenv(envToken, "bjs_wrong")
 	noErrors(t, "configure", h.configure(cfg{"endpoint": h.url, "token": testToken}))
-	if _, diags := h.data("browserjs_sessions", cfg{}); len(errorsOf(diags)) > 0 {
+	if _, diags := h.data("sessions", cfg{}); len(errorsOf(diags)) > 0 {
 		t.Fatal(errorsOf(diags))
 	}
 }
@@ -72,8 +72,8 @@ func TestTokenIsMarkedSensitive(t *testing.T) {
 
 func TestEveryRequestCarriesTheTokenAndUserAgent(t *testing.T) {
 	h := newHarness(t)
-	s := h.mustApply("browserjs_session", h.null("browserjs_session"), cfg{"name": "a"})
-	h.mustApply("browserjs_session_policy", h.null("browserjs_session_policy"), policyConfig(str(s, "id"), noScripting))
+	s := h.mustApply("session", h.null("session"), cfg{"name": "a"})
+	h.mustApply("session_policy", h.null("session_policy"), policyConfig(str(s, "id"), noScripting))
 	reqs := h.fake.Requests()
 	if len(reqs) < 3 {
 		t.Fatalf("only %d requests", len(reqs))
@@ -102,11 +102,11 @@ func TestABadTokenIsNotEchoed(t *testing.T) {
 	h.server, h.schema = newServer(t)
 	noErrors(t, "configure", h.configure(cfg{"endpoint": ts.URL, "token": wrong}))
 
-	p := h.plan("browserjs_session", h.null("browserjs_session"), cfg{"name": "a"})
+	p := h.plan("session", h.null("session"), cfg{"name": "a"})
 	noErrors(t, "plan", p.diags)
 	_, diags := h.apply(p)
 	wantError(t, diags, "401", "invalid token", envToken)
-	_, listDiags := h.data("browserjs_sessions", cfg{})
+	_, listDiags := h.data("sessions", cfg{})
 	for _, text := range append(errorsOf(diags), errorsOf(listDiags)...) {
 		if strings.Contains(text, wrong) {
 			t.Fatalf("the token is in a diagnostic: %s", text)
@@ -123,5 +123,15 @@ func TestDefaultPollEvery(t *testing.T) {
 	}
 	if got := defaultPollEvery(1000); got != 4*time.Second {
 		t.Errorf("poll 1000 waits %s", got)
+	}
+}
+
+func TestUnprefixedTypeNames(t *testing.T) {
+	_, schema := newServer(t)
+	if len(schema.ResourceSchemas) != 2 || schema.ResourceSchemas["session"] == nil || schema.ResourceSchemas["session_policy"] == nil {
+		t.Fatalf("unexpected resource types: %v", schema.ResourceSchemas)
+	}
+	if len(schema.DataSourceSchemas) != 2 || schema.DataSourceSchemas["session"] == nil || schema.DataSourceSchemas["sessions"] == nil {
+		t.Fatalf("unexpected data-source types: %v", schema.DataSourceSchemas)
 	}
 }

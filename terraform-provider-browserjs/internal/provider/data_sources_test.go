@@ -11,9 +11,9 @@ func TestSessionDataSource(t *testing.T) {
 	h.fake.AddSession("twin")
 	h.fake.AddSession("twin")
 
-	byID, diags := h.data("browserjs_session", cfg{"id": a})
+	byID, diags := h.data("session", cfg{"id": a})
 	noErrors(t, "by id", diags)
-	byName, diags := h.data("browserjs_session", cfg{"name": "research"})
+	byName, diags := h.data("session", cfg{"name": "research"})
 	noErrors(t, "by name", diags)
 	want := map[string]any{
 		"id": a, "name": "research", "state": "running", "owner": "dev@example.com",
@@ -24,27 +24,27 @@ func TestSessionDataSource(t *testing.T) {
 		t.Errorf("by id %v\nby name %v\nwant %v", byID, byName, want)
 	}
 
-	_, diags = h.data("browserjs_session", cfg{"name": "twin"})
+	_, diags = h.data("session", cfg{"name": "twin"})
 	wantError(t, diags, "name", "More than one session", "Use id instead")
-	_, diags = h.data("browserjs_session", cfg{"name": "nobody"})
+	_, diags = h.data("session", cfg{"name": "nobody"})
 	wantError(t, diags, "name", "No such session")
-	_, diags = h.data("browserjs_session", cfg{"id": "s-zzzzz"})
+	_, diags = h.data("session", cfg{"id": "s-zzzzz"})
 	wantError(t, diags, "id", "No such session")
-	_, diags = h.data("browserjs_session", cfg{})
+	_, diags = h.data("session", cfg{})
 	wantError(t, diags, "id", "name")
-	_, diags = h.data("browserjs_session", cfg{"id": a, "name": "research"})
+	_, diags = h.data("session", cfg{"id": a, "name": "research"})
 	wantError(t, diags, "id", "name")
 }
 
 func TestSessionsDataSource(t *testing.T) {
 	h := newHarness(t)
-	got, diags := h.data("browserjs_sessions", cfg{})
+	got, diags := h.data("sessions", cfg{})
 	noErrors(t, "empty", diags)
 	if l := got["sessions"].([]any); len(l) != 0 {
 		t.Errorf("sessions %v", l)
 	}
 	a, b := h.fake.AddSession("one"), h.fake.AddSession("two")
-	got, diags = h.data("browserjs_sessions", cfg{})
+	got, diags = h.data("sessions", cfg{})
 	noErrors(t, "two", diags)
 	l := got["sessions"].([]any)
 	if len(l) != 2 || l[0].(map[string]any)["id"] != a || l[1].(map[string]any)["id"] != b || l[1].(map[string]any)["name"] != "two" {

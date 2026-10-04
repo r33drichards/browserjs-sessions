@@ -66,8 +66,8 @@ func (m *sessionResourceModel) set(s *client.Session) {
 	m.PendingSize = types.StringValue(s.PendingSize)
 }
 
-func (r *sessionResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
-	resp.TypeName = req.ProviderTypeName + "_session"
+func (r *sessionResource) Metadata(_ context.Context, _ resource.MetadataRequest, resp *resource.MetadataResponse) {
+	resp.TypeName = "session"
 }
 
 func (r *sessionResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
@@ -75,7 +75,7 @@ func (r *sessionResource) Schema(ctx context.Context, _ resource.SchemaRequest, 
 		MarkdownDescription: "A browserjs session: one persistent browser with its own disk, driven by agents over MCP.\n\n" +
 			"~> **Destroying a session deletes its disk and the browser's logins.** Nothing brings them back. " +
 			"Protect sessions you care about with `lifecycle { prevent_destroy = true }`.\n\n" +
-			"A new session has the unrestricted policy: the browser, desktop control and the shell. Give it another with `browserjs_session_policy`; " +
+			"A new session has the unrestricted policy: the browser, desktop control and the shell. Give it another with `session_policy`; " +
 			"changing a policy never replaces the session.\n\n" +
 			"The API token needs the scopes `sessions:read` and `sessions:write`.",
 		Attributes: map[string]schema.Attribute{
