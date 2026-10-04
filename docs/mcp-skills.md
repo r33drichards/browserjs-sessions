@@ -1,10 +1,24 @@
 # Repository documentation as MCP skills
 
-The optional skills image serves `project-documentation` through SEP-2640.
-It bundles this repository's `docs/`, `site/reference/`, and root README.
-An index helps a client select pages without reading the whole corpus into
-the prompt. The server advertises file sizes and SHA-256 digests; Pi's
-`codex/sep-2640-skills-v1.0.1` branch verifies them and loads files lazily.
+The optional skills image serves one SEP-2640 skill per Markdown page in
+`docs/`, `site/reference/`, and the root README. Nested contract and design-plan
+pages are individually discoverable too. For example:
+
+- `docs-api-tokens` — the API tokens page.
+- `docs-contracts-billing-testing` — the billing testing contract.
+- `reference-mcp` — the MCP endpoint and `run_js` reference.
+- `project-readme` — the root README.
+
+Each skill's `SKILL.md` contains that page's full text. Its manifest includes only
+that entrypoint and the local images or attachments linked from the page. Links
+to other documentation pages use their separate `skill://` entrypoints, so the
+agent can load only the pages relevant to its task. Historical plans are labelled
+in their descriptions. There is no top-level `project-documentation` umbrella.
+
+Names derive from source paths, retaining nested topics in the name. The build
+checks name collisions and SEP-2640 file/size limits. Pi's
+`codex/sep-2640-skills-v1.0.1` branch verifies resource hashes and loads skills
+lazily.
 
 The image compiles `r33drichards/mcp-js` commit
 `df7ff14823861941bfe1d9f245a39c045a243e86` from the
@@ -64,11 +78,11 @@ Point the Pi launcher at the new session's MCP URL. `/mcp` should show a
 connected server. Ask Pi to list remote skills, then load the manifest:
 
 ```text
-/mcp-skill computeruse skill://project-documentation/SKILL.md Explain how sessions deploy
+/mcp-skill computeruse skill://docs-releases/SKILL.md Explain how sessions deploy
 ```
 
-Pi asks for consent, verifies `SKILL.md`, and reads `INDEX.md` or individual
-supporting pages only when needed. The snapshot is read-only and tied to
+Pi asks for consent and verifies that page's `SKILL.md`. Linked page skills
+and supporting assets are loaded only when needed. The snapshot is read-only and tied to
 the image. Edits to the repository require a new image; SEP-2640 itself
 does not supply a write API.
 

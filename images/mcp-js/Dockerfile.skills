@@ -12,12 +12,11 @@ RUN git init && git remote add origin https://github.com/r33drichards/mcp-js.git
 RUN cargo build --locked --release -p server && cp target/release/server /mcp-v8
 
 FROM python:3.13-slim AS documentation
-COPY images/mcp-js/skills/ /skills/
-COPY docs/ /skills/project-documentation/references/docs/
-COPY site/reference/ /skills/project-documentation/references/site/
-COPY README.md /skills/project-documentation/references/README.md
-COPY images/mcp-js/prepare-skills.py /prepare-skills.py
-RUN python3 /prepare-skills.py /skills
+COPY docs/ /source/docs/
+COPY site/reference/ /source/site/reference/
+COPY README.md /source/README.md
+COPY images/mcp-js/prepare-skills.py images/mcp-js/test_prepare_skills.py /
+RUN python3 /test_prepare_skills.py && python3 /prepare-skills.py /source /skills
 
 FROM wholelottahoopla/mcp-js@sha256:abd34e6c3f347914fbc3be454dd18868d290b8564ae7dd5bf778cb2bd4ad5a84
 COPY --from=builder --chmod=755 /mcp-v8 /usr/local/bin/mcp-v8
