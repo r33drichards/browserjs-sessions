@@ -6,6 +6,9 @@
       systems = [ "aarch64-darwin" "x86_64-darwin" "x86_64-linux" "aarch64-linux" ];
       forAll = f: nixpkgs.lib.genAttrs systems (s: f nixpkgs.legacyPackages.${s});
     in {
+      checks.x86_64-linux.webhooks-container = import ./test/webhooks-nixos {
+        pkgs = nixpkgs.legacyPackages.x86_64-linux;
+      };
       devShells = forAll (pkgs: {
         default = pkgs.mkShell {
           packages = with pkgs; [
