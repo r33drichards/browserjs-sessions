@@ -117,6 +117,20 @@ spec:
               value: https://app.example.com/.well-known/pomerium/jwks.json
             - name: ADMIN_EMAILS
               value: ""
+            # Optional user-targeted OpenFeature rollout (docs/mcp-skills.md).
+            # Neither variable is set until an operator supplies the ConfigMap.
+            - name: MCP_SKILLS_IMAGE_DIGEST
+              valueFrom:
+                configMapKeyRef:
+                  name: mcp-skills
+                  key: image-digest
+                  optional: true
+            - name: MCP_SKILLS_EMAILS
+              valueFrom:
+                configMapKeyRef:
+                  name: mcp-skills
+                  key: emails
+                  optional: true
             # Session policies. They are off, and the API is as it was,
             # while POLICY_OPERATOR_URL is unset: patch-policy-backend-off.yaml
             # in an overlay removes it (docs/policy-deployment.md).

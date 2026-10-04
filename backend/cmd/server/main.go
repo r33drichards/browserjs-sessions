@@ -32,6 +32,7 @@ import (
 	"github.com/r33drichards/computer-use/backend/internal/auth"
 	"github.com/r33drichards/computer-use/backend/internal/authz"
 	"github.com/r33drichards/computer-use/backend/internal/config"
+	"github.com/r33drichards/computer-use/backend/internal/features"
 	"github.com/r33drichards/computer-use/backend/internal/idle"
 	"github.com/r33drichards/computer-use/backend/internal/leader"
 	"github.com/r33drichards/computer-use/backend/internal/metrics"
@@ -313,6 +314,14 @@ func newHandlerWith(cfg config.Config, verifier auth.Verifier, store *sessions.S
 	// The release's canary (docs/releases.md): the admins, by address, may
 	// start a session on other digests of the session images.
 	sessionAPI.SetCanary(cfg.AdminEmails)
+	if cfg.SkillsImageDigest != "" && len(cfg.SkillsEmails) > 0 {
+		flags, err := features.NewSkills(context.Background(), cfg.SkillsImageDigest, cfg.SkillsEmails)
+		if err != nil {
+			slog.Error("skills feature provider failed; rollout stays off", "err", err)
+		} else {
+			sessionAPI.SetSkillsImage(flags.ImageDigest)
+		}
+	}
 	sessionAPI.EnablePolicies(policies)
 	// A new session's Chromium starts in the background, ready for the first
 	// browser call (proxy/browser.go).

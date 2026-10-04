@@ -28,6 +28,9 @@ on:
       - "site/**"
       # The policy operator's image carries contract files.
       - "docs/contracts/policy/**"
+      - "docs/**"
+      - "site/reference/**"
+      - "README.md"
       - ".github/workflows/images.yml"
       - "hack/site-release.sh"
   push:
@@ -42,6 +45,9 @@ on:
       - "site/**"
       # The policy operator's image carries contract files.
       - "docs/contracts/policy/**"
+      - "docs/**"
+      - "site/reference/**"
+      - "README.md"
       - ".github/workflows/images.yml"
       - "hack/site-release.sh"
   workflow_dispatch:
@@ -55,6 +61,7 @@ on:
           - all
           - backend
           - mcp-js
+          - mcp-js-skills
           - browser
           - site
           - policy-operator
@@ -112,6 +119,7 @@ jobs:
           table='[
             {"name":"backend","context":".",             "timeout":30, "cache":true, "free_disk":false},
             {"name":"mcp-js", "context":"images/mcp-js", "timeout":15, "cache":true, "free_disk":false},
+            {"name":"mcp-js-skills", "repository":"mcp-js", "tag_prefix":"skills-", "context":".", "file":"images/mcp-js/Dockerfile.skills", "timeout":90, "cache":true, "free_disk":true},
             {"name":"browser","context":"images/browser","timeout":120,"cache":false,"free_disk":true},
             {"name":"site",   "context":"site",          "timeout":15, "cache":true, "free_disk":false},
             {"name":"policy-operator","context":".","file":"images/policy-operator/Dockerfile","timeout":15,"cache":true,"free_disk":false},
@@ -139,7 +147,7 @@ jobs:
           wanted=()
           if [ "$EVENT" = "workflow_dispatch" ]; then
             if [ "$CHOSEN" = "all" ] || [ -z "$CHOSEN" ]; then
-              wanted=(backend mcp-js browser site policy-operator billing-operator)
+              wanted=(backend mcp-js mcp-js-skills browser site policy-operator billing-operator)
             else
               wanted=("$CHOSEN")
             fi
@@ -150,10 +158,11 @@ jobs:
             touches() { grep -Eq "$1" <<<"$files"; }
             if touches '^\.github/workflows/images\.yml$'; then
               # The pipeline itself changed: prove it on every image.
-              wanted=(backend mcp-js browser site policy-operator billing-operator)
+              wanted=(backend mcp-js mcp-js-skills browser site policy-operator billing-operator)
             else
               if touches '^(Dockerfile$|\.dockerignore$|backend/|web/)'; then wanted+=(backend); fi
               if touches '^images/mcp-js/'; then wanted+=(mcp-js); fi
+              if touches '^(images/mcp-js/|docs/|site/reference/|README.md$)'; then wanted+=(mcp-js-skills); fi
               if touches '^images/browser/'; then wanted+=(browser); fi
               if touches '^(site/|hack/site-release\.sh$)'; then wanted+=(site); fi
               if touches '^(images/policy-operator/|docs/contracts/policy/)'; then wanted+=(policy-operator); fi
@@ -264,7 +273,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
     env:
-      IMAGE: ${{ vars.IMAGE_REGISTRY }}/${{ matrix.name }}
+      IMAGE: ${{ vars.IMAGE_REGISTRY }}/${{ matrix.repository || matrix.name }}
     steps:
       - name: Check repository variables
         shell: bash
@@ -343,8 +352,8 @@ jobs:
           # One plain image manifest per tag: the digest below is the image.
           provenance: false
           tags: |
-            ${{ env.IMAGE }}:${{ github.sha }}
-            ${{ env.IMAGE }}:main
+            ${{ env.IMAGE }}:${{ matrix.tag_prefix || '' }}${{ github.sha }}
+            ${{ env.IMAGE }}:${{ matrix.tag_prefix || '' }}main
           cache-from: ${{ matrix.cache && format('type=gha,scope={0}', matrix.name) || '' }}
           cache-to: ${{ matrix.cache && format('type=gha,scope={0},mode=max,ignore-error=true', matrix.name) || '' }}
 
@@ -353,6 +362,7 @@ jobs:
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
           NAME: ${{ matrix.name }}
+          TAG_PREFIX: ${{ matrix.tag_prefix || '' }}
         run: |
           {
             echo "### ${NAME}"
@@ -360,7 +370,7 @@ jobs:
             echo '```'
             echo "${IMAGE}@${DIGEST}"
             echo '```'
-            echo "Tags: \`${GITHUB_SHA}\`, \`main\`"
+            echo "Tags: \`${TAG_PREFIX}${GITHUB_SHA}\`, \`${TAG_PREFIX}main\`"
           } >> "$GITHUB_STEP_SUMMARY"
           echo "${IMAGE}@${DIGEST}"
 
